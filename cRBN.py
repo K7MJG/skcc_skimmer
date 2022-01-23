@@ -30,6 +30,8 @@
 import socket
 import random
 import time
+from typing import Any
+from cSocketLoop import cSocketLoop
 
 from cStateMachine import cStateMachine
 
@@ -47,13 +49,13 @@ class cRBN:
 	def __init__(self):
 		self.bIncoming = b''
 		self.bOutgoing = b''
-		self.Socket    = None
+		self.Socket: socket.SocketType
 
 		self.InactivityTimeoutSeconds = 60
 
 	def Receive(self):
 		try:
-			bData = self.Socket.recv(4 * 1024)
+			bData: bytes = self.Socket.recv(4 * 1024)
 		except socket.error:
 			return False
 		else:
@@ -73,15 +75,15 @@ class cRBN:
 			return len(self.bOutgoing) == 0
 
 class cRBN_Client(cRBN, cStateMachine):
-	def __init__(self, SocketLoop, CallSign, Clusters):
+	def __init__(self, SocketLoop: cSocketLoop, CallSign: str, Clusters: str):
 		cRBN.__init__(self)
 		cStateMachine.__init__(self, self.STATE_ConnectingToRBN, Debug = False)
 
 		self.SocketLoop        = SocketLoop
 		self.CallSign          = CallSign
 		self.MasterClusterList = MasterClusterList
-		self.Iter              = None
-		self.AddressTuple      = None
+		self.Iter: Any         = None
+		self.AddressTuple      = []
 		self.Cluster           = None
 
 		if ',' in Clusters:
@@ -100,7 +102,7 @@ class cRBN_Client(cRBN, cStateMachine):
 
 	def STATE_ConnectingToRBN(self):
 		def ENTER():
-			AddressTupleList = []
+			AddressTupleList: list[tuple[str, int]] = []
 
 			for ClusterKey in self.Clusters:
 				ServerList = self.MasterClusterList[ClusterKey]
@@ -132,12 +134,12 @@ class cRBN_Client(cRBN, cStateMachine):
 			__Initiate()
 
 		def __Initiate():
-			self.Cluster, self.AddressTuple = next(self.Iter, (None, None))
+			self.Cluster, self.AddressTuple = next(self.Iter)
 
 			if self.AddressTuple:
 				self.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 				self.Socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 0)
-				self.Socket.setblocking(0)
+				self.Socket.setblocking(False)
 				self.SocketLoop.AddConnector(self.Socket, self)
 
 				while True:
@@ -286,5 +288,5 @@ class cRBN_Client(cRBN, cStateMachine):
 
 		return locals()
 
-	def RawData(self, bData):
+	def RawData(self, bData: bytes):
 		pass

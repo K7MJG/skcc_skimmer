@@ -84,6 +84,7 @@
 from __future__ import division
 from __future__ import print_function
 from __future__ import annotations
+
 import signal
 import time
 import sys
@@ -93,21 +94,22 @@ import re
 import getopt
 import string
 import textwrap
-import datetime
 import calendar
 import json
 
-from cSocketLoop import cSocketLoop
+from datetime import timedelta
+from datetime import datetime
+
+from typing        import NoReturn, Any
+
+from math          import radians, sin, cos, atan2, sqrt
+
+from cSocketLoop   import cSocketLoop
 from cStateMachine import cStateMachine
-
-from typing import NoReturn
-
-from math import radians, sin, cos, atan2, sqrt
-
-from cRBN import cRBN_Client
+from cRBN          import cRBN_Client
 
 PROGRESS_DOTS = {}
-NOTIFICATION = {}
+NOTIFICATION: Any = {}
 LOG_FILE = {}
 HIGH_WPM = {}
 SKED = {}
@@ -115,11 +117,17 @@ OFF_FREQUENCY = {}
 EXCLUSIONS = ''
 FRIENDS = ''
 MY_CALLSIGN = ''
+ADI_FILE = ''
+GOALS = ''
+TARGETS = ''
+BANDS: list[int] = []
+MY_GRIDSQUARE = ''
+SPOTTER_RADIUS = 1000
 
 def Split(text: str) -> list[str]:
 	return re.split('[, ][ ]*', text.strip())
 
-def Effective(Date) -> str:
+def Effective(Date: str) -> str:
 	TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
 	if TodayGMT >= Date:
@@ -127,19 +135,19 @@ def Effective(Date) -> str:
 
 	return ''
 
-def Miles2Km(Miles) -> int:
+def Miles2Km(Miles: int) -> int:
 	return int((Miles * 1.609344) + .5)
 
-def Stripped(String) -> str:
-	return ''.join([c for c in String if 31 < ord(c) < 127])
+def Stripped(text: str) -> str:
+	return ''.join([c for c in text if 31 < ord(c) < 127])
 
 class cFastDateTime:
 	FastDateTime: str
 
 	MonthNames = 'January February March April May June July August September October November December'.split()
 
-	def __init__(self, Object) -> None:
-		if isinstance(Object, datetime.datetime):
+	def __init__(self, Object: object) -> None:
+		if isinstance(Object, datetime):
 			self.FastDateTime = Object.strftime('%Y%m%d%H%M%S')
 
 		elif isinstance(Object, time.struct_time):
@@ -153,11 +161,11 @@ class cFastDateTime:
 				Year, Month, Day, Hour, Minute, Second = Object
 				self.FastDateTime = f'{Year:0>4}{Month:0>2}{Day:0>2}{Hour:0>2}{Minute:0>2}{Second:0>2}'.format(Year, Month, Day, Hour, Minute, Second)
 
-		else:
+		elif isinstance(Object, str):
 			self.FastDateTime = Object
 
-	def SplitDateTime(self) -> list[str]:
-		List: list[str] = []
+	def SplitDateTime(self) -> list[int]:
+		List: list[int] = []
 		String = self.FastDateTime
 
 		for Width in (4, 2, 2, 2, 2, 2):
@@ -182,14 +190,14 @@ class cFastDateTime:
 		return int(self.FastDateTime[4:6])
 
 	def ToDateTime(self) -> datetime:
-		return datetime.datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S')
+		return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S')
 
-	def FirstWeekdayAfterDate(self, TargetWeekday) -> cFastDateTime:
+	def FirstWeekdayAfterDate(self, TargetWeekday: str) -> cFastDateTime:
 		TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
 		DateTime = self.ToDateTime()
 
 		while True:
-			DateTime += datetime.timedelta(days=1)
+			DateTime += timedelta(days=1)
 
 			if DateTime.weekday() == TargetWeekdayNumber:
 				return cFastDateTime(DateTime)
@@ -197,16 +205,16 @@ class cFastDateTime:
 	def __repr__(self) -> str:
 		return self.FastDateTime
 
-	def __lt__(self, Right) -> bool:
+	def __lt__(self, Right: cFastDateTime) -> bool:
 		return self.FastDateTime < Right.FastDateTime
 
-	def __le__(self, Right) -> bool:
+	def __le__(self, Right: cFastDateTime) -> bool:
 		return self.FastDateTime <= Right.FastDateTime
 
-	def __gt__(self, Right) -> bool:
+	def __gt__(self, Right: cFastDateTime) -> bool:
 		return self.FastDateTime > Right.FastDateTime
 
-	def __add__(self, Delta) -> int:
+	def __add__(self, Delta) -> cFastDateTime:
 		return cFastDateTime(self.ToDateTime() + Delta)
 
 	@staticmethod
@@ -258,12 +266,12 @@ class cHTTP:
 
 	RegEx = re.compile(r'HTTP[/][\d.]+\s+(\d+)')
 
-	def __init__(self, Host, Port = 80):
+	def __init__(self, Host: str, Port: int = 80):
 		self.Socket  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.bHost   = Host.encode('ascii')
 		self.Port    = Port
 
-	def Get(self, Page, ErrorBehavior = FATAL) -> bytes | None | NoReturn:
+	def Get(self, Page: str, ErrorBehavior: int = FATAL) -> bytes | None | NoReturn:
 		try:
 			self.Socket.settimeout(10.0)
 			self.Socket.connect((self.bHost, self.Port))
@@ -299,10 +307,12 @@ class cHTTP:
 		bHeader, bBody = bResponse.split(b'\r\n\r\n', 1)
 		Header = bHeader.decode('utf-8', 'ignore')
 		Match = cHTTP.RegEx.match(Header)
-		Code = int(Match.group(1))
 
-		if Code == 404:
-			return None
+		if Match:
+			Code = int(Match.group(1))
+
+			if Code == 404:
+				return None
 
 		return bBody
 
@@ -332,8 +342,10 @@ class cSked(cStateMachine):
 
 		return locals()
 
-	def HandleLogins(self, SkedLogins, Heading):
-		SkedHit = {}
+	def HandleLogins(self, SkedLogins: list[list[str]], Heading):
+		SkedHit: dict[str, list[str]] = {}
+		GoalList: list[str] = []
+		TargetList: list[str] = []
 
 		for CallSign, Status in SkedLogins:
 			if CallSign == MY_CALLSIGN:
@@ -347,7 +359,7 @@ class cSked(cStateMachine):
 			if CallSign in EXCLUSIONS:
 				continue
 
-			Report = [BuildMemberInfo(CallSign)]
+			Report: list[str] = [BuildMemberInfo(CallSign)]
 
 			if CallSign in RBN.LastSpotted:
 				fFrequency, StartTime = RBN.LastSpotted[CallSign]
@@ -479,14 +491,14 @@ class cRBN_Filter(cRBN_Client):
 	Zulu_RegEx = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
 	dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
-	def __init__(self, SocketLoop, CallSign: str, Clusters: str):
+	def __init__(self, SocketLoop: cSocketLoop, CallSign: str, Clusters: str):
 		cRBN_Client.__init__(self, SocketLoop, CallSign, Clusters)
 		self.bData = b''
-		self.LastSpotted = {}
+		self.LastSpotted: dict[str, str] = {}
 		self.Notified = {}
 		self.RenotificationDelay = NOTIFICATION['RENOTIFICATION_DELAY_SECONDS']
 
-	def RawData(self, bData):
+	def RawData(self, bData: bytes):
 		self.bData += bData
 
 		while b'\r\n' in self.bData:
@@ -495,7 +507,7 @@ class cRBN_Filter(cRBN_Client):
 			self.HandleSpot(Line)
 
 	@staticmethod
-	def ParseSpot(Line: str) -> None | tuple(str, str, float, str, str, int, int):
+	def ParseSpot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
 		# If the line isn't exactly 75 characters, something is wrong.
 		if len(Line) != 75:
 			LogError(Line)
@@ -507,9 +519,9 @@ class cRBN_Filter(cRBN_Client):
 
 		Spotter, Frequency = Line[6:24].split('-#:')
 
-		Frequency = Frequency.lstrip()
+		Frequency = float(Frequency.lstrip())
 		CallSign  = Line[26:35].rstrip()
-		dB        = Line[47:49].strip()
+		dB        = int(Line[47:49].strip())
 		Zulu      = Line[70:75]
 		CW        = Line[41:47].rstrip()
 		Beacon    = Line[62:68].rstrip()
@@ -567,7 +579,7 @@ class cRBN_Filter(cRBN_Client):
 
 		return NotificationFlag
 
-	def HandleSpot(self, Line) -> None:
+	def HandleSpot(self, Line: str) -> None:
 		if VERBOSE:
 			print(f'   {Line}')
 
@@ -578,7 +590,7 @@ class cRBN_Filter(cRBN_Client):
 
 		Zulu, Spotter, fFrequency, CallSign, CallSignSuffix, dB, WPM = Spot
 
-		Report = []
+		Report: list[str] = []
 
 		#-------------
 
@@ -706,6 +718,18 @@ class cRBN_Filter(cRBN_Client):
 			Log(f'{ZuluDate} {Out}')
 
 class cQSO(cStateMachine):
+	MyMemberNumber: str
+
+	ContactsForC:     dict[str, tuple[str, str, str]]
+	ContactsForT:     dict[str, tuple[str, str, str]]
+	ContactsForS:     dict[str, tuple[str, str, str]]
+	ContactsForWAS:   dict[str, tuple[str, str, str]]
+	ContactsForWAS_C: dict[str, tuple[str, str, str]]
+	ContactsForWAS_T: dict[str, tuple[str, str, str]]
+	ContactsForWAS_S: dict[str, tuple[str, str, str]]
+	ContactsForP:     dict[str, tuple[str, str, int, str]]
+	ContactsForK3Y:   dict[str, tuple[str, str, str]]
+
 	Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
 	def __init__(self):
@@ -854,7 +878,7 @@ class cQSO(cStateMachine):
 
 		self.AdiFileReadTimeStamp = os.path.getmtime(ADI_FILE)
 
-		with open(ADI_FILE, 'rb', encoding='utf-8') as File:
+		with open(ADI_FILE, 'rb') as File:
 			Contents = File.read().decode('utf-8', 'ignore')
 
 		_Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
@@ -1001,7 +1025,7 @@ class cQSO(cStateMachine):
 			MonthName = cFastDateTime.MonthNames[MonthIndex]
 			print(f'Total worked towards {MonthName} Brag: {len(self.Brag)}')
 
-	def GetGoalHits(self, TheirCallSign: str, fFrequency = None):
+	def GetGoalHits(self, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
 		if TheirCallSign not in SKCC.Members:
 			return []
 
@@ -1014,7 +1038,7 @@ class cQSO(cStateMachine):
 		TheirS_Date       = Effective(TheirMemberEntry['s_date'])
 		TheirMemberNumber = TheirMemberEntry['plain_number']
 
-		List = []
+		List: list[str] = []
 
 		if 'BRAG' in GOALS:
 			if TheirMemberNumber not in self.Brag:
@@ -1082,21 +1106,23 @@ class cQSO(cStateMachine):
 
 		if 'P' in GOALS:
 			Match = cQSO.Prefix_RegEx.match(TheirCallSign)
-			Prefix = Match.group(1)
-			iTheirMemberNumber   = int(TheirMemberNumber)
-			_Remaining, X_Factor = cQSO.CalculateNumerics('P', self.CalcPrefixPoints())
 
-			if Prefix in self.ContactsForP:
-				iCurrentMemberNumber = self.ContactsForP[Prefix][2]
+			if Match:
+				Prefix = Match.group(1)
+				iTheirMemberNumber   = int(TheirMemberNumber)
+				_Remaining, X_Factor = cQSO.CalculateNumerics('P', self.CalcPrefixPoints())
 
-				if iTheirMemberNumber > iCurrentMemberNumber:
-					List.append(f'{AbbreviateClass("P", X_Factor)}(+{iTheirMemberNumber - iCurrentMemberNumber})')
-			else:
-				List.append(f'{AbbreviateClass("P", X_Factor)}(new +{iTheirMemberNumber})')
+				if Prefix in self.ContactsForP:
+					iCurrentMemberNumber = self.ContactsForP[Prefix][2]
+
+					if iTheirMemberNumber > iCurrentMemberNumber:
+						List.append(f'{AbbreviateClass("P", X_Factor)}(+{iTheirMemberNumber - iCurrentMemberNumber})')
+				else:
+					List.append(f'{AbbreviateClass("P", X_Factor)}(new +{iTheirMemberNumber})')
 
 		return List
 
-	def GetTargetHits(self, TheirCallSign):
+	def GetTargetHits(self, TheirCallSign: str) -> list[str]:
 		if TheirCallSign not in SKCC.Members:
 			return []
 
@@ -1111,7 +1137,7 @@ class cQSO(cStateMachine):
 		TheirS_Date       = Effective(TheirMemberEntry['s_date'])
 		TheirMemberNumber = TheirMemberEntry['plain_number']
 
-		List = []
+		List: list[str] = []
 
 		if 'C' in TARGETS and not TheirC_Date:
 			if TheirMemberNumber in self.QSOsByMemberNumber:
@@ -1337,13 +1363,15 @@ class cQSO(cStateMachine):
 			if Good(QsoDate, TheirJoin_Date, self.MyJoin_Date, '20130101000000'):
 				if TheirMemberNumber != self.MyMemberNumber:
 					Match  = cQSO.Prefix_RegEx.match(QsoCallSign)
-					Prefix = Match.group(1)
 
-					iTheirMemberNumber = int(TheirMemberNumber)
+					if Match:
+						Prefix = Match.group(1)
 
-					if Prefix not in self.ContactsForP or iTheirMemberNumber > self.ContactsForP[Prefix][2]:
-						FirstName = SKCC.Members[QsoCallSign]['name']
-						self.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
+						iTheirMemberNumber = int(TheirMemberNumber)
+
+						if Prefix not in self.ContactsForP or iTheirMemberNumber > self.ContactsForP[Prefix][2]:
+							FirstName = SKCC.Members[QsoCallSign]['name']
+							self.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
 
 			# Centurion
 			if Good(QsoDate, TheirJoin_Date, self.MyJoin_Date):
@@ -1509,7 +1537,7 @@ class cQSO(cStateMachine):
 
 class cSpotters:
 	def __init__(self):
-		self.Spotters = {}
+		self.Spotters: dict[str, tuple[int, list[int]]] = {}
 
 	@staticmethod
 	def locator_to_latlong(locator):
@@ -1728,8 +1756,8 @@ class cSpotters:
 				BandList    = ParseBands(csvBands)
 				self.Spotters[Spotter] = (Miles, BandList)
 
-	def GetNearbySpotters(self):
-		List = []
+	def GetNearbySpotters(self) -> list[tuple[str, int]]:
+		List: list[tuple[str, int, list[int]]] = []
 
 		for Spotter, Value in self.Spotters.items():
 			Miles, Bands = Value
@@ -1737,7 +1765,7 @@ class cSpotters:
 
 		List = sorted(List, key=lambda Tuple: Tuple[1])
 
-		NearbyList = []
+		NearbyList: list[tuple[str, int]] = []
 
 		for Spotter, Miles, Bands in List:
 			if Miles <= SPOTTER_RADIUS:
@@ -1745,12 +1773,16 @@ class cSpotters:
 
 		return NearbyList
 
-	def GetDistance(self, Spotter):
+	def GetDistance(self, Spotter: str) -> int:
 		Miles, _Bands = self.Spotters[Spotter]
 		return Miles
 
 
 class cSKCC:
+	CenturionLevel: dict[str, int]
+	TribuneLevel: dict[str, int]
+	SenatorLevel: dict[str, int]
+
 	MonthAbbreviations = {
 		'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4,  'May':5,  'Jun':6,
 		'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
@@ -1771,7 +1803,7 @@ class cSKCC:
 	}
 
 	def __init__(self):
-		self.Members = {}
+		self.Members: dict[str, dict[str, str]] = {}
 
 		self.ReadSkccData()
 
@@ -1786,38 +1818,40 @@ class cSKCC:
 		self.PrefixLevel    = cSKCC.ReadRoster('PFX',   'operating_awards/pfx/prefix_roster.php')
 
 	@staticmethod
-	def WES(Year, Month):
+	def WES(Year: int, Month: int):
 		FromDate      = cFastDateTime((Year, Month, 6))
 		StartDate     = FromDate.FirstWeekdayAfterDate('Sat')
-		StartDateTime = StartDate + datetime.timedelta(hours=12)
-		EndDateTime   = StartDateTime + datetime.timedelta(hours=35, minutes=59, seconds=59)
+		StartDateTime = StartDate + timedelta(hours=12)
+		EndDateTime   = StartDateTime + timedelta(hours=35, minutes=59, seconds=59)
 
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def SKS(Year, Month):
+	def SKS(Year: int, Month: int):
 		FromDate = cFastDateTime((Year, Month, 1))
+
+		StartDate = cFastDateTime(None)
 
 		for _Count in range(1, 4+1):
 			StartDate = FromDate.FirstWeekdayAfterDate('Wed')
 			FromDate = StartDate
 
-		StartDateTime = StartDate + datetime.timedelta(hours=0)
-		EndDateTime   = StartDateTime + datetime.timedelta(hours=2)
+		StartDateTime = StartDate + timedelta(hours=0)
+		EndDateTime   = StartDateTime + timedelta(hours=2)
 
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def SKSE(Year, Month):
+	def SKSE(Year: int, Month: int):
 		FromDate      = cFastDateTime((Year, Month, 1))
 		StartDate     = FromDate.FirstWeekdayAfterDate('Thu')
-		StartDateTime = StartDate + datetime.timedelta(hours=20)
-		EndDateTime   = StartDateTime + datetime.timedelta(hours=2)
+		StartDateTime = StartDate + timedelta(hours=20)
+		EndDateTime   = StartDateTime + timedelta(hours=2)
 
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def DuringSprint(fastDateTime):
+	def DuringSprint(fastDateTime: cFastDateTime):
 		Year  = fastDateTime.Year()
 		Month = fastDateTime.Month()
 
@@ -1862,7 +1896,7 @@ class cSKCC:
 			locale sensitive and could be misinterpreted in other countries.
 	'''
 	@staticmethod
-	def NormalizeSkccDate(Date):
+	def NormalizeSkccDate(Date: str):
 		if not Date:
 			return ''
 
@@ -1871,7 +1905,7 @@ class cSKCC:
 
 		return f'{sYear:0>4}{iMonth:0>2}{sDay:0>2}000000'
 
-	def ExtractCallSign(self, CallSign):
+	def ExtractCallSign(self, CallSign: str) -> str | None:
 		#
 		# Strip any punctuation other than '/'.
 		#
@@ -1901,14 +1935,19 @@ class cSKCC:
 		return None
 
 	@staticmethod
-	def ReadLevelList(Type, URL):
+	def ReadLevelList(Type: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC award info from {URL}...')
 
 		SkccGroup_com = cHTTP('skccgroup.com')
-		bLevelList    = SkccGroup_com.Get('http://www.skccgroup.com/'+URL).rstrip()
-		LevelList     = bLevelList.decode('ascii')
+		bLevelList    = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
 
-		Level = {}
+		if not bLevelList:
+			return {}
+
+		bLevelList = bLevelList.rstrip()
+		LevelList  = bLevelList.decode('ascii')
+
+		Level: dict[str, int] = {}
 		TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
 		for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
@@ -1939,11 +1978,16 @@ class cSKCC:
 		return Level
 
 	@staticmethod
-	def ReadRoster(Name, URL):
+	def ReadRoster(Name: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC {Name} roster...')
 
 		SkccGroup_com = cHTTP('skccgroup.com')
-		bHTML         = SkccGroup_com.Get('http://www.skccgroup.com/'+URL).rstrip()
+		bHTML         = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
+
+		if not bHTML:
+			return {}
+
+		bHTML         = bHTML.rstrip()
 		HTML          = bHTML.decode('utf-8', 'ignore')
 
 		Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
@@ -1951,7 +1995,7 @@ class cSKCC:
 
 		RowMatches    = Rows_RegEx.findall(HTML)
 
-		Roster = {}
+		Roster: dict[str, int] = {}
 
 		for Row in (x for I, x in enumerate(RowMatches) if I > 0):
 			ColumnMatches = Columns_RegEx.findall(Row)
@@ -1969,11 +2013,16 @@ class cSKCC:
 		return Roster
 
 
-	def ReadSkccData(self):
+	def ReadSkccData(self) -> None:
 		print('Retrieving SKCC award dates...')
 
 		SkccGroup_com = cHTTP('skccgroup.com')
-		bSkccList     = SkccGroup_com.Get('http://www.skccgroup.com/membership_data/skccdata.txt').rstrip()
+		bSkccList     = SkccGroup_com.Get('http://www.skccgroup.com/membership_data/skccdata.txt')
+
+		if not bSkccList:
+			return
+
+		bSkccList = bSkccList.rstrip()
 		SkccList      = bSkccList.decode('utf-8')
 
 		Lines = SkccList.splitlines()
@@ -2002,7 +2051,7 @@ class cSKCC:
 				}
 
 	@staticmethod
-	def IsOnSkccFrequency(fFrequency, Tolerance = 10):
+	def IsOnSkccFrequency(fFrequency: float, Tolerance: int = 10):
 		for Band, Value in cSKCC.Frequencies.items():
 			if Band == 60 and fFrequency >= 5332-1.5 and fFrequency <= 5405+1.5:
 				return True
@@ -2016,7 +2065,7 @@ class cSKCC:
 		return False
 
 	@staticmethod
-	def WhichBand(fFrequency, Tolerance = 10):
+	def WhichBand(fFrequency: float, Tolerance: int = 10):
 		for Band, Value in cSKCC.Frequencies.items():
 			MidPoints = Value
 
@@ -2027,7 +2076,7 @@ class cSKCC:
 		return None
 
 	@staticmethod
-	def WhichArrlBand(fFrequency):
+	def WhichArrlBand(fFrequency: float) -> int:
 		if fFrequency > 1800 and fFrequency < 2000:
 			return 160
 
@@ -2058,10 +2107,10 @@ class cSKCC:
 		if fFrequency > 50000 and fFrequency < 54000:
 			return 6
 
-		return None
+		return 0
 
 	@staticmethod
-	def IsOnWarcFrequency(fFrequency, Tolerance = 10):
+	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10):
 		WarcBands =  [30, 17, 12]
 
 		for Band in WarcBands:
@@ -2073,7 +2122,7 @@ class cSKCC:
 
 		return False
 
-	def GetFullMemberNumber(self, CallSign):
+	def GetFullMemberNumber(self, CallSign: str):
 		Entry = self.Members[CallSign]
 
 		MemberNumber = Entry['plain_number']
@@ -2099,12 +2148,12 @@ class cSKCC:
 
 		return (MemberNumber, Suffix)
 
-def Log(Line):
+def Log(Line: str):
 	if LOG_FILE['ENABLED']:
 		with open(LOG_FILE['FILE_NAME'], 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
-def LogError(Line):
+def LogError(Line: str):
 	if LOG_BAD_SPOTS:
 		with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
@@ -2112,13 +2161,13 @@ def LogError(Line):
 def signal_handler(_signal, _frame):
 	sys.exit()
 
-def AbbreviateClass(Class, X_Factor):
+def AbbreviateClass(Class: str, X_Factor: int) -> str:
 	if X_Factor > 1:
 		return f'{Class}x{X_Factor}'
 
 	return Class
 
-def BuildMemberInfo(CallSign):
+def BuildMemberInfo(CallSign: str):
 	Entry = SKCC.Members[CallSign]
 
 	Number, Suffix = SKCC.GetFullMemberNumber(CallSign)
@@ -2167,8 +2216,8 @@ def IsInBANDS(Frequency: float) -> bool:
 
 	return False
 
-def Lookups(LookupString):
-	def PrintCallSign(CallSign):
+def Lookups(LookupString: str):
+	def PrintCallSign(CallSign: str):
 		Entry = SKCC.Members[CallSign]
 
 		MyNumber = SKCC.Members[MY_CALLSIGN]['plain_number']
@@ -2264,7 +2313,7 @@ def Usage() -> NoReturn:
 	print('')
 	sys.exit()
 
-def FileCheck(Filename):
+def FileCheck(Filename: str):
 	if os.path.exists(Filename):
 		return
 
@@ -2295,7 +2344,7 @@ US_STATES = 'AK AL AR AZ CA CO CT DE FL GA ' + \
 DISTANCE_UNITS = 'mi'
 
 # Default the K3Y_YEAR in case it isn't set in the config file.
-K3Y_YEAR = datetime.datetime.now().year
+K3Y_YEAR = datetime.now().year
 
 #
 # Read and execute the contents of 'skcc_skimmer.cfg'.
@@ -2385,10 +2434,13 @@ if OFF_FREQUENCY['ACTION'] not in ('suppress', 'warn'):
 	print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
 	sys.exit()
 
+if 'BANDS' in globals():
+	BANDS = [int(Band)  for Band in Split(str(BANDS))]
+
 CLUSTERS = 'SKCC RBN'
 
-def Parse(String, ALL, Type) -> list[str]:
-	ALL  = ALL.split()
+def Parse(String: str, ALL_str: str, Type: str) -> list[str]:
+	ALL: list[str] = ALL_str.split()
 	List = Split(String.upper())
 
 	for x in List:
@@ -2419,6 +2471,7 @@ EXCLUSIONS       = Split(EXCLUSIONS.upper())
 US_STATES        = Split(US_STATES.upper())
 FRIENDS          = Split(FRIENDS.upper())
 MY_CALLSIGN      = MY_CALLSIGN.upper()
+VERBOSE          = False
 
 Levels = {
  'C'  :    100,
@@ -2452,7 +2505,7 @@ for Option, Arg in Options:
 		ADI_FILE = Arg
 
 	elif Option in ('-b', '--bands'):
-		BANDS = Arg
+		BANDS = [int(Band)  for Band in Split(Arg)]
 
 	elif Option in ('-B', '--brag-months'):
 		BRAG_MONTHS = int(Arg)
@@ -2534,7 +2587,6 @@ if not ADI_FILE:
 
 GOALS   = Parse(GOALS,   'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 TARGETS = Parse(TARGETS, 'C CXN T TXN S SXN',                                  'target')
-BANDS   = [int(Band) for Band in Split(BANDS)]
 
 if not GOALS and not TARGETS:
 	print('You must specify at least one goal or target.')
@@ -2588,7 +2640,7 @@ if 'NOTIFICATION' not in globals():
 	print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
 	sys.exit()
 
-BeepCondition = NOTIFICATION['CONDITION'].lower().split(',')
+BeepCondition: list[str] = NOTIFICATION['CONDITION'].lower().split(',')
 
 for Condition in BeepCondition:
 	if Condition not in ['goals', 'targets', 'friends']:
@@ -2606,10 +2658,6 @@ if not MY_GRIDSQUARE:
 
 if 'SPOTTER_RADIUS' not in globals():
 	print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
-	sys.exit()
-
-if not isinstance(SPOTTER_RADIUS, (int, )):
-	print("'SPOTTER_RADIUS' in skcc_skimmer.cfg must an number - in miles.")
 	sys.exit()
 
 Spotters = cSpotters()

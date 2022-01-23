@@ -29,6 +29,8 @@
 '''
 import time
 
+from typing import Any
+
 class cStateMachine:
 	StateMachines = {}
 
@@ -37,7 +39,7 @@ class cStateMachine:
 
 		self.Debug          = Debug
 		self.Timeout        = None
-		self.State          = None
+		self.State: Any     = None
 		self.EventFunctions = {}
 		self.InitialState   = InitialState
 
