@@ -52,13 +52,13 @@ class cStateMachine:
 
 		return
 
-	def SendEvent(self, Event):
+	def SendEvent(self, Event: str):
 		self.__CacheEventFunctions()
 
 		if Event in self.EventFunctions:
 			self.EventFunctions[Event]()
 
-	def SendEventArg(self, Event, Arg):
+	def SendEventArg(self, Event: str, Arg: Any):
 		self.__CacheEventFunctions()
 
 		if Event in self.EventFunctions:
@@ -79,7 +79,7 @@ class cStateMachine:
 
 		self.SendEvent('ENTER')
 
-	def TimeoutInSeconds(self, Seconds):
+	def TimeoutInSeconds(self, Seconds: float):
 		self.Timeout = time.time() + Seconds
 
 	def Terminate(self):

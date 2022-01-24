@@ -214,7 +214,7 @@ class cFastDateTime:
 	def __gt__(self, Right: cFastDateTime) -> bool:
 		return self.FastDateTime > Right.FastDateTime
 
-	def __add__(self, Delta) -> cFastDateTime:
+	def __add__(self, Delta: timedelta) -> cFastDateTime:
 		return cFastDateTime(self.ToDateTime() + Delta)
 
 	@staticmethod
@@ -224,7 +224,7 @@ class cFastDateTime:
 
 class cDisplay(cStateMachine):
 	def __init__(self):
-		cStateMachine.__init__(self, self.STATE_Running, Debug=False)
+		cStateMachine.__init__(self, self.STATE_Running, Debug = False)
 		self.DotsOutput = 0
 		self.Run()
 
@@ -233,12 +233,12 @@ class cDisplay(cStateMachine):
 			if PROGRESS_DOTS['ENABLED']:
 				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
 
-		def PRINT(String):
+		def PRINT(text: str):
 			if self.DotsOutput > 0:
 				print('')
 
-			String = Stripped(String)
-			print(String)
+			text = Stripped(text)
+			print(text)
 			self.DotsOutput = 0
 
 			if PROGRESS_DOTS['ENABLED']:
@@ -258,8 +258,8 @@ class cDisplay(cStateMachine):
 
 		return locals()
 
-	def Print(self, String = ''):
-		self.SendEventArg('PRINT', String)
+	def Print(self, text: str = ''):
+		self.SendEventArg('PRINT', text)
 
 class cHTTP:
 	SILENT, FATAL, WARN = range(3)
@@ -342,7 +342,7 @@ class cSked(cStateMachine):
 
 		return locals()
 
-	def HandleLogins(self, SkedLogins: list[list[str]], Heading):
+	def HandleLogins(self, SkedLogins: list[list[str]], Heading: str):
 		SkedHit: dict[str, list[str]] = {}
 		GoalList: list[str] = []
 		TargetList: list[str] = []
@@ -488,22 +488,24 @@ class cSked(cStateMachine):
 			Display.Print('=======================================')
 
 class cRBN_Filter(cRBN_Client):
+	LastSpotted: dict[str, tuple[float, float]]
+	Notified: dict[str, float]
+
 	Zulu_RegEx = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
 	dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
 	def __init__(self, SocketLoop: cSocketLoop, CallSign: str, Clusters: str):
 		cRBN_Client.__init__(self, SocketLoop, CallSign, Clusters)
-		self.bData = b''
-		self.LastSpotted: dict[str, str] = {}
+		self.Data = ''
+		self.LastSpotted = {}
 		self.Notified = {}
 		self.RenotificationDelay = NOTIFICATION['RENOTIFICATION_DELAY_SECONDS']
 
-	def RawData(self, bData: bytes):
-		self.bData += bData
+	def RawData(self, Data: str):
+		self.Data += Data
 
-		while b'\r\n' in self.bData:
-			bLine, self.bData = self.bData.split(b'\r\n', 1)
-			Line = bLine.decode('ascii')
+		while '\r\n' in self.Data:
+			Line, self.Data = self.Data.split('\r\n', 1)
 			self.HandleSpot(Line)
 
 	@staticmethod
@@ -723,12 +725,17 @@ class cQSO(cStateMachine):
 	ContactsForC:     dict[str, tuple[str, str, str]]
 	ContactsForT:     dict[str, tuple[str, str, str]]
 	ContactsForS:     dict[str, tuple[str, str, str]]
+
 	ContactsForWAS:   dict[str, tuple[str, str, str]]
 	ContactsForWAS_C: dict[str, tuple[str, str, str]]
 	ContactsForWAS_T: dict[str, tuple[str, str, str]]
 	ContactsForWAS_S: dict[str, tuple[str, str, str]]
 	ContactsForP:     dict[str, tuple[str, str, int, str]]
-	ContactsForK3Y:   dict[str, tuple[str, str, str]]
+	ContactsForK3Y:   Any  # Resolve this type
+
+	QSOsByMemberNumber: dict[str, list[str]]
+
+	QSOs: list[tuple[str, str, str, float, str]]
 
 	Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -745,7 +752,7 @@ class cQSO(cStateMachine):
 		self.ContactsForWAS_T   = {}
 		self.ContactsForWAS_S   = {}
 		self.ContactsForP       = {}
-		self.ContactsForK3Y     = {}
+		self.ContactsForK3Y     = []
 		self.QSOsByMemberNumber = {}
 
 		self.ReadQSOs()
@@ -861,7 +868,7 @@ class cQSO(cStateMachine):
 				print(f'FYI: You qualify for Px{P_Level} but have not yet applied for it.')
 
 	@staticmethod
-	def CalculateNumerics(Class, Total):
+	def CalculateNumerics(Class: str, Total: int) -> tuple[int, int]:
 		Increment = Levels[Class]
 		SinceLastAchievement = Total % Increment
 
@@ -897,7 +904,7 @@ class cQSO(cStateMachine):
 
 			AdiFileMatches = Adi_RegEx.findall(RecordText)
 
-			Record = {}
+			Record: dict[str, str] = {}
 
 			for Key, Value in AdiFileMatches:
 				Record[Key.upper()] = Value
@@ -924,7 +931,7 @@ class cQSO(cStateMachine):
 			if 'MODE' in Record and Record['MODE'] != 'CW':
 				continue
 
-			fFrequency = None
+			fFrequency = 0.0
 
 			if 'FREQ' in Record:
 				try:
@@ -934,7 +941,7 @@ class cQSO(cStateMachine):
 
 			QsoCallSign = Record['CALL']
 			QsoDate     = Record['QSO_DATE']+Record['TIME_ON']
-			QsoSPC      = Record['STATE'] if 'STATE' in Record else None
+			QsoSPC      = Record['STATE'] if 'STATE' in Record else ''
 			QsoFreq     = fFrequency
 			QsoComment  = Record['COMMENT'] if 'COMMENT' in Record else ''
 
@@ -965,7 +972,7 @@ class cQSO(cStateMachine):
 		return iPoints
 
 	def PrintProgress(self) -> None:
-		def PrintRemaining(Class, Total):
+		def PrintRemaining(Class: str, Total: int):
 			Remaining, X_Factor = cQSO.CalculateNumerics(Class, Total)
 
 			if Class in GOALS:
@@ -994,11 +1001,11 @@ class cQSO(cStateMachine):
 
 		PrintRemaining('P', self.CalcPrefixPoints())
 
-		def RemainingStates(Class, QSOs) -> None:
+		def RemainingStates(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
 			if len(QSOs) == len(US_STATES):
 				Need = 'none needed'
 			else:
-				RemainingStates = [State for State in US_STATES if State not in QSOs]
+				RemainingStates = [State  for State in US_STATES  if State not in QSOs]
 
 				if len(RemainingStates) > 14:
 					Need = f'only need {len(RemainingStates)} more'
@@ -1215,7 +1222,7 @@ class cQSO(cStateMachine):
 		QSOs.GetGoalQSOs()
 		self.PrintProgress()
 
-	def GetBragQSOs(self, PrevMonth=0, Print=False):
+	def GetBragQSOs(self, PrevMonth: int = 0, Print: bool = False):
 		self.Brag = {}
 
 		DateOfInterestGMT = cFastDateTime.NowGMT()
@@ -1285,7 +1292,7 @@ class cQSO(cStateMachine):
 			print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(self.Brag)}')
 
 	def GetGoalQSOs(self):
-		def Good(QsoDate, MemberDate, MyDate, EligibleDate = None):
+		def Good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None):
 			if MemberDate == '' or MyDate == '':
 				return False
 
@@ -1297,6 +1304,7 @@ class cQSO(cStateMachine):
 		self.ContactsForC     = {}
 		self.ContactsForT     = {}
 		self.ContactsForS     = {}
+
 		self.ContactsForWAS   = {}
 		self.ContactsForWAS_C = {}
 		self.ContactsForWAS_T = {}
@@ -1412,7 +1420,7 @@ class cQSO(cStateMachine):
 						if QsoSPC not in self.ContactsForWAS_S:
 							self.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-		def AwardP(QSOs):
+		def AwardP(QSOs: dict[str, tuple[str, str, int, str]]):
 			PrefixList = QSOs.values()
 			PrefixList = sorted(PrefixList, key=lambda QsoTuple: QsoTuple[1])
 
@@ -1422,8 +1430,8 @@ class cQSO(cStateMachine):
 					iPoints += iMemberNumber
 					File.write(f'{Index+1:>4} {iMemberNumber:>8} {FirstName:<10.10} {Prefix:<6} {iPoints:>12,}\n')
 
-		def AwardCTS(Class, QSOs):
-			QSOs = QSOs.values()
+		def AwardCTS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]):
+			QSOs = QSOs_dict.values()
 			QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
 			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
@@ -1431,8 +1439,8 @@ class cQSO(cStateMachine):
 					Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 					File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
 
-		def AwardWAS(Class, QSOs):
-			QSOs = QSOs.values()
+		def AwardWAS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]):
+			QSOs = QSOs_dict.values()
 			QSOs = sorted(QSOs, key=lambda QsoTuple: QsoTuple[0])
 
 			QSOsByState = {QsoSPC: (QsoSPC, QsoDate, QsoCallsign) for QsoSPC, QsoDate, QsoCallsign in QSOs}
@@ -1446,7 +1454,7 @@ class cQSO(cStateMachine):
 					else:
 						File.write(f'{State}\n')
 
-		def TrackBRAG(QSOs):
+		def TrackBRAG(QSOs: Any):
 			QSOs = QSOs.values()
 			QSOs = sorted(QSOs)
 
@@ -1459,6 +1467,7 @@ class cQSO(cStateMachine):
 						File.write(f'{Count+1:<4} {Date}  {TheirMemberNumber:<6}  {MainCallSign}\n')
 
 		QSOs_Dir = 'QSOs'
+
 		if not os.path.exists(QSOs_Dir):
 			os.makedirs(QSOs_Dir)
 
@@ -1492,8 +1501,8 @@ class cQSO(cStateMachine):
 			print()
 
 
-			def PrintStation(Station):
-				def PrintBand(Band):
+			def PrintStation(Station: str):
+				def PrintBand(Band: int):
 					if (Station in self.ContactsForK3Y) and (Band in self.ContactsForK3Y[Station]):
 						print(f'{" " + self.ContactsForK3Y[Station][Band]: <7}|', end = '')
 					else:
@@ -1540,7 +1549,7 @@ class cSpotters:
 		self.Spotters: dict[str, tuple[int, list[int]]] = {}
 
 	@staticmethod
-	def locator_to_latlong(locator):
+	def locator_to_latlong(locator: str):
 		''' From pyhamtools '''
 
 		'''
@@ -1637,7 +1646,7 @@ class cSpotters:
 		return latitude, longitude
 
 	@staticmethod
-	def calculate_distance(locator1, locator2):
+	def calculate_distance(locator1: str, locator2: str):
 		''' From pyhamtools '''
 
 		'''
@@ -1705,10 +1714,10 @@ class cSpotters:
 		return d
 
 	def GetSpotters(self):
-		def ParseBands(BandString):
+		def ParseBands(bandStringCsv: str):
 			# Each band ends with an 'm'.
 
-			BandList = [int(x[:-1]) for x in BandString.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
+			BandList = [int(x[:-1]) for x in bandStringCsv.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
 			return BandList
 
 		print('')
@@ -1724,7 +1733,7 @@ class cSpotters:
 		bHTML = bHTML.rstrip()
 		HTML  = bHTML.decode('utf-8', 'ignore')
 
-		Rows = []
+		Rows: list[str] = []
 
 		while HTML.find('online24h online7d total">') != -1:
 			EndIndex  = HTML.find('</tr>')
@@ -1874,8 +1883,6 @@ class cSKCC:
 
 	@staticmethod
 	def BlockDuringUpdateWindow():
-		UpdateTime = '000000'  # 00:00:00Z
-
 		def TimeNowGMT():
 			TimeNowGMT = time.strftime('%H%M00', time.gmtime())
 			return int(TimeNowGMT)
@@ -2076,7 +2083,7 @@ class cSKCC:
 		return None
 
 	@staticmethod
-	def WhichArrlBand(fFrequency: float) -> int:
+	def WhichArrlBand(fFrequency: float) -> int | None:
 		if fFrequency > 1800 and fFrequency < 2000:
 			return 160
 
@@ -2107,7 +2114,7 @@ class cSKCC:
 		if fFrequency > 50000 and fFrequency < 54000:
 			return 6
 
-		return 0
+		return None
 
 	@staticmethod
 	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10):
@@ -2158,7 +2165,7 @@ def LogError(Line: str):
 		with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
-def signal_handler(_signal, _frame):
+def signal_handler(_signal: Any, _frame: Any):
 	sys.exit()
 
 def AbbreviateClass(Class: str, X_Factor: int) -> str:

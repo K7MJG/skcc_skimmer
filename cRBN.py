@@ -47,7 +47,7 @@ MasterClusterList = {
 
 class cRBN:
 	def __init__(self):
-		self.bIncoming = b''
+		self.Incoming = ''
 		self.bOutgoing = b''
 		self.Socket: socket.SocketType
 
@@ -62,7 +62,7 @@ class cRBN:
 			if not bData:
 				return False
 
-			self.bIncoming += bData
+			self.Incoming += bData.decode('utf-8')
 			return True
 
 	def SentAll(self):
@@ -75,6 +75,8 @@ class cRBN:
 			return len(self.bOutgoing) == 0
 
 class cRBN_Client(cRBN, cStateMachine):
+	AddressTuple: tuple[str, int]
+
 	def __init__(self, SocketLoop: cSocketLoop, CallSign: str, Clusters: str):
 		cRBN.__init__(self)
 		cStateMachine.__init__(self, self.STATE_ConnectingToRBN, Debug = False)
@@ -83,7 +85,7 @@ class cRBN_Client(cRBN, cStateMachine):
 		self.CallSign          = CallSign
 		self.MasterClusterList = MasterClusterList
 		self.Iter: Any         = None
-		self.AddressTuple      = []
+		self.AddressTuple      = ('', 0)
 		self.Cluster           = None
 
 		if ',' in Clusters:
@@ -92,17 +94,17 @@ class cRBN_Client(cRBN, cStateMachine):
 			self.Clusters = Clusters.upper().split()
 
 	@staticmethod
-	def FindEnd(What, String):
-		Index = String.find(What)
+	def FindEnd(What: str, text: str):
+		index = text.find(What)
 
-		if Index == -1:
+		if index == -1:
 			return None
 
-		return Index + len(String)
+		return index + len(text)
 
 	def STATE_ConnectingToRBN(self):
 		def ENTER():
-			AddressTupleList: list[tuple[str, int]] = []
+			AddressTupleList: list[tuple[str, tuple[str, int]]] = []
 
 			for ClusterKey in self.Clusters:
 				ServerList = self.MasterClusterList[ClusterKey]
@@ -150,7 +152,7 @@ class cRBN_Client(cRBN, cStateMachine):
 						time.sleep(1)
 						continue
 					else:
-						self.TimeoutInSeconds(.250)
+						self.TimeoutInSeconds(0.250)
 						break
 			else:
 				print('Failed to connect to any server.')
@@ -179,16 +181,16 @@ class cRBN_Client(cRBN, cStateMachine):
 			if not self.Receive():
 				self.Transition(self.STATE_Closing)
 			else:
-				if self.bIncoming == b'\xff\xfc\x22':
+				if self.Incoming == '\xff\xfc\x22':
 					# Special, strange prompt sequence from relay2
-					self.bIncoming = b''
+					self.Incoming = ''
 					self.Transition(self.STATE_SendingCallSign)
 				else:
 					# Normal prompt
-					End = cRBN_Client.FindEnd('call: ', self.bIncoming.decode('ascii'))
+					End = cRBN_Client.FindEnd('call: ', self.Incoming)
 
 					if End:
-						self.bIncoming = self.bIncoming[End:]
+						self.Incoming = self.Incoming[End:]
 						self.Transition(self.STATE_SendingCallSign)
 
 
@@ -227,20 +229,20 @@ class cRBN_Client(cRBN, cStateMachine):
 			if not self.Receive():
 				self.Transition(self.STATE_Closing)
 			else:
-				End = cRBN_Client.FindEnd(b'>\r\n\r\n', self.bIncoming)
+				End = cRBN_Client.FindEnd('>\r\n\r\n', self.Incoming)
 
 				if End:
 					# Normal header.
 
-					self.bIncoming = self.bIncoming[End:]
+					self.Incoming = self.Incoming[End:]
 					self.Transition(self.STATE_ConnectedToRBN)
 				else:
 					# For some reason, relay2 is special.
 
-					End = cRBN_Client.FindEnd(b"Welcome to RBN's bulk spots telnet server.\r\n", self.bIncoming)
+					End = cRBN_Client.FindEnd("Welcome to RBN's bulk spots telnet server.\r\n", self.Incoming)
 
 					if End:
-						self.bIncoming = self.bIncoming[End:]
+						self.Incoming = self.Incoming[End:]
 						self.Transition(self.STATE_ConnectedToRBN)
 
 		def TIMEOUT():
@@ -263,8 +265,8 @@ class cRBN_Client(cRBN, cStateMachine):
 				print('\nLost connection.  Attempting to reconnect...')
 				self.Transition(self.STATE_PauseAndReconnect)
 			else:
-				self.RawData(self.bIncoming)
-				self.bIncoming = b''
+				self.RawData(self.Incoming)
+				self.Incoming = b''
 
 		def TIMEOUT():
 			print(f'\nNo activity for {self.InactivityTimeoutSeconds} seconds.  Attempting to reconnect.')
@@ -288,5 +290,5 @@ class cRBN_Client(cRBN, cStateMachine):
 
 		return locals()
 
-	def RawData(self, bData: bytes):
+	def RawData(self, Data: str):
 		pass
