@@ -32,9 +32,10 @@ import time
 from typing import Any
 
 class cStateMachine:
-	StateMachines = {}
+	StateMachines: dict[Any, bool] = {}
+	EventFunctions: dict[str, Any]
 
-	def __init__(self, InitialState, Debug = False):
+	def __init__(self, InitialState: Any, Debug: bool = False):
 		cStateMachine.StateMachines[self] = True
 
 		self.Debug          = Debug
@@ -64,7 +65,7 @@ class cStateMachine:
 		if Event in self.EventFunctions:
 			self.EventFunctions[Event](Arg)
 
-	def Transition(self, To):
+	def Transition(self, To: str):
 		if self.State is not None:
 			if self.Debug:
 				print(f'<<< {self.__class__.__name__}.{self.State.__name__}...')

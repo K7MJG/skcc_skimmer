@@ -266,7 +266,7 @@ class cRBN_Client(cRBN, cStateMachine):
 				self.Transition(self.STATE_PauseAndReconnect)
 			else:
 				self.RawData(self.Incoming)
-				self.Incoming = b''
+				self.Incoming = ''
 
 		def TIMEOUT():
 			print(f'\nNo activity for {self.InactivityTimeoutSeconds} seconds.  Attempting to reconnect.')

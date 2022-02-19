@@ -32,10 +32,11 @@ import errno
 import socket
 import select
 
+from typing        import Any
 from cStateMachine import cStateMachine
 
 class cSocketLoop:
-	def __init__(self, Timeout = .1, Debug = False):
+	def __init__(self, Timeout: float = 0.1, Debug: bool = False):
 		self.Timeout          = Timeout
 		self.Debug            = Debug
 		self.ReaderSockets    = {}
@@ -57,10 +58,10 @@ class cSocketLoop:
 	def AddConnector(self, Socket, NotificationObject):
 		self.ConnectorSockets[Socket] = NotificationObject
 
-	def RemoveConnector(self, Socket):
+	def RemoveConnector(self, Socket: Any):
 		self.ConnectorSockets.pop(Socket)
 
-	def RunCount(self, Count):
+	def RunCount(self, Count: int):
 		for I in range(0, Count):
 			self.RunOne()
 
