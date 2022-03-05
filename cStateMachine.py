@@ -29,7 +29,7 @@
 '''
 import time
 
-from typing import Any
+from typing import Any, Callable
 
 class cStateMachine:
 	StateMachines: dict[Any, bool] = {}
@@ -65,7 +65,7 @@ class cStateMachine:
 		if Event in self.EventFunctions:
 			self.EventFunctions[Event](Arg)
 
-	def Transition(self, To: str):
+	def Transition(self, To: Callable[..., Any]):
 		if self.State is not None:
 			if self.Debug:
 				print(f'<<< {self.__class__.__name__}.{self.State.__name__}...')

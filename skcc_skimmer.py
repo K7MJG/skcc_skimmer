@@ -108,12 +108,17 @@ from cSocketLoop   import cSocketLoop
 from cStateMachine import cStateMachine
 from cRBN          import cRBN_Client
 
-PROGRESS_DOTS = {}
+class cLOG_FILE:
+	FILE_NAME: str
+	ENABLED: bool
+	DELETE_ON_STARTUP: bool
+
+PROGRESS_DOTS = { 'DISPLAY_SECONDS': 1, 'ENABLED': True, 'DOTS_PER_LINE': 50 }
 NOTIFICATION: Any = {}
-LOG_FILE = {}
+LOG_FILE = { 'FILE_NAME': '', 'ENABLED': True, 'DELETE_ON_STARTUP': False}
 HIGH_WPM = {}
-SKED = {}
-OFF_FREQUENCY = {}
+SKED = { 'CHECK_SECONDS': 1, 'ENABLED': True }
+OFF_FREQUENCY = { 'TOLERANCE': 1 }
 EXCLUSIONS = ''
 FRIENDS = ''
 MY_CALLSIGN = ''
@@ -146,7 +151,7 @@ class cFastDateTime:
 
 	MonthNames = 'January February March April May June July August September October November December'.split()
 
-	def __init__(self, Object: object) -> None:
+	def __init__(self, Object: datetime | time.struct_time | tuple[int, int, int] | tuple[int, int, int, int, int, int] | str | None) -> None:
 		if isinstance(Object, datetime):
 			self.FastDateTime = Object.strftime('%Y%m%d%H%M%S')
 
@@ -163,6 +168,9 @@ class cFastDateTime:
 
 		elif isinstance(Object, str):
 			self.FastDateTime = Object
+
+		else:
+			self.FastDateTime = ''
 
 	def SplitDateTime(self) -> list[int]:
 		List: list[int] = []
@@ -229,7 +237,7 @@ class cDisplay(cStateMachine):
 		self.Run()
 
 	def STATE_Running(self):
-		def ENTER(): # pyright: disable=unused-variable
+		def ENTER():
 			if PROGRESS_DOTS['ENABLED']:
 				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
 
@@ -256,6 +264,7 @@ class cDisplay(cStateMachine):
 			if PROGRESS_DOTS['ENABLED']:
 				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
 
+		_ = ENTER, PRINT, TIMEOUT # Forced reference for type checking.
 		return locals()
 
 	def Print(self, text: str = ''):
@@ -340,6 +349,7 @@ class cSked(cStateMachine):
 		def TIMEOUT():
 			Common()
 
+		_ = ENTER, TIMEOUT
 		return locals()
 
 	def HandleLogins(self, SkedLogins: list[list[str]], Heading: str):
@@ -733,6 +743,9 @@ class cQSO(cStateMachine):
 	ContactsForP:     dict[str, tuple[str, str, int, str]]
 	ContactsForK3Y:   Any  # Resolve this type
 
+	Brag: dict[str, tuple[str, str, str, float]]
+
+
 	QSOsByMemberNumber: dict[str, list[str]]
 
 	QSOs: list[tuple[str, str, str, float, str]]
@@ -790,6 +803,7 @@ class cQSO(cStateMachine):
 
 			self.TimeoutInSeconds(self.RefreshPeriodSeconds)
 
+		_ = ENTER, TIMEOUT
 		return locals()
 
 	def AwardsCheck(self):
@@ -965,8 +979,8 @@ class cQSO(cStateMachine):
 	def CalcPrefixPoints(self) -> int:
 		iPoints = 0
 
-		for Prefix, Value in self.ContactsForP.items():
-			_QsoDate, Prefix, iMemberNumber, _FirstName = Value
+		for _, Value in self.ContactsForP.items():
+			_, _, iMemberNumber, _FirstName = Value
 			iPoints += iMemberNumber
 
 		return iPoints
@@ -1312,9 +1326,9 @@ class cQSO(cStateMachine):
 		self.ContactsForP     = {}
 		self.ContactsForK3Y   = {}
 
-		TodayGMT = cFastDateTime.NowGMT()
-		fastStartOfMonth = TodayGMT.StartOfMonth()
-		fastEndOfMonth   = TodayGMT.EndOfMonth()
+		#TodayGMT = cFastDateTime.NowGMT()
+		#fastStartOfMonth = TodayGMT.StartOfMonth()
+		#fastEndOfMonth   = TodayGMT.EndOfMonth()
 
 		if 'BRAG_MONTHS' in globals() and 'BRAG' in GOALS:
 			for PrevMonth in range( abs(BRAG_MONTHS), 0, -1 ):
@@ -1344,7 +1358,7 @@ class cQSO(cStateMachine):
 
 			TheirMemberNumber = TheirMemberEntry['plain_number']
 
-			fastQsoDate = cFastDateTime(QsoDate)
+			#fastQsoDate = cFastDateTime(QsoDate)
 
 			# K3Y
 			if 'K3Y' in GOALS:
@@ -1448,7 +1462,7 @@ class cQSO(cStateMachine):
 			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
 				for State in US_STATES:
 					if State in QSOsByState:
-						QsoSPC, QsoDate, QsoCallSign = QSOsByState[State]
+						QsoSPC, _, QsoCallSign = QSOsByState[State]
 						FormattedDate = 'f{(QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 						File.write(f'{QsoSPC}    {QsoCallSign:<12}  {FormattedDate}\n')
 					else:
@@ -1703,9 +1717,9 @@ class cSpotters:
 		d_long = radians(long2) - radians(long1)
 
 		r_lat1 = radians(lat1)
-		r_long1 = radians(long1)
+		#r_long1 = radians(long1)
 		r_lat2 = radians(lat2)
-		r_long2 = radians(long2)
+		#r_long2 = radians(long2)
 
 		a = sin(d_lat/2) * sin(d_lat/2) + cos(r_lat1) * cos(r_lat2) * sin(d_long/2) * sin(d_long/2)
 		c = 2 * atan2(sqrt(a), sqrt(1-a))
@@ -1748,7 +1762,7 @@ class cSpotters:
 		for Row in Rows:
 			ColumnMatches = Columns_RegEx.findall(Row)
 
-			for Column in (x for I, x in enumerate(ColumnMatches)):
+			for Column in (x for _, x in enumerate(ColumnMatches)):
 				Spotter, csvBands, Grid = Column
 
 				if Grid == 'XX88LL':
@@ -2679,7 +2693,7 @@ def FormatDistance(Miles: int) -> str:
 
 NearbyList = Spotters.GetNearbySpotters()
 SpotterList = [f'{Spotter}({FormatDistance(Miles)})'  for Spotter, Miles in NearbyList]
-SPOTTERS_NEARBY = [Spotter  for Spotter, Miles in NearbyList]
+SPOTTERS_NEARBY = [Spotter  for Spotter, _ in NearbyList]
 
 print(f'  Found {len(SpotterList)} spotters:')
 
@@ -2690,7 +2704,7 @@ for Element in List:
 
 
 if LOG_FILE['DELETE_ON_STARTUP']:
-	Filename = LOG_FILE['FILE_NAME']
+	Filename = str(LOG_FILE['FILE_NAME'])
 
 	if os.path.exists(Filename):
 		os.remove(Filename)

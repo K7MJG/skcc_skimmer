@@ -36,6 +36,10 @@ from typing        import Any
 from cStateMachine import cStateMachine
 
 class cSocketLoop:
+	ReaderSockets:    dict[Any, cStateMachine]
+	WriterSockets:    dict[Any, cStateMachine]
+	ConnectorSockets: dict[Any, cStateMachine]
+
 	def __init__(self, Timeout: float = 0.1, Debug: bool = False):
 		self.Timeout          = Timeout
 		self.Debug            = Debug
@@ -43,26 +47,26 @@ class cSocketLoop:
 		self.WriterSockets    = {}
 		self.ConnectorSockets = {}
 
-	def AddReader(self, Socket, NotificationObject):
+	def AddReader(self, Socket: Any, NotificationObject: cStateMachine):
 		self.ReaderSockets[Socket] = NotificationObject
 
-	def RemoveReader(self, Socket):
+	def RemoveReader(self, Socket: Any):
 		self.ReaderSockets.pop(Socket)
 
-	def AddWriter(self, Socket, NotificationObject):
+	def AddWriter(self, Socket: Any, NotificationObject: cStateMachine):
 		self.WriterSockets[Socket] = NotificationObject
 
-	def RemoveWriter(self, Socket):
+	def RemoveWriter(self, Socket: Any):
 		self.WriterSockets.pop(Socket)
 
-	def AddConnector(self, Socket, NotificationObject):
+	def AddConnector(self, Socket: Any, NotificationObject: cStateMachine):
 		self.ConnectorSockets[Socket] = NotificationObject
 
 	def RemoveConnector(self, Socket: Any):
 		self.ConnectorSockets.pop(Socket)
 
 	def RunCount(self, Count: int):
-		for I in range(0, Count):
+		for _ in range(0, Count):
 			self.RunOne()
 
 	def Run(self):
@@ -85,12 +89,12 @@ class cSocketLoop:
 
 			if self.WriterSockets:
 				for WriterSocket in self.WriterSockets:
-					print('WAITING TO WRITE:', self.WriterSockets)
+					print('WAITING TO WRITE:', WriterSocket)
 
 			print('ReaderSockets: ', self.ReaderSockets)
 			print('WriterSockets: ', AllWriters)
 
-		ReadableSockets, WriteableSockets, ErrList = select.select(self.ReaderSockets, AllWriters, [], self.Timeout)
+		ReadableSockets, WriteableSockets, _ = select.select(self.ReaderSockets, AllWriters, [], self.Timeout)
 
 		for Socket in ReadableSockets:
 			if self.Debug:

@@ -158,6 +158,7 @@ class cRBN_Client(cRBN, cStateMachine):
 				print('Failed to connect to any server.')
 				self.Transition(self.STATE_PauseAndReconnect)
 
+		_ = ENTER, CONNECTED, REFUSED, TIMEOUT
 		return locals()
 
 	def STATE_PauseAndReconnect(self):
@@ -167,6 +168,7 @@ class cRBN_Client(cRBN, cStateMachine):
 		def TIMEOUT():
 			self.Transition(self.STATE_ConnectingToRBN)
 
+		_ = ENTER, TIMEOUT
 		return locals()
 
 	def STATE_WaitingForPrompt(self):
@@ -198,6 +200,7 @@ class cRBN_Client(cRBN, cStateMachine):
 			print('Timed out')
 			self.Transition(self.STATE_Closing)
 
+		_ = ENTER, EXIT, READY_TO_READ, TIMEOUT
 		return locals()
 
 	def STATE_SendingCallSign(self):
@@ -215,6 +218,7 @@ class cRBN_Client(cRBN, cStateMachine):
 			if self.SentAll():
 				self.Transition(self.STATE_WaitingForHeader)
 
+		_ = ENTER, EXIT, READY_TO_WRITE
 		return locals()
 
 	def STATE_WaitingForHeader(self):
@@ -248,6 +252,7 @@ class cRBN_Client(cRBN, cStateMachine):
 		def TIMEOUT():
 			self.Transition(self.STATE_Closing)
 
+		_ = ENTER, EXIT, READY_TO_READ, TIMEOUT
 		return locals()
 
 	def STATE_ConnectedToRBN(self):
@@ -274,6 +279,7 @@ class cRBN_Client(cRBN, cStateMachine):
 			self.Socket.close()
 			self.Transition(self.STATE_PauseAndReconnect)
 
+		_ = ENTER, EXIT, READY_TO_READ, TIMEOUT
 		return locals()
 
 	def STATE_Closing(self):
@@ -282,12 +288,14 @@ class cRBN_Client(cRBN, cStateMachine):
 			self.Socket.close()
 			self.Transition(self.STATE_Closed)
 
+		_ = ENTER
 		return locals()
 
 	def STATE_Closed(self):
 		def ENTER():
 			pass
 
+		_ = ENTER
 		return locals()
 
 	def RawData(self, Data: str):
