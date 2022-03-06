@@ -91,7 +91,6 @@ import sys
 import os
 import socket
 import re
-import getopt
 import string
 import textwrap
 import calendar
@@ -100,231 +99,15 @@ import json
 from datetime import timedelta
 from datetime import datetime
 
-from typing        import NoReturn, Any, Literal
+from typing        import NoReturn, Any
 
 from math          import radians, sin, cos, atan2, sqrt
 
 from cSocketLoop   import cSocketLoop
 from cStateMachine import cStateMachine
 from cRBN          import cRBN_Client
-
-def Split(text: str) -> list[str]:
-	return re.split('[, ][ ]*', text.strip())
-
-class cConfig:
-	class cProgressDots:
-		ENABLED:         bool
-		DISPLAY_SECONDS: int
-		DOTS_PER_LINE:   int
-	PROGRESS_DOTS = cProgressDots()
-
-	class cLogFile:
-		FILE_NAME:         str
-		ENABLED:           bool
-		LOG_FILE:          str
-		DELETE_ON_STARTUP: bool
-	LOG_FILE = cLogFile()
-
-	class cHighWpm:
-		ACTION:    Literal['suppress', 'warn', 'always-display']
-		THRESHOLD: int
-	HIGH_WPM = cHighWpm
-
-	class cOffFrequency:
-		ACTION:    Literal['suppress', 'warn']
-		TOLERANCE: int
-	OFF_FREQUENCY = cOffFrequency()
-
-	class cSked:
-		ENABLED:       bool
-		CHECK_SECONDS: int
-	SKED = cSked
-
-	class cNotification:
-		ENABLED:                      bool
-		CONDITION:                    Literal['goals', 'targets', 'friends']
-		RENOTIFICATION_DELAY_SECONDS: int
-	NOTIFICATION = cNotification
-
-
-	MY_CALLSIGN:   str
-	ADI_FILE:      str
-	MY_GRIDSQUARE: str
-	GOALS:         list[str]
-	TARGETS:       list[str]
-	BANDS:         list[int]
-	FRIENDS:       list[str]
-	EXCLUSIONS:    list[str]
-
-	def __init__(self, ArgV: list[str]):
-		def GetConfiguration() -> dict[str, Any]:
-
-			try:
-				with open('skcc_skimmer.cfg', 'r', encoding='utf-8') as File:
-					ConfigFileString = File.read()
-					exec(ConfigFileString)
-			except IOError:
-				print("Unable to open configuration file 'skcc_skimmer.cfg'.")
-				sys.exit()
-
-			return locals()
-
-		configFile = GetConfiguration()
-
-		if 'MY_CALLSIGN' in configFile:
-			self.MY_CALLSIGN = configFile['MY_CALLSIGN']
-
-		if 'ADI_FILE' in configFile:
-			self.ADI_FILE = configFile['ADI_FILE']
-
-		if 'MY_GRIDSQUARE' in configFile:
-			self.MY_GRIDSQUARE = configFile['MY_GRIDSQUARE']
-
-		if 'GOALS' in configFile:
-			self.GOALS = configFile['GOALS']
-
-		if 'TARGETS' in configFile:
-			self.TARGETS = configFile['TARGETS']
-
-		if 'BANDS' in configFile:
-			self.BANDS = [int(Band)  for Band in Split(configFile['BANDS'])]
-
-		if 'FRIENDS' in configFile:
-			self.FRIENDS = [friend  for friend in Split(configFile['FRIENDS'])]
-
-		if 'EXCLUSIONS' in configFile:
-			self.EXCLUSIONS = [friend  for friend in Split(configFile['EXCLUSIONS'])]
-
-		if 'LOG_FILE' in configFile:
-			logFile = configFile['LOG_FILE']
-
-			if 'ENABLED' in logFile:
-				self.LOG_FILE.ENABLED = logFile['ENABLED']
-
-			if 'FILE_NAME' in logFile:
-				self.LOG_FILE.FILE_NAME = logFile['FILE_NAME']
-
-			if 'DELETE_ON_STARTUP' in logFile:
-				self.LOG_FILE.DELETE_ON_STARTUP = logFile['DELETE_ON_STARTUP']
-
-		if 'SKED' in configFile:
-			sked = configFile['SKED']
-
-			if 'ENABLED' in sked:
-				self.SKED.ENABLED = sked['ENABLED']
-
-			if 'CHECK_SECONDS' in sked:
-				self.SKED.ENABLED = sked['CHECK_SECONDS']
-
-		if 'OFF_FREQUENCY' in configFile:
-			offFrequency = configFile['OFF_FREQUENCY']
-
-			if 'ACTION' in offFrequency:
-				self.OFF_FREQUENCY.ACTION = offFrequency['ACTION']
-
-			if 'TOLERANCE' in offFrequency:
-				self.OFF_FREQUENCY.TOLERANCE = offFrequency['TOLERANCE']
-
-		if 'HIGH_WPM' in configFile:
-			highWpm = configFile['HIGH_WPM']
-
-			if 'ACTION' in highWpm:
-				self.HIGH_WPM.ACTION = highWpm['ACTION']
-
-			if 'THRESHOLD' in highWpm:
-				self.HIGH_WPM.THRESHOLD = highWpm['THRESHOLD']
-
-		self.ParseArgs(ArgV = sys.argv[1:])
-
-	def ParseArgs(self, ArgV: list[str]):
-		try:
-			Options, _ = getopt.getopt(ArgV, \
-					'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'.replace(' ', ''), \
-					'adi= bands= brag-months= callsign= distance-units= goals= help interactive logfile= maidenhead= notification= radius= sked= targets= verbose'.split())
-		except getopt.GetoptError as e:
-			print(e)
-			Usage()
-
-		HaveCallSign = False
-
-		if 'VERBOSE' not in globals():
-			self.VERBOSE = False
-
-		if 'LOG_BAD_SPOTS' not in globals():
-			self.LOG_BAD_SPOTS = False
-
-		self.INTERACTIVE = False
-
-		for Option, Arg in Options:
-			if Option in ('-a', '--adi'):
-				self.ADI_FILE = Arg
-
-			elif Option in ('-b', '--bands'):
-				self.BANDS = [int(Band)  for Band in Split(Arg)]
-
-			elif Option in ('-B', '--brag-months'):
-				self.BRAG_MONTHS = int(Arg)
-
-			elif Option in ('-c', '--callsign'):
-				self.MY_CALLSIGN = Arg.upper()
-				HaveCallSign = True
-
-			elif Option in ('-d', '--distance-units'):
-				Arg = Arg.lower()
-
-				if Arg not in ('mi', 'km'):
-					print("DISTANCE_UNITS option must be either 'mi' or 'km'.")
-					sys.exit()
-
-				self.DISTANCE_UNITS = Arg
-
-			elif Option in ('-g', '--goals'):
-				config.GOALS = Parse(Arg,   'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
-
-			elif Option in ('-h', '--help'):
-				Usage()
-
-			elif Option in ('-i', '--interactive'):
-				self.INTERACTIVE = True
-
-			elif Option in ('-l', '--logfile'):
-				config.LOG_FILE.ENABLED           = True
-				config.LOG_FILE.DELETE_ON_STARTUP = True
-				config.LOG_FILE.FILE_NAME         = Arg
-
-			elif Option in ('-m', '--maidenhead'):
-				self.MY_GRIDSQUARE = Arg
-
-			elif Option in ('-n', '--notification'):
-				Arg = Arg.lower()
-
-				if Arg not in ('on', 'off'):
-					print("Notificiation option must be either 'on' or 'off'.")
-					sys.exit()
-
-				config.NOTIFICATION.ENABLED = Arg == 'on'
-
-			elif Option in ('-r', '--radius'):
-				self.SPOTTER_RADIUS = int(Arg)
-
-			elif Option in ('-s', '--sked'):
-				Arg = Arg.lower()
-
-				if Arg not in ('on', 'off'):
-					print("SKED option must be either 'on' or 'off'.")
-					sys.exit()
-
-				config.SKED.ENABLED = Arg == 'on'
-
-			elif Option in ('-t', '--targets'):
-				self.TARGETS = Parse(Arg, 'C CXN T TXN S SXN',                                  'target')
-
-			elif Option in ('-v', '--verbose'):
-				self.VERBOSE = True
-
-		if not HaveCallSign:
-			print('no callsign')
-
+from cConfig       import cConfig
+from cCommon       import cCommon
 
 def Effective(Date: str) -> str:
 	TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
@@ -571,7 +354,7 @@ class cSked(cStateMachine):
 				Now = time.time()
 				DeltaSeconds = max(int(Now - StartTime), 1)
 
-				if DeltaSeconds > SPOT_PERSISTENCE_MINUTES * 60:
+				if DeltaSeconds > config.SPOT_PERSISTENCE_MINUTES * 60:
 					del RBN.LastSpotted[CallSign]
 				elif DeltaSeconds > 60:
 					DeltaMinutes = DeltaSeconds // 60
@@ -2463,7 +2246,7 @@ def Lookups(LookupString: str):
 
 		print(f'  {CallSign} - {"; ".join(Report)}')
 
-	LookupList = Split(LookupString.upper())
+	LookupList = cCommon.Split(LookupString.upper())
 
 	for Item in LookupList:
 		Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
@@ -2492,41 +2275,6 @@ def Lookups(LookupString: str):
 			PrintCallSign(CallSign)
 
 	print('')
-
-def Usage() -> NoReturn:
-	print('Usage:')
-	print('')
-	print('   skcc_skimmer.py')
-	print('                   [--adi <adi-file>]')
-	print('                   [--bands <comma-separated-bands>]')
-	print('                   [--brag-months <number-of-months-back>]')
-	print('                   [--callsign <your-callsign>]')
-	print('                   [--goals <goals>]')
-	print('                   [--help]')
-	print('                   [--interactive]')
-	print('                   [--logfile <logfile-name>]')
-	print('                   [--maidenhead <grid-square>]')
-	print('                   [--notification <on|off>]')
-	print('                   [--radius <distance-in-miles>]')
-	print('                   [--targets <targets>]')
-	print('                   [--verbose]')
-	print(' or...')
-	print('')
-	print('   skcc_skimmer.py')
-	print('                   [-a <adi-file>]')
-	print('                   [-b <comma-separated-bands>]')
-	print('                   [-c <your-callsign>]')
-	print('                   [-g <goals>]')
-	print('                   [-h]')
-	print('                   [-i]')
-	print('                   [-l <logfile-name>]')
-	print('                   [-m <grid-square>]')
-	print('                   [-n <on|off>]')
-	print('                   [-r <distance-in-miles>]')
-	print('                   [-t <targets>]')
-	print('                   [-v]')
-	print('')
-	sys.exit()
 
 def FileCheck(Filename: str):
 	if os.path.exists(Filename):
@@ -2571,113 +2319,13 @@ K3Y_YEAR = datetime.now().year
 
 #exec(ConfigFileString)
 
-if 'QUALIFIERS' in globals():
-	print("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
-	sys.exit()
 
-if 'NEARBY' in globals():
-	print("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
-	sys.exit()
-
-if 'SPOTTER_PREFIXES' in globals():
-	print("'SPOTTER_PREFIXES' has been deprecated.")
-	sys.exit()
-
-if 'SPOTTERS_NEARBY' in globals():
-	print("'SPOTTERS_NEARBY' has been deprecated.")
-	sys.exit()
-
-if 'SKCC_FREQUENCIES' in globals():
-	print("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'HITS_FILE' in globals():
-	print("'HITS_FILE' is no longer supported.")
-	sys.exit()
-
-if 'HitCriteria' in globals():
-	print("'HitCriteria' is no longer supported.")
-	sys.exit()
-
-if 'StatusCriteria' in globals():
-	print("'StatusCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SkedCriteria' in globals():
-	print("'SkedCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SkedStatusCriteria' in globals():
-	print("'SkedStatusCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SERVER' in globals():
-	print('SERVER is no longer supported.')
-	sys.exit()
-
-if 'SPOT_PERSISTENCE_MINUTES' not in globals():
-	SPOT_PERSISTENCE_MINUTES = 15
-
-if 'GOAL' in globals():
-	print("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
-	sys.exit()
-
-'''
-if 'GOALS' not in globals():
-	print("GOALS must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'TARGETS' not in globals():
-	print("TARGETS must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'HIGH_WPM' not in globals():
-	print("HIGH_WPM must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if config.HIGH_WPM.ACTION not in ('suppress', 'warn', 'always-display'):
-	print("HIGH_WPM['ACTION'] must be one of ('suppress', 'warn', 'always-display')")
-	sys.exit()
-
-if 'OFF_FREQUENCY' not in globals():
-	print("OFF_FREQUENCY must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if config.OFF_FREQUENCY.ACTION not in ('suppress', 'warn'):
-	print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
-	sys.exit()
-'''
 
 if 'BANDS' in globals():
-	config.BANDS = [int(Band)  for Band in Split(str(config.BANDS))]
+	config.BANDS = [int(Band)  for Band in cCommon.Split(str(config.BANDS))]
 
 CLUSTERS = 'SKCC RBN'
 
-def Parse(String: str, ALL_str: str, Type: str) -> list[str]:
-	ALL: list[str] = ALL_str.split()
-	List = Split(String.upper())
-
-	for x in List:
-		if x == 'ALL':
-			return ALL
-
-		if x == 'NONE':
-			return []
-
-		if x == 'CXN' and 'C' not in List:
-			List.append('C')
-
-		if x == 'TXN' and 'T' not in List:
-			List.append('T')
-
-		if x == 'SXN' and 'S' not in List:
-			List.append('S')
-
-		if x not in ALL:
-			print(f"Unrecognized {Type} '{x}'.")
-			sys.exit()
-
-	return List
 
 cSKCC.BlockDuringUpdateWindow()
 
@@ -2698,27 +2346,7 @@ Levels = {
 if config.VERBOSE:
 	config.PROGRESS_DOTS.ENABLED = False
 
-#
-# MY_CALLSIGN can be defined in skcc_skimmer.cfg.  It is not required
-# that it be supplied on the command line.
-#
-if not config.MY_CALLSIGN:
-	print("You must specify your callsign, either on the command line or in 'skcc_skimmer.cfg'.")
-	print('')
-	Usage()
 
-if not config.ADI_FILE:
-	print("You must supply an ADI file, either on the command line or in 'skcc_skimmer.cfg'.")
-	print('')
-	Usage()
-
-
-if not config.GOALS and not config.TARGETS:
-	print('You must specify at least one goal or target.')
-	sys.exit()
-
-if 'QUALIFIERS' in globals():
-	print("INFO: You no longer need to specify QUALIFIERS.  You may remove it from 'skcc_skimmer.cfg'.")
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -2772,18 +2400,6 @@ for Condition in BeepCondition:
 		print("NOTIFICATION CONDITION must be 'goals' and/or 'targets' and/or 'friends'")
 		sys.exit()
 
-
-if 'MY_GRIDSQUARE' not in globals() or not config.MY_GRIDSQUARE:
-	print("'MY_GRIDSQUARE' must be specified in skcc_skimmer.cfg or on the command line.")
-	sys.exit()
-
-if not config.MY_GRIDSQUARE:
-	print("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
-	sys.exit()
-
-if 'SPOTTER_RADIUS' not in globals():
-	print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
-	sys.exit()
 
 Spotters = cSpotters()
 Spotters.GetSpotters()
