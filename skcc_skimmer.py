@@ -606,7 +606,7 @@ class cRBN_Filter(cRBN_Client):
 
 				MilesDisplay      = f'{Miles}mi'
 				KilometersDisplay = f'{Miles2Km(Miles)}km'
-				Distance          = MilesDisplay if DISTANCE_UNITS == 'mi' else KilometersDisplay
+				Distance          = MilesDisplay if config.DISTANCE_UNITS == 'mi' else KilometersDisplay
 
 				Report.append(f'by {Spotter}({Distance}, {int(dB)}dB)')
 			else:
@@ -1307,9 +1307,11 @@ class cQSO(cStateMachine):
 		#fastStartOfMonth = TodayGMT.StartOfMonth()
 		#fastEndOfMonth   = TodayGMT.EndOfMonth()
 
+		''' TODO
 		if 'BRAG_MONTHS' in globals() and 'BRAG' in config.GOALS:
 			for PrevMonth in range( abs(config.BRAG_MONTHS), 0, -1 ):
 				QSOs.GetBragQSOs( PrevMonth = PrevMonth, Print=True )
+		'''
 
 		# MWS - Process current month as well.
 		QSOs.GetBragQSOs(PrevMonth=0, Print=False)
@@ -2307,8 +2309,6 @@ ArgV = sys.argv[1:]
 
 config = cConfig(ArgV)
 
-# Default DISTANCE_UNITS in case it isn't set in the config file.
-DISTANCE_UNITS = 'mi'
 
 # Default the K3Y_YEAR in case it isn't set in the config file.
 K3Y_YEAR = datetime.now().year
@@ -2319,10 +2319,6 @@ K3Y_YEAR = datetime.now().year
 
 #exec(ConfigFileString)
 
-
-
-if 'BANDS' in globals():
-	config.BANDS = [int(Band)  for Band in cCommon.Split(str(config.BANDS))]
 
 CLUSTERS = 'SKCC RBN'
 
@@ -2389,9 +2385,6 @@ if config.INTERACTIVE:
 			print('')
 			Lookups(Line)
 
-if 'NOTIFICATION' not in globals():
-	print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
-	sys.exit()
 
 BeepCondition: list[str] = config.NOTIFICATION.CONDITION.lower().split(',')
 
@@ -2405,7 +2398,7 @@ Spotters = cSpotters()
 Spotters.GetSpotters()
 
 def FormatDistance(Miles: int) -> str:
-	if DISTANCE_UNITS == "mi":
+	if config.DISTANCE_UNITS == "mi":
 		return f'{Miles}mi'
 
 	return f'{Miles2Km(Miles)}km'

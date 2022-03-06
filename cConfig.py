@@ -49,7 +49,7 @@ class cConfig:
 	BANDS:                    list[int]
 	FRIENDS:                  list[str]
 	EXCLUSIONS:               list[str]
-	DISTANCE_UNITS:           int
+	DISTANCE_UNITS:           str
 	SPOT_PERSISTENCE_MINUTES: int
 	VERBOSE:                  bool
 	LOG_BAD_SPOTS:            bool
@@ -98,7 +98,7 @@ class cConfig:
 			logFile = self.configFile['LOG_FILE']
 
 			if 'ENABLED' in logFile:
-				self.LOG_FILE.ENABLED = logFile['ENABLED']
+				self.LOG_FILE.ENABLED = bool(logFile['ENABLED'])
 
 			if 'FILE_NAME' in logFile:
 				self.LOG_FILE.FILE_NAME = logFile['FILE_NAME']
@@ -106,14 +106,27 @@ class cConfig:
 			if 'DELETE_ON_STARTUP' in logFile:
 				self.LOG_FILE.DELETE_ON_STARTUP = logFile['DELETE_ON_STARTUP']
 
+
+		if 'PROGRESS_DOTS' in self.configFile:
+			progressDots = self.configFile['PROGRESS_DOTS']
+
+			if 'ENABLED' in progressDots:
+				self.PROGRESS_DOTS.ENABLED = bool(progressDots['ENABLED'])
+
+			if 'DISPLAY_SECONDS' in progressDots:
+				self.PROGRESS_DOTS.DISPLAY_SECONDS = progressDots['DISPLAY_SECONDS']
+
+			if 'DOTS_PER_LINE' in progressDots:
+				self.PROGRESS_DOTS.DOTS_PER_LINE = progressDots['DOTS_PER_LINE']
+
 		if 'SKED' in self.configFile:
 			sked = self.configFile['SKED']
 
 			if 'ENABLED' in sked:
-				self.SKED.ENABLED = sked['ENABLED']
+				self.SKED.ENABLED = bool(sked['ENABLED'])
 
 			if 'CHECK_SECONDS' in sked:
-				self.SKED.ENABLED = sked['CHECK_SECONDS']
+				self.SKED.CHECK_SECONDS = int(sked['CHECK_SECONDS'])
 
 		if 'OFF_FREQUENCY' in self.configFile:
 			offFrequency = self.configFile['OFF_FREQUENCY']
@@ -122,7 +135,7 @@ class cConfig:
 				self.OFF_FREQUENCY.ACTION = offFrequency['ACTION']
 
 			if 'TOLERANCE' in offFrequency:
-				self.OFF_FREQUENCY.TOLERANCE = offFrequency['TOLERANCE']
+				self.OFF_FREQUENCY.TOLERANCE = int(offFrequency['TOLERANCE'])
 
 		if 'HIGH_WPM' in self.configFile:
 			highWpm = self.configFile['HIGH_WPM']
@@ -131,7 +144,7 @@ class cConfig:
 				self.HIGH_WPM.ACTION = highWpm['ACTION']
 
 			if 'THRESHOLD' in highWpm:
-				self.HIGH_WPM.THRESHOLD = highWpm['THRESHOLD']
+				self.HIGH_WPM.THRESHOLD = int(highWpm['THRESHOLD'])
 
 		if 'VERBOSE' in self.configFile:
 			self.VERBOSE = bool(self.configFile['VERBOSE'])
@@ -139,9 +152,14 @@ class cConfig:
 			self.VERBOSE = False
 
 		if 'LOG_BAD_SPOTS' in self.configFile:
-			self.LOG_BAD_SPOTS = self.configFile['LOG_BAD_SPOTS']
+			self.LOG_BAD_SPOTS = bool(self.configFile['LOG_BAD_SPOTS'])
 		else:
 			self.LOG_BAD_SPOTS = False
+
+		if 'DISTANCE_UNITS' in self.configFile and self.configFile['DISTANCE_UNITS'] in ('mi', 'km'):
+			self.DISTANCE_UNITS = self.configFile['DISTANCE_UNITS']
+		else:
+			self.DISTANCE_UNITS = 'mi'
 
 		self.ParseArgs(ArgV)
 
@@ -159,70 +177,74 @@ class cConfig:
 		self.INTERACTIVE = False
 
 		for Option, Arg in Options:
-			if Option in ('-a', '--adi'):
-				self.ADI_FILE = Arg
+			match Option:
+				case '-a' | '--adi':
+					self.ADI_FILE = Arg
 
-			elif Option in ('-b', '--bands'):
-				self.BANDS = [int(Band)  for Band in cCommon.Split(Arg)]
+				case '-b' | '--bands':
+					self.BANDS = [int(Band)  for Band in cCommon.Split(Arg)]
 
-			elif Option in ('-B', '--brag-months'):
-				self.BRAG_MONTHS = int(Arg)
+				case '-B' | '--brag-months':
+					self.BRAG_MONTHS = int(Arg)
 
-			elif Option in ('-c', '--callsign'):
-				self.MY_CALLSIGN = Arg.upper()
+				case '-c' | '--callsign':
+					self.MY_CALLSIGN = Arg.upper()
 
-			elif Option in ('-d', '--distance-units'):
-				argLower = Arg.lower()
+				case '-d' | '--distance-units':
+					argLower = Arg.lower()
 
-				if Arg not in ('mi', 'km'):
-					print("DISTANCE_UNITS option must be either 'mi' or 'km'.")
-					sys.exit()
+					if argLower not in ('mi', 'km'):
+						print("DISTANCE_UNITS option must be either 'mi' or 'km'.")
+						sys.exit()
 
-				self.DISTANCE_UNITS = int(argLower)
+					self.DISTANCE_UNITS = argLower
 
-			elif Option in ('-g', '--goals'):
-				self.GOALS = self.Parse(Arg,   'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
+				case '-g' | '--goals':
+					self.GOALS = self.Parse(Arg, 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 
-			elif Option in ('-h', '--help'):
-				self.Usage()
+				case '-h' | '--help':
+					self.Usage()
 
-			elif Option in ('-i', '--interactive'):
-				self.INTERACTIVE = True
+				case '-i' | '--interactive':
+					self.INTERACTIVE = True
 
-			elif Option in ('-l', '--logfile'):
-				self.LOG_FILE.ENABLED           = True
-				self.LOG_FILE.DELETE_ON_STARTUP = True
-				self.LOG_FILE.FILE_NAME         = Arg
+				case '-l' | '--logfile':
+					self.LOG_FILE.ENABLED           = True
+					self.LOG_FILE.DELETE_ON_STARTUP = True
+					self.LOG_FILE.FILE_NAME         = Arg
 
-			elif Option in ('-m', '--maidenhead'):
-				self.MY_GRIDSQUARE = Arg
+				case '-m' | '--maidenhead':
+					self.MY_GRIDSQUARE = Arg
 
-			elif Option in ('-n', '--notification'):
-				Arg = Arg.lower()
+				case '-n' | '--notification':
+					Arg = Arg.lower()
 
-				if Arg not in ('on', 'off'):
-					print("Notificiation option must be either 'on' or 'off'.")
-					sys.exit()
+					if Arg not in ('on', 'off'):
+						print("Notificiation option must be either 'on' or 'off'.")
+						sys.exit()
 
-				self.NOTIFICATION.ENABLED = Arg == 'on'
+					self.NOTIFICATION.ENABLED = Arg == 'on'
 
-			elif Option in ('-r', '--radius'):
-				self.SPOTTER_RADIUS = int(Arg)
+				case '-r' | '--radius':
+					self.SPOTTER_RADIUS = int(Arg)
 
-			elif Option in ('-s', '--sked'):
-				Arg = Arg.lower()
+				case '-s' | '--sked':
+					Arg = Arg.lower()
 
-				if Arg not in ('on', 'off'):
-					print("SKED option must be either 'on' or 'off'.")
-					sys.exit()
+					if Arg not in ('on', 'off'):
+						print("SKED option must be either 'on' or 'off'.")
+						sys.exit()
 
-				self.SKED.ENABLED = Arg == 'on'
+					self.SKED.ENABLED = Arg == 'on'
 
-			elif Option in ('-t', '--targets'):
-				self.TARGETS = self.Parse(Arg, 'C CXN T TXN S SXN', 'target')
+				case '-t' | '--targets':
+					self.TARGETS = self.Parse(Arg, 'C CXN T TXN S SXN', 'target')
 
-			elif Option in ('-v', '--verbose'):
-				self.VERBOSE = True
+				case '-v' | '--verbose':
+					self.VERBOSE = True
+
+				case _:
+					self.Usage()
 
 
 	def ValidateConfig(self):
@@ -325,6 +347,10 @@ class cConfig:
 
 		if self.OFF_FREQUENCY.ACTION not in ('suppress', 'warn'):
 			print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
+			sys.exit()
+
+		if 'NOTIFICATION' not in self.configFile:
+			print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
 			sys.exit()
 
 	def Usage(self) -> NoReturn:
