@@ -329,7 +329,7 @@ class cSked(cStateMachine):
 		_ = ENTER, TIMEOUT
 		return locals()
 
-	def HandleLogins(self, SkedLogins: list[list[str]], Heading: str):
+	def HandleLogins(self, SkedLogins: list[tuple[str, str]], Heading: str):
 		SkedHit: dict[str, list[str]] = {}
 		GoalList: list[str] = []
 		TargetList: list[str] = []
@@ -438,7 +438,7 @@ class cSked(cStateMachine):
 			for CallSign in sorted(SkedHit):
 				if CallSign in NewLogins:
 					if config.NOTIFICATION.ENABLED:
-						if (CallSign in config.FRIENDS and 'friends' in BeepCondition) or (GoalList and 'goals' in BeepCondition) or (TargetList and 'targets' in BeepCondition):
+						if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
 							Beep()
 
 					NewIndicator = '+'
@@ -460,7 +460,7 @@ class cSked(cStateMachine):
 			Content = bContent.decode('ascii', 'ignore')
 
 			try:
-				SkedLogins = json.loads(Content)
+				SkedLogins: list[tuple[str, str]] = json.loads(Content)
 				Hits = self.HandleLogins(SkedLogins, 'SKCC')
 			except Exception:
 				with open('DEBUG.txt', 'a', encoding='utf-8') as File:
@@ -560,7 +560,7 @@ class cRBN_Filter(cRBN_Client):
 
 		if CallSign not in self.Notified:
 			if config.NOTIFICATION.ENABLED:
-				if (CallSign in config.FRIENDS and 'friends' in BeepCondition) or (GoalList and 'goals' in BeepCondition) or (TargetList and 'targets' in BeepCondition):
+				if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
 					Beep()
 
 			NotificationFlag = '+'
@@ -1776,7 +1776,7 @@ class cSpotters:
 		return NearbyList
 
 	def GetDistance(self, Spotter: str) -> int:
-		Miles, _Bands = self.Spotters[Spotter]
+		Miles, _ = self.Spotters[Spotter]
 		return Miles
 
 
@@ -1834,7 +1834,7 @@ class cSKCC:
 
 		StartDate = cFastDateTime(None)
 
-		for _Count in range(1, 4+1):
+		for _ in range(1, 4+1):
 			StartDate = FromDate.FirstWeekdayAfterDate('Wed')
 			FromDate = StartDate
 
@@ -2111,7 +2111,7 @@ class cSKCC:
 
 	@staticmethod
 	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10):
-		WarcBands =  [30, 17, 12]
+		WarcBands = [30, 17, 12]
 
 		for Band in WarcBands:
 			MidPoints = cSKCC.Frequencies[Band]
@@ -2338,11 +2338,8 @@ Levels = {
  'P'  : 500000,
 }
 
-
 if config.VERBOSE:
 	config.PROGRESS_DOTS.ENABLED = False
-
-
 
 signal.signal(signal.SIGINT, signal_handler)
 
@@ -2384,15 +2381,6 @@ if config.INTERACTIVE:
 		else:
 			print('')
 			Lookups(Line)
-
-
-BeepCondition: list[str] = config.NOTIFICATION.CONDITION.lower().split(',')
-
-for Condition in BeepCondition:
-	if Condition not in ['goals', 'targets', 'friends']:
-		print("NOTIFICATION CONDITION must be 'goals' and/or 'targets' and/or 'friends'")
-		sys.exit()
-
 
 Spotters = cSpotters()
 Spotters.GetSpotters()

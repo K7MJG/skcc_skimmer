@@ -3,4 +3,9 @@ import re
 class cCommon:
 	@staticmethod
 	def Split(text: str) -> list[str]:
-		return re.split('[, ][ ]*', text.strip())
+		strippedText = text.strip()
+
+		if strippedText == '':
+			return []
+
+		return re.split('[, ][ ]*', strippedText)

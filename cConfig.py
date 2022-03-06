@@ -36,7 +36,7 @@ class cConfig:
 
 	class cNotification:
 		ENABLED:                      bool
-		CONDITION:                    Literal['goals', 'targets', 'friends']
+		CONDITION:                    list[str]   # list[Literal['goals', 'targets', 'friends']]
 		RENOTIFICATION_DELAY_SECONDS: int
 	NOTIFICATION = cNotification
 
@@ -53,6 +53,7 @@ class cConfig:
 	SPOT_PERSISTENCE_MINUTES: int
 	VERBOSE:                  bool
 	LOG_BAD_SPOTS:            bool
+	SPOTTER_RADIUS:           int
 
 	configFile: dict[str, Any]
 
@@ -79,11 +80,14 @@ class cConfig:
 		if 'MY_GRIDSQUARE' in self.configFile:
 			self.MY_GRIDSQUARE = self.configFile['MY_GRIDSQUARE']
 
+		if 'SPOTTER_RADIUS' in self.configFile:
+			self.SPOTTER_RADIUS = int(self.configFile['SPOTTER_RADIUS'])
+
 		if 'GOALS' in self.configFile:
-			self.GOALS = self.configFile['GOALS']
+			self.GOALS = self.Parse(self.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 
 		if 'TARGETS' in self.configFile:
-			self.TARGETS = self.configFile['TARGETS']
+			self.TARGETS = self.Parse(self.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
 
 		if 'BANDS' in self.configFile:
 			self.BANDS = [int(Band)  for Band in cCommon.Split(self.configFile['BANDS'])]
@@ -146,6 +150,27 @@ class cConfig:
 			if 'THRESHOLD' in highWpm:
 				self.HIGH_WPM.THRESHOLD = int(highWpm['THRESHOLD'])
 
+		if 'NOTIFICATION' in self.configFile:
+			notification = self.configFile['NOTIFICATION']
+
+			if 'ENABLED' in notification:
+				self.NOTIFICATION.ENABLED = bool(notification['ENABLED'])
+
+			if 'CONDITION' in notification:
+				conditions = cCommon.Split(notification['CONDITION'])
+
+				for condition in conditions:
+					if condition not in ['goals', 'targets', 'friends']:
+						print(f"NOTIFICATION CONDITION '{condition}' must be 'goals' and/or 'targets' and/or 'friends'")
+						sys.exit()
+
+				self.NOTIFICATION.CONDITION = conditions
+
+			if 'THRESHOLD' in notification:
+				self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = int(notification['RENOTIFICATION_DELAY_SECONDS'])
+			else:
+				self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = 30
+
 		if 'VERBOSE' in self.configFile:
 			self.VERBOSE = bool(self.configFile['VERBOSE'])
 		else:
@@ -161,11 +186,11 @@ class cConfig:
 		else:
 			self.DISTANCE_UNITS = 'mi'
 
-		self.ParseArgs(ArgV)
+		self._ParseArgs(ArgV)
 
-		self.ValidateConfig()
+		self._ValidateConfig()
 
-	def ParseArgs(self, ArgV: list[str]):
+	def _ParseArgs(self, ArgV: list[str]):
 		try:
 			Options, _ = getopt.getopt(ArgV, \
 					'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'.replace(' ', ''), \
@@ -247,7 +272,7 @@ class cConfig:
 					self.Usage()
 
 
-	def ValidateConfig(self):
+	def _ValidateConfig(self):
 		#
 		# MY_CALLSIGN can be defined in skcc_skimmer.cfg.  It is not required
 		# that it be supplied on the command line.
@@ -389,7 +414,7 @@ class cConfig:
 		sys.exit()
 
 	def Parse(self, String: str, ALL_str: str, Type: str) -> list[str]:
-		ALL: list[str] = ALL_str.split()
+		ALL  = ALL_str.split()
 		List = cCommon.Split(String.upper())
 
 		for x in List:
