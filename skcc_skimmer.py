@@ -89,17 +89,17 @@ import signal
 import time
 import sys
 import os
-import socket
 import re
 import string
 import textwrap
 import calendar
 import json
+import requests
 
 from datetime import timedelta
 from datetime import datetime
 
-from typing        import NoReturn, Any
+from typing        import Any
 
 from math          import radians, sin, cos, atan2, sqrt
 
@@ -246,61 +246,6 @@ class cDisplay(cStateMachine):
 
 	def Print(self, text: str = ''):
 		self.SendEventArg('PRINT', text)
-
-class cHTTP:
-	SILENT, FATAL, WARN = range(3)
-
-	RegEx = re.compile(r'HTTP[/][\d.]+\s+(\d+)')
-
-	def __init__(self, Host: str, Port: int = 80):
-		self.Socket  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.bHost   = Host.encode('ascii')
-		self.Port    = Port
-
-	def Get(self, Page: str, ErrorBehavior: int = FATAL) -> bytes | None | NoReturn:
-		try:
-			self.Socket.settimeout(10.0)
-			self.Socket.connect((self.bHost, self.Port))
-			self.Socket.settimeout(None)
-		except socket.error:
-			if ErrorBehavior == cHTTP.FATAL:
-				print('No apparent network connection.')
-				sys.exit()
-			elif ErrorBehavior == cHTTP.WARN:
-				print('Unable to retrieve' + Page)
-				return None
-			elif ErrorBehavior == cHTTP.SILENT:
-				return None
-			else:
-				assert None
-
-		GetCommand  = f'GET {Page} HTTP/1.0\r\nAccept:text/plain;charset=US-ASCII\r\nconnection:close\r\n\r\n'
-		bGetCommand = GetCommand.encode('ascii')
-		self.Socket.send(bGetCommand)
-
-		bResponse = b''
-
-		while True:
-			bBuffer = self.Socket.recv(4096)
-
-			if not bBuffer:
-				break
-
-			bResponse += bBuffer
-
-		self.Socket.close()
-
-		bHeader, bBody = bResponse.split(b'\r\n\r\n', 1)
-		Header = bHeader.decode('utf-8', 'ignore')
-		Match = cHTTP.RegEx.match(Header)
-
-		if Match:
-			Code = int(Match.group(1))
-
-			if Code == 404:
-				return None
-
-		return bBody
 
 def Beep() -> None:
 	sys.stdout.write('\a')
@@ -452,13 +397,15 @@ class cSked(cStateMachine):
 		return SkedHit
 
 	def DisplayLogins(self) -> None:
-		self.SkedSite = cHTTP('sked.skccgroup.com')
-		bContent      = self.SkedSite.Get('http://sked.skccgroup.com/get-status.php', cHTTP.SILENT)
+		response = requests.get('http://sked.skccgroup.com/get-status.php')
+
+		if response.status_code != 200:
+			return
+
+		Content = response.text
 		Hits = {}
 
-		if bContent:
-			Content = bContent.decode('ascii', 'ignore')
-
+		if Content:
 			try:
 				SkedLogins: list[tuple[str, str]] = json.loads(Content)
 				Hits = self.HandleLogins(SkedLogins, 'SKCC')
@@ -1716,15 +1663,13 @@ class cSpotters:
 		print('')
 		print(f"Finding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
-		ReverseBeacon_net = cHTTP('reversebeacon.net')
-		bHTML             = ReverseBeacon_net.Get('http://reversebeacon.net/cont_includes/status.php?t=skt')
+		response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
 
-		if bHTML is None:
+		if response.status_code != 200:
 			print('*** Fatal Error: Unable to retrieve spotters from RBN.  Is RBN down?')
 			sys.exit()
 
-		bHTML = bHTML.rstrip()
-		HTML  = bHTML.decode('utf-8', 'ignore')
+		HTML = response.text
 
 		Rows: list[str] = []
 
@@ -1938,20 +1883,18 @@ class cSKCC:
 	def ReadLevelList(Type: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC award info from {URL}...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bLevelList    = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
+		response = requests.get('https://www.skccgroup.com/'+URL)
 
-		if not bLevelList:
+		if response.status_code != 200:
 			return {}
 
-		bLevelList = bLevelList.rstrip()
-		LevelList  = bLevelList.decode('ascii')
+		LevelList = response.text
 
 		Level: dict[str, int] = {}
 		TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
 		for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
-			CertNumber,CallSign,MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
+			CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
 
 			if ' ' in CertNumber:
 				CertNumber, X_Factor = CertNumber.split()
@@ -1981,14 +1924,12 @@ class cSKCC:
 	def ReadRoster(Name: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC {Name} roster...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bHTML         = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
+		response = requests.get('https://www.skccgroup.com/'+URL)
 
-		if not bHTML:
+		if response.status_code != 200:
 			return {}
 
-		bHTML         = bHTML.rstrip()
-		HTML          = bHTML.decode('utf-8', 'ignore')
+		HTML = response.text
 
 		Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
 		Columns_RegEx = re.compile(r'<td.*?>(.*?)</td>', re.M|re.I|re.S)
@@ -2016,14 +1957,12 @@ class cSKCC:
 	def ReadSkccData(self) -> None:
 		print('Retrieving SKCC award dates...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bSkccList     = SkccGroup_com.Get('http://www.skccgroup.com/membership_data/skccdata.txt')
+		response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt')
 
-		if not bSkccList:
+		if response.status_code != 200:
 			return
 
-		bSkccList = bSkccList.rstrip()
-		SkccList      = bSkccList.decode('utf-8')
+		SkccList = response.text
 
 		Lines = SkccList.splitlines()
 
