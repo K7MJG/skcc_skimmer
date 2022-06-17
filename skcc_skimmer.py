@@ -89,48 +89,25 @@ import signal
 import time
 import sys
 import os
-import socket
 import re
-import getopt
 import string
 import textwrap
 import calendar
 import json
+import requests
 
 from datetime import timedelta
 from datetime import datetime
 
-from typing        import NoReturn, Any
+from typing        import Any
 
 from math          import radians, sin, cos, atan2, sqrt
 
 from cSocketLoop   import cSocketLoop
 from cStateMachine import cStateMachine
 from cRBN          import cRBN_Client
-
-class cLOG_FILE:
-	FILE_NAME: str
-	ENABLED: bool
-	DELETE_ON_STARTUP: bool
-
-PROGRESS_DOTS = { 'DISPLAY_SECONDS': 1, 'ENABLED': True, 'DOTS_PER_LINE': 50 }
-NOTIFICATION: Any = {}
-LOG_FILE = { 'FILE_NAME': '', 'ENABLED': True, 'DELETE_ON_STARTUP': False}
-HIGH_WPM = {}
-SKED = { 'CHECK_SECONDS': 1, 'ENABLED': True }
-OFF_FREQUENCY = { 'TOLERANCE': 1 }
-EXCLUSIONS = ''
-FRIENDS = ''
-MY_CALLSIGN = ''
-ADI_FILE = ''
-GOALS = ''
-TARGETS = ''
-BANDS: list[int] = []
-MY_GRIDSQUARE = ''
-SPOTTER_RADIUS = 1000
-
-def Split(text: str) -> list[str]:
-	return re.split('[, ][ ]*', text.strip())
+from cConfig       import cConfig
+from cCommon       import cCommon
 
 def Effective(Date: str) -> str:
 	TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
@@ -238,8 +215,8 @@ class cDisplay(cStateMachine):
 
 	def STATE_Running(self):
 		def ENTER():
-			if PROGRESS_DOTS['ENABLED']:
-				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
+			if config.PROGRESS_DOTS.ENABLED:
+				self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
 
 		def PRINT(text: str):
 			if self.DotsOutput > 0:
@@ -249,81 +226,26 @@ class cDisplay(cStateMachine):
 			print(text)
 			self.DotsOutput = 0
 
-			if PROGRESS_DOTS['ENABLED']:
-				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
+			if config.PROGRESS_DOTS.ENABLED:
+				self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
 
 		def TIMEOUT():
 			sys.stdout.write('.')
 			sys.stdout.flush()
 			self.DotsOutput += 1
 
-			if self.DotsOutput > PROGRESS_DOTS['DOTS_PER_LINE']:
+			if self.DotsOutput > config.PROGRESS_DOTS.DOTS_PER_LINE:
 				print('')
 				self.DotsOutput = 0
 
-			if PROGRESS_DOTS['ENABLED']:
-				self.TimeoutInSeconds(PROGRESS_DOTS['DISPLAY_SECONDS'])
+			if config.PROGRESS_DOTS.ENABLED:
+				self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
 
 		_ = ENTER, PRINT, TIMEOUT # Forced reference for type checking.
 		return locals()
 
 	def Print(self, text: str = ''):
 		self.SendEventArg('PRINT', text)
-
-class cHTTP:
-	SILENT, FATAL, WARN = range(3)
-
-	RegEx = re.compile(r'HTTP[/][\d.]+\s+(\d+)')
-
-	def __init__(self, Host: str, Port: int = 80):
-		self.Socket  = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.bHost   = Host.encode('ascii')
-		self.Port    = Port
-
-	def Get(self, Page: str, ErrorBehavior: int = FATAL) -> bytes | None | NoReturn:
-		try:
-			self.Socket.settimeout(10.0)
-			self.Socket.connect((self.bHost, self.Port))
-			self.Socket.settimeout(None)
-		except socket.error:
-			if ErrorBehavior == cHTTP.FATAL:
-				print('No apparent network connection.')
-				sys.exit()
-			elif ErrorBehavior == cHTTP.WARN:
-				print('Unable to retrieve' + Page)
-				return None
-			elif ErrorBehavior == cHTTP.SILENT:
-				return None
-			else:
-				assert None
-
-		GetCommand  = f'GET {Page} HTTP/1.0\r\nAccept:text/plain;charset=US-ASCII\r\nconnection:close\r\n\r\n'
-		bGetCommand = GetCommand.encode('ascii')
-		self.Socket.send(bGetCommand)
-
-		bResponse = b''
-
-		while True:
-			bBuffer = self.Socket.recv(4096)
-
-			if not bBuffer:
-				break
-
-			bResponse += bBuffer
-
-		self.Socket.close()
-
-		bHeader, bBody = bResponse.split(b'\r\n\r\n', 1)
-		Header = bHeader.decode('utf-8', 'ignore')
-		Match = cHTTP.RegEx.match(Header)
-
-		if Match:
-			Code = int(Match.group(1))
-
-			if Code == 404:
-				return None
-
-		return bBody
 
 def Beep() -> None:
 	sys.stdout.write('\a')
@@ -341,7 +263,7 @@ class cSked(cStateMachine):
 	def STATE_Running(self):
 		def Common():
 			self.DisplayLogins()
-			self.TimeoutInSeconds(SKED['CHECK_SECONDS'])
+			self.TimeoutInSeconds(config.SKED.CHECK_SECONDS)
 
 		def ENTER():
 			Common()
@@ -352,13 +274,13 @@ class cSked(cStateMachine):
 		_ = ENTER, TIMEOUT
 		return locals()
 
-	def HandleLogins(self, SkedLogins: list[list[str]], Heading: str):
+	def HandleLogins(self, SkedLogins: list[tuple[str, str]], Heading: str):
 		SkedHit: dict[str, list[str]] = {}
 		GoalList: list[str] = []
 		TargetList: list[str] = []
 
 		for CallSign, Status in SkedLogins:
-			if CallSign == MY_CALLSIGN:
+			if CallSign == config.MY_CALLSIGN:
 				continue
 
 			CallSign = SKCC.ExtractCallSign(CallSign)
@@ -366,7 +288,7 @@ class cSked(cStateMachine):
 			if not CallSign:
 				continue
 
-			if CallSign in EXCLUSIONS:
+			if CallSign in config.EXCLUSIONS:
 				continue
 
 			Report: list[str] = [BuildMemberInfo(CallSign)]
@@ -377,7 +299,7 @@ class cSked(cStateMachine):
 				Now = time.time()
 				DeltaSeconds = max(int(Now - StartTime), 1)
 
-				if DeltaSeconds > SPOT_PERSISTENCE_MINUTES * 60:
+				if DeltaSeconds > config.SPOT_PERSISTENCE_MINUTES * 60:
 					del RBN.LastSpotted[CallSign]
 				elif DeltaSeconds > 60:
 					DeltaMinutes = DeltaSeconds // 60
@@ -389,7 +311,7 @@ class cSked(cStateMachine):
 
 			GoalList = []
 
-			if 'K3Y' in GOALS:
+			if 'K3Y' in config.GOALS:
 				K3Y_Freq_RegEx = r'.*?K3Y[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)(?:.*?\b(\d+(?:\.\d+)?))?'
 				Matches = re.match(K3Y_Freq_RegEx, Status, re.IGNORECASE)
 
@@ -435,7 +357,7 @@ class cSked(cStateMachine):
 			if TargetList:
 				Report.append(f'THEY need you for {",".join(TargetList)}')
 
-			IsFriend = CallSign in FRIENDS
+			IsFriend = CallSign in config.FRIENDS
 
 			if IsFriend:
 				Report.append('friend')
@@ -460,8 +382,8 @@ class cSked(cStateMachine):
 
 			for CallSign in sorted(SkedHit):
 				if CallSign in NewLogins:
-					if NOTIFICATION['ENABLED']:
-						if (CallSign in FRIENDS and 'friends' in BeepCondition) or (GoalList and 'goals' in BeepCondition) or (TargetList and 'targets' in BeepCondition):
+					if config.NOTIFICATION.ENABLED:
+						if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
 							Beep()
 
 					NewIndicator = '+'
@@ -475,15 +397,17 @@ class cSked(cStateMachine):
 		return SkedHit
 
 	def DisplayLogins(self) -> None:
-		self.SkedSite = cHTTP('sked.skccgroup.com')
-		bContent      = self.SkedSite.Get('http://sked.skccgroup.com/get-status.php', cHTTP.SILENT)
+		response = requests.get('http://sked.skccgroup.com/get-status.php')
+
+		if response.status_code != 200:
+			return
+
+		Content = response.text
 		Hits = {}
 
-		if bContent:
-			Content = bContent.decode('ascii', 'ignore')
-
+		if Content:
 			try:
-				SkedLogins = json.loads(Content)
+				SkedLogins: list[tuple[str, str]] = json.loads(Content)
 				Hits = self.HandleLogins(SkedLogins, 'SKCC')
 			except Exception:
 				with open('DEBUG.txt', 'a', encoding='utf-8') as File:
@@ -509,7 +433,7 @@ class cRBN_Filter(cRBN_Client):
 		self.Data = ''
 		self.LastSpotted = {}
 		self.Notified = {}
-		self.RenotificationDelay = NOTIFICATION['RENOTIFICATION_DELAY_SECONDS']
+		self.RenotificationDelay = config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
 
 	def RawData(self, Data: str):
 		self.Data += Data
@@ -582,8 +506,8 @@ class cRBN_Filter(cRBN_Client):
 				del self.Notified[Call]
 
 		if CallSign not in self.Notified:
-			if NOTIFICATION['ENABLED']:
-				if (CallSign in FRIENDS and 'friends' in BeepCondition) or (GoalList and 'goals' in BeepCondition) or (TargetList and 'targets' in BeepCondition):
+			if config.NOTIFICATION.ENABLED:
+				if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
 					Beep()
 
 			NotificationFlag = '+'
@@ -592,7 +516,7 @@ class cRBN_Filter(cRBN_Client):
 		return NotificationFlag
 
 	def HandleSpot(self, Line: str) -> None:
-		if VERBOSE:
+		if config.VERBOSE:
 			print(f'   {Line}')
 
 		Spot = cRBN_Filter.ParseSpot(Line)
@@ -611,7 +535,7 @@ class cRBN_Filter(cRBN_Client):
 		if not CallSign:
 			return
 
-		if CallSign in EXCLUSIONS:
+		if CallSign in config.EXCLUSIONS:
 			return
 
 		#-------------
@@ -623,13 +547,13 @@ class cRBN_Filter(cRBN_Client):
 
 		SpottedNearby = Spotter in SPOTTERS_NEARBY
 
-		if SpottedNearby or CallSign == MY_CALLSIGN:
+		if SpottedNearby or CallSign == config.MY_CALLSIGN:
 			if Spotter in Spotters.Spotters:
 				Miles = Spotters.GetDistance(Spotter)
 
 				MilesDisplay      = f'{Miles}mi'
 				KilometersDisplay = f'{Miles2Km(Miles)}km'
-				Distance          = MilesDisplay if DISTANCE_UNITS == 'mi' else KilometersDisplay
+				Distance          = MilesDisplay if config.DISTANCE_UNITS == 'mi' else KilometersDisplay
 
 				Report.append(f'by {Spotter}({Distance}, {int(dB)}dB)')
 			else:
@@ -637,35 +561,35 @@ class cRBN_Filter(cRBN_Client):
 
 		#-------------
 
-		You = CallSign == MY_CALLSIGN
+		You = CallSign == config.MY_CALLSIGN
 
 		if You:
 			Report.append('(you)')
 
 		#-------------
 
-		OnFrequency = cSKCC.IsOnSkccFrequency(fFrequency, OFF_FREQUENCY['TOLERANCE'])
+		OnFrequency = cSKCC.IsOnSkccFrequency(fFrequency, config.OFF_FREQUENCY.TOLERANCE)
 
 		if not OnFrequency:
-			if OFF_FREQUENCY['ACTION'] == 'warn':
+			if config.OFF_FREQUENCY.ACTION == 'warn':
 				Report.append('OFF SKCC FREQUENCY!')
-			elif OFF_FREQUENCY['ACTION'] == 'suppress':
+			elif config.OFF_FREQUENCY.ACTION == 'suppress':
 				return
 
 		#-------------
 
-		if HIGH_WPM['ACTION'] == 'always-display':
+		if config.HIGH_WPM.ACTION == 'always-display':
 			Report.append(f'{WPM} WPM')
 		else:
-			if WPM >= HIGH_WPM['THRESHOLD']:
-				if HIGH_WPM['ACTION'] == 'warn':
+			if WPM >= config.HIGH_WPM.THRESHOLD:
+				if config.HIGH_WPM.ACTION == 'warn':
 					Report.append(f'{WPM} WPM!')
-				elif HIGH_WPM['ACTION'] == 'suppress':
+				elif config.HIGH_WPM.ACTION == 'suppress':
 					return
 
 		#-------------
 
-		IsFriend = CallSign in FRIENDS
+		IsFriend = CallSign in config.FRIENDS
 
 		if IsFriend:
 			Report.append('friend')
@@ -674,7 +598,7 @@ class cRBN_Filter(cRBN_Client):
 
 		GoalList = []
 
-		if 'K3Y' in GOALS and CallSign == 'K3Y':
+		if 'K3Y' in config.GOALS and CallSign == 'K3Y':
 			if (CallSignSuffix != ''):
 				Band = cSKCC.WhichArrlBand(fFrequency)
 
@@ -772,7 +696,7 @@ class cQSO(cStateMachine):
 
 		self.RefreshPeriodSeconds = 3
 
-		MyMemberEntry       = SKCC.Members[MY_CALLSIGN]
+		MyMemberEntry       = SKCC.Members[config.MY_CALLSIGN]
 		self.MyJoin_Date    = Effective(MyMemberEntry['join_date'])
 		self.MyC_Date       = Effective(MyMemberEntry['c_date'])
 		self.MyT_Date       = Effective(MyMemberEntry['t_date'])
@@ -786,17 +710,17 @@ class cQSO(cStateMachine):
 			self.TimeoutInSeconds(self.RefreshPeriodSeconds)
 
 		def TIMEOUT():
-			if os.path.getmtime(ADI_FILE) != self.AdiFileReadTimeStamp:
-				Display.Print(f"'{ADI_FILE}' file is changing. Waiting for write to finish...")
+			if os.path.getmtime(config.ADI_FILE) != self.AdiFileReadTimeStamp:
+				Display.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
 				# Once we detect the file has changed, we can't necessarily read it
 				# immediately because the logger may still be writing to it, so we wait
 				# until the write is complete.
 				while True:
-					Size = os.path.getsize(ADI_FILE)
+					Size = os.path.getsize(config.ADI_FILE)
 					time.sleep(1)
 
-					if os.path.getsize(ADI_FILE) == Size:
+					if os.path.getsize(config.ADI_FILE) == Size:
 						break
 
 				QSOs.Refresh()
@@ -856,25 +780,25 @@ class cQSO(cStateMachine):
 
 		### WAS and WAS-C and WAS-T and WAS-S ###
 
-		if 'WAS' in GOALS:
-			if len(self.ContactsForWAS) == len(US_STATES) and MY_CALLSIGN not in SKCC.WasLevel:
+		if 'WAS' in config.GOALS:
+			if len(self.ContactsForWAS) == len(US_STATES) and config.MY_CALLSIGN not in SKCC.WasLevel:
 				print('FYI: You qualify for WAS but have not yet applied for it.')
 
-		if 'WAS-C' in GOALS:
-			if len(self.ContactsForWAS_C) == len(US_STATES) and MY_CALLSIGN not in SKCC.WasCLevel:
+		if 'WAS-C' in config.GOALS:
+			if len(self.ContactsForWAS_C) == len(US_STATES) and config.MY_CALLSIGN not in SKCC.WasCLevel:
 				print('FYI: You qualify for WAS-C but have not yet applied for it.')
 
-		if 'WAS-T' in GOALS:
-			if len(self.ContactsForWAS_T) == len(US_STATES) and MY_CALLSIGN not in SKCC.WasTLevel:
+		if 'WAS-T' in config.GOALS:
+			if len(self.ContactsForWAS_T) == len(US_STATES) and config.MY_CALLSIGN not in SKCC.WasTLevel:
 				print('FYI: You qualify for WAS-T but have not yet applied for it.')
 
-		if 'WAS-S' in GOALS:
-			if len(self.ContactsForWAS_S) == len(US_STATES) and MY_CALLSIGN not in SKCC.WasSLevel:
+		if 'WAS-S' in config.GOALS:
+			if len(self.ContactsForWAS_S) == len(US_STATES) and config.MY_CALLSIGN not in SKCC.WasSLevel:
 				print('FYI: You qualify for WAS-S but have not yet applied for it.')
 
-		if 'P' in GOALS:
-			if MY_CALLSIGN in SKCC.PrefixLevel:
-				Award_P_Level = SKCC.PrefixLevel[MY_CALLSIGN]
+		if 'P' in config.GOALS:
+			if config.MY_CALLSIGN in SKCC.PrefixLevel:
+				Award_P_Level = SKCC.PrefixLevel[config.MY_CALLSIGN]
 
 				if P_Level > Award_P_Level:
 					print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}')
@@ -893,13 +817,13 @@ class cQSO(cStateMachine):
 		return Remaining, X_Factor
 
 	def ReadQSOs(self):
-		Display.Print(f'Reading QSOs from {ADI_FILE}...')
+		Display.Print(f'Reading QSOs from {config.ADI_FILE}...')
 
 		self.QSOs = []
 
-		self.AdiFileReadTimeStamp = os.path.getmtime(ADI_FILE)
+		self.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
 
-		with open(ADI_FILE, 'rb') as File:
+		with open(config.ADI_FILE, 'rb') as File:
 			Contents = File.read().decode('utf-8', 'ignore')
 
 		_Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
@@ -989,19 +913,19 @@ class cQSO(cStateMachine):
 		def PrintRemaining(Class: str, Total: int):
 			Remaining, X_Factor = cQSO.CalculateNumerics(Class, Total)
 
-			if Class in GOALS:
+			if Class in config.GOALS:
 				Abbrev = AbbreviateClass(Class, X_Factor)
 				print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
 
 		print('')
 
-		if GOALS:
-			print(f'GOAL{"S" if len(GOALS) > 1 else ""}: {", ".join(GOALS)}')
+		if config.GOALS:
+			print(f'GOAL{"S" if len(config.GOALS) > 1 else ""}: {", ".join(config.GOALS)}')
 
-		if TARGETS:
-			print(f'TARGET{"S" if len(TARGETS) > 1 else ""}: {", ".join(TARGETS)}')
+		if config.TARGETS:
+			print(f'TARGET{"S" if len(config.TARGETS) > 1 else ""}: {", ".join(config.TARGETS)}')
 
-		print(f'BANDS: {", ".join(str(Band)  for Band in BANDS)}')
+		print(f'BANDS: {", ".join(str(Band)  for Band in config.BANDS)}')
 
 		print('')
 
@@ -1028,19 +952,19 @@ class cQSO(cStateMachine):
 
 			print(f'Total worked towards {Class}: {len(QSOs)}, {Need}.')
 
-		if 'WAS' in GOALS:
+		if 'WAS' in config.GOALS:
 			RemainingStates('WAS', self.ContactsForWAS)
 
-		if 'WAS-C' in GOALS:
+		if 'WAS-C' in config.GOALS:
 			RemainingStates('WAS-C', self.ContactsForWAS_C)
 
-		if 'WAS-T' in GOALS:
+		if 'WAS-T' in config.GOALS:
 			RemainingStates('WAS-T', self.ContactsForWAS_T)
 
-		if 'WAS-S' in GOALS:
+		if 'WAS-S' in config.GOALS:
 			RemainingStates('WAS-S', self.ContactsForWAS_S)
 
-		if 'BRAG' in GOALS:
+		if 'BRAG' in config.GOALS:
 			NowGMT = cFastDateTime.NowGMT()
 			MonthIndex = NowGMT.Month()-1
 			MonthName = cFastDateTime.MonthNames[MonthIndex]
@@ -1050,7 +974,7 @@ class cQSO(cStateMachine):
 		if TheirCallSign not in SKCC.Members:
 			return []
 
-		if TheirCallSign == MY_CALLSIGN:
+		if TheirCallSign == config.MY_CALLSIGN:
 			return []
 
 		TheirMemberEntry  = SKCC.Members[TheirCallSign]
@@ -1061,7 +985,7 @@ class cQSO(cStateMachine):
 
 		List: list[str] = []
 
-		if 'BRAG' in GOALS:
+		if 'BRAG' in config.GOALS:
 			if TheirMemberNumber not in self.Brag:
 				NowGMT       = cFastDateTime.NowGMT()
 				DuringSprint = cSKCC.DuringSprint(NowGMT)
@@ -1075,57 +999,57 @@ class cQSO(cStateMachine):
 				if BragOkay:
 					List.append('BRAG')
 
-		if 'C' in GOALS and not self.MyC_Date:
+		if 'C' in config.GOALS and not self.MyC_Date:
 			if TheirMemberNumber not in self.ContactsForC:
 				List.append('C')
 
-		if 'CXN' in GOALS and self.MyC_Date:
+		if 'CXN' in config.GOALS and self.MyC_Date:
 			if TheirMemberNumber not in self.ContactsForC:
 				_, X_Factor = cQSO.CalculateNumerics('C', len(self.ContactsForC))
 				List.append(AbbreviateClass('C', X_Factor))
 
-		if 'T' in GOALS and self.MyC_Date and not self.MyT_Date:
+		if 'T' in config.GOALS and self.MyC_Date and not self.MyT_Date:
 			if TheirC_Date and TheirMemberNumber not in self.ContactsForT:
 				List.append('T')
 
-		if 'TXN' in GOALS and self.MyT_Date:
+		if 'TXN' in config.GOALS and self.MyT_Date:
 			if TheirC_Date and TheirMemberNumber not in self.ContactsForT:
 				_Remaining, X_Factor = cQSO.CalculateNumerics('T', len(self.ContactsForT))
 				List.append(AbbreviateClass('T', X_Factor))
 
-		if 'S' in GOALS and self.MyTX8_Date and not self.MyS_Date:
+		if 'S' in config.GOALS and self.MyTX8_Date and not self.MyS_Date:
 			if TheirT_Date and TheirMemberNumber not in self.ContactsForS:
 				List.append('S')
 
-		if 'SXN' in GOALS and self.MyS_Date:
+		if 'SXN' in config.GOALS and self.MyS_Date:
 			if TheirT_Date and TheirMemberNumber not in self.ContactsForS:
 				_Remaining, X_Factor = cQSO.CalculateNumerics('S', len(self.ContactsForS))
 				List.append(AbbreviateClass('S', X_Factor))
 
-		if 'WAS' in GOALS:
+		if 'WAS' in config.GOALS:
 			SPC = TheirMemberEntry['spc']
 			if SPC in US_STATES and SPC not in self.ContactsForWAS:
 				List.append('WAS')
 
-		if 'WAS-C' in GOALS:
+		if 'WAS-C' in config.GOALS:
 			if TheirC_Date:
 				SPC = TheirMemberEntry['spc']
 				if SPC in US_STATES and SPC not in self.ContactsForWAS_C:
 					List.append('WAS-C')
 
-		if 'WAS-T' in GOALS:
+		if 'WAS-T' in config.GOALS:
 			if TheirT_Date:
 				SPC = TheirMemberEntry['spc']
 				if SPC in US_STATES and SPC not in self.ContactsForWAS_T:
 					List.append('WAS-T')
 
-		if 'WAS-S' in GOALS:
+		if 'WAS-S' in config.GOALS:
 			if TheirS_Date:
 				SPC = TheirMemberEntry['spc']
 				if SPC in US_STATES and SPC not in self.ContactsForWAS_S:
 					List.append('WAS-S')
 
-		if 'P' in GOALS:
+		if 'P' in config.GOALS:
 			Match = cQSO.Prefix_RegEx.match(TheirCallSign)
 
 			if Match:
@@ -1147,7 +1071,7 @@ class cQSO(cStateMachine):
 		if TheirCallSign not in SKCC.Members:
 			return []
 
-		if TheirCallSign == MY_CALLSIGN:
+		if TheirCallSign == config.MY_CALLSIGN:
 			return []
 
 		TheirMemberEntry  = SKCC.Members[TheirCallSign]
@@ -1160,7 +1084,7 @@ class cQSO(cStateMachine):
 
 		List: list[str] = []
 
-		if 'C' in TARGETS and not TheirC_Date:
+		if 'C' in config.TARGETS and not TheirC_Date:
 			if TheirMemberNumber in self.QSOsByMemberNumber:
 				for QsoDate in self.QSOsByMemberNumber[TheirMemberNumber]:
 					if QsoDate > TheirJoin_Date and QsoDate > self.MyJoin_Date:
@@ -1170,7 +1094,7 @@ class cQSO(cStateMachine):
 			else:
 				List.append('C')
 
-		if 'CXN' in TARGETS and TheirC_Date:
+		if 'CXN' in config.TARGETS and TheirC_Date:
 			NextLevel = SKCC.CenturionLevel[TheirMemberNumber]+1
 
 			if NextLevel <= 10:
@@ -1183,7 +1107,7 @@ class cQSO(cStateMachine):
 				else:
 					List.append(f'Cx{NextLevel}')
 
-		if 'T' in TARGETS and TheirC_Date and not TheirT_Date and self.MyC_Date:
+		if 'T' in config.TARGETS and TheirC_Date and not TheirT_Date and self.MyC_Date:
 			if TheirMemberNumber in self.QSOsByMemberNumber:
 				for QsoDate in self.QSOsByMemberNumber[TheirMemberNumber]:
 					if QsoDate > TheirC_Date and QsoDate > self.MyC_Date:
@@ -1193,7 +1117,7 @@ class cQSO(cStateMachine):
 			else:
 				List.append('T')
 
-		if 'TXN' in TARGETS and TheirT_Date and self.MyC_Date:
+		if 'TXN' in config.TARGETS and TheirT_Date and self.MyC_Date:
 			NextLevel = SKCC.TribuneLevel[TheirMemberNumber]+1
 
 			if NextLevel <= 10:
@@ -1206,7 +1130,7 @@ class cQSO(cStateMachine):
 				else:
 					List.append(f'Tx{NextLevel}')
 
-		if 'S' in TARGETS and TheirTX8_Date and not TheirS_Date and self.MyT_Date:
+		if 'S' in config.TARGETS and TheirTX8_Date and not TheirS_Date and self.MyT_Date:
 			if TheirMemberNumber in self.QSOsByMemberNumber:
 				for QsoDate in self.QSOsByMemberNumber[TheirMemberNumber]:
 					if QsoDate > TheirTX8_Date and QsoDate > self.MyT_Date:
@@ -1216,7 +1140,7 @@ class cQSO(cStateMachine):
 			else:
 				List.append('S')
 
-		if 'SXN' in TARGETS and TheirS_Date and self.MyT_Date:
+		if 'SXN' in config.TARGETS and TheirS_Date and self.MyT_Date:
 			NextLevel = SKCC.SenatorLevel[TheirMemberNumber]+1
 
 			if NextLevel <= 10:
@@ -1299,7 +1223,7 @@ class cQSO(cStateMachine):
 						#print('Not brag eligible: {} on {}  {}  warc: {}  sprint: {}'.format(QsoCallSign, QsoDate, QsoFreq, OnWarcFreq, DuringSprint))
 						pass
 
-		if Print and 'BRAG' in GOALS:
+		if Print and 'BRAG' in config.GOALS:
 			Year = DateOfInterestGMT.Year()
 			MonthIndex = DateOfInterestGMT.Month()-1
 			MonthAbbrev = cFastDateTime.MonthNames[MonthIndex][:3]
@@ -1330,9 +1254,11 @@ class cQSO(cStateMachine):
 		#fastStartOfMonth = TodayGMT.StartOfMonth()
 		#fastEndOfMonth   = TodayGMT.EndOfMonth()
 
-		if 'BRAG_MONTHS' in globals() and 'BRAG' in GOALS:
-			for PrevMonth in range( abs(BRAG_MONTHS), 0, -1 ):
+		''' TODO
+		if 'BRAG_MONTHS' in globals() and 'BRAG' in config.GOALS:
+			for PrevMonth in range( abs(config.BRAG_MONTHS), 0, -1 ):
 				QSOs.GetBragQSOs( PrevMonth = PrevMonth, Print=True )
+		'''
 
 		# MWS - Process current month as well.
 		QSOs.GetBragQSOs(PrevMonth=0, Print=False)
@@ -1361,7 +1287,7 @@ class cQSO(cStateMachine):
 			#fastQsoDate = cFastDateTime(QsoDate)
 
 			# K3Y
-			if 'K3Y' in GOALS:
+			if 'K3Y' in config.GOALS:
 				StartDate = f'{K3Y_YEAR}0102000000'
 				EndDate   = f'{K3Y_YEAR}0201000000'
 
@@ -1438,7 +1364,7 @@ class cQSO(cStateMachine):
 			PrefixList = QSOs.values()
 			PrefixList = sorted(PrefixList, key=lambda QsoTuple: QsoTuple[1])
 
-			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as File:
+			with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as File:
 				iPoints = 0
 				for Index, (_QsoDate, Prefix, iMemberNumber, FirstName) in enumerate(PrefixList):
 					iPoints += iMemberNumber
@@ -1448,7 +1374,7 @@ class cQSO(cStateMachine):
 			QSOs = QSOs_dict.values()
 			QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+			with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
 				for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
 					Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 					File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
@@ -1459,7 +1385,7 @@ class cQSO(cStateMachine):
 
 			QSOsByState = {QsoSPC: (QsoSPC, QsoDate, QsoCallsign) for QsoSPC, QsoDate, QsoCallsign in QSOs}
 
-			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+			with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
 				for State in US_STATES:
 					if State in QSOsByState:
 						QsoSPC, _, QsoCallSign = QSOsByState[State]
@@ -1472,7 +1398,7 @@ class cQSO(cStateMachine):
 			QSOs = QSOs.values()
 			QSOs = sorted(QSOs)
 
-			with open(f'{QSOs_Dir}/{MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as File:
+			with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as File:
 				for Count, (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq) in enumerate(QSOs):
 					Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 					if QsoFreq:
@@ -1555,7 +1481,7 @@ class cQSO(cStateMachine):
 			PrintStation('OC')
 			PrintStation('SA')
 
-		if 'K3Y' in GOALS:
+		if 'K3Y' in config.GOALS:
 			PrintK3Y_Contacts()
 
 class cSpotters:
@@ -1735,17 +1661,15 @@ class cSpotters:
 			return BandList
 
 		print('')
-		print(f"Finding RBN Spotters within {SPOTTER_RADIUS} miles of '{MY_GRIDSQUARE}'...")
+		print(f"Finding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
-		ReverseBeacon_net = cHTTP('reversebeacon.net')
-		bHTML             = ReverseBeacon_net.Get('http://reversebeacon.net/cont_includes/status.php?t=skt')
+		response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
 
-		if bHTML is None:
+		if response.status_code != 200:
 			print('*** Fatal Error: Unable to retrieve spotters from RBN.  Is RBN down?')
 			sys.exit()
 
-		bHTML = bHTML.rstrip()
-		HTML  = bHTML.decode('utf-8', 'ignore')
+		HTML = response.text
 
 		Rows: list[str] = []
 
@@ -1769,7 +1693,7 @@ class cSpotters:
 					continue
 
 				try:
-					fKilometers = cSpotters.calculate_distance(MY_GRIDSQUARE, Grid)
+					fKilometers = cSpotters.calculate_distance(config.MY_GRIDSQUARE, Grid)
 				except ValueError:
 					#print('Bad GridSquare {} for Spotter {}'.format(Grid, Spotter))
 					continue
@@ -1791,13 +1715,13 @@ class cSpotters:
 		NearbyList: list[tuple[str, int]] = []
 
 		for Spotter, Miles, Bands in List:
-			if Miles <= SPOTTER_RADIUS:
+			if Miles <= config.SPOTTER_RADIUS:
 				NearbyList.append((Spotter, Miles))
 
 		return NearbyList
 
 	def GetDistance(self, Spotter: str) -> int:
-		Miles, _Bands = self.Spotters[Spotter]
+		Miles, _ = self.Spotters[Spotter]
 		return Miles
 
 
@@ -1855,7 +1779,7 @@ class cSKCC:
 
 		StartDate = cFastDateTime(None)
 
-		for _Count in range(1, 4+1):
+		for _ in range(1, 4+1):
 			StartDate = FromDate.FirstWeekdayAfterDate('Wed')
 			FromDate = StartDate
 
@@ -1959,20 +1883,18 @@ class cSKCC:
 	def ReadLevelList(Type: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC award info from {URL}...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bLevelList    = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
+		response = requests.get('https://www.skccgroup.com/'+URL)
 
-		if not bLevelList:
+		if response.status_code != 200:
 			return {}
 
-		bLevelList = bLevelList.rstrip()
-		LevelList  = bLevelList.decode('ascii')
+		LevelList = response.text
 
 		Level: dict[str, int] = {}
 		TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
 		for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
-			CertNumber,CallSign,MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
+			CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
 
 			if ' ' in CertNumber:
 				CertNumber, X_Factor = CertNumber.split()
@@ -2002,14 +1924,12 @@ class cSKCC:
 	def ReadRoster(Name: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC {Name} roster...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bHTML         = SkccGroup_com.Get('http://www.skccgroup.com/'+URL)
+		response = requests.get('https://www.skccgroup.com/'+URL)
 
-		if not bHTML:
+		if response.status_code != 200:
 			return {}
 
-		bHTML         = bHTML.rstrip()
-		HTML          = bHTML.decode('utf-8', 'ignore')
+		HTML = response.text
 
 		Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
 		Columns_RegEx = re.compile(r'<td.*?>(.*?)</td>', re.M|re.I|re.S)
@@ -2037,14 +1957,12 @@ class cSKCC:
 	def ReadSkccData(self) -> None:
 		print('Retrieving SKCC award dates...')
 
-		SkccGroup_com = cHTTP('skccgroup.com')
-		bSkccList     = SkccGroup_com.Get('http://www.skccgroup.com/membership_data/skccdata.txt')
+		response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt')
 
-		if not bSkccList:
+		if response.status_code != 200:
 			return
 
-		bSkccList = bSkccList.rstrip()
-		SkccList      = bSkccList.decode('utf-8')
+		SkccList = response.text
 
 		Lines = SkccList.splitlines()
 
@@ -2132,7 +2050,7 @@ class cSKCC:
 
 	@staticmethod
 	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10):
-		WarcBands =  [30, 17, 12]
+		WarcBands = [30, 17, 12]
 
 		for Band in WarcBands:
 			MidPoints = cSKCC.Frequencies[Band]
@@ -2170,12 +2088,12 @@ class cSKCC:
 		return (MemberNumber, Suffix)
 
 def Log(Line: str):
-	if LOG_FILE['ENABLED']:
-		with open(LOG_FILE['FILE_NAME'], 'a', encoding='utf-8') as File:
+	if config.LOG_FILE.ENABLED:
+		with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
 def LogError(Line: str):
-	if LOG_BAD_SPOTS:
+	if config.LOG_BAD_SPOTS:
 		with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
@@ -2200,7 +2118,7 @@ def BuildMemberInfo(CallSign: str):
 
 def IsInBANDS(Frequency: float) -> bool:
 	def InRange(Band: int, fFrequency: float, Low: float, High: float) -> bool:
-		return Band in BANDS and fFrequency >= Low and fFrequency <= High
+		return Band in config.BANDS and fFrequency >= Low and fFrequency <= High
 
 	if InRange(160, Frequency, 1800, 2000):
 		return True
@@ -2241,7 +2159,7 @@ def Lookups(LookupString: str):
 	def PrintCallSign(CallSign: str):
 		Entry = SKCC.Members[CallSign]
 
-		MyNumber = SKCC.Members[MY_CALLSIGN]['plain_number']
+		MyNumber = SKCC.Members[config.MY_CALLSIGN]['plain_number']
 
 		Report = [BuildMemberInfo(CallSign)]
 
@@ -2259,7 +2177,7 @@ def Lookups(LookupString: str):
 				Report.append(f'THEY need you for {",".join(TargetList)}')
 
 			# NX1K 12-Nov-2017 Put in check for friend.
-			IsFriend = CallSign in FRIENDS
+			IsFriend = CallSign in config.FRIENDS
 
 			if IsFriend:
 				Report.append('friend')
@@ -2269,7 +2187,7 @@ def Lookups(LookupString: str):
 
 		print(f'  {CallSign} - {"; ".join(Report)}')
 
-	LookupList = Split(LookupString.upper())
+	LookupList = cCommon.Split(LookupString.upper())
 
 	for Item in LookupList:
 		Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
@@ -2299,41 +2217,6 @@ def Lookups(LookupString: str):
 
 	print('')
 
-def Usage() -> NoReturn:
-	print('Usage:')
-	print('')
-	print('   skcc_skimmer.py')
-	print('                   [--adi <adi-file>]')
-	print('                   [--bands <comma-separated-bands>]')
-	print('                   [--brag-months <number-of-months-back>]')
-	print('                   [--callsign <your-callsign>]')
-	print('                   [--goals <goals>]')
-	print('                   [--help]')
-	print('                   [--interactive]')
-	print('                   [--logfile <logfile-name>]')
-	print('                   [--maidenhead <grid-square>]')
-	print('                   [--notification <on|off>]')
-	print('                   [--radius <distance-in-miles>]')
-	print('                   [--targets <targets>]')
-	print('                   [--verbose]')
-	print(' or...')
-	print('')
-	print('   skcc_skimmer.py')
-	print('                   [-a <adi-file>]')
-	print('                   [-b <comma-separated-bands>]')
-	print('                   [-c <your-callsign>]')
-	print('                   [-g <goals>]')
-	print('                   [-h]')
-	print('                   [-i]')
-	print('                   [-l <logfile-name>]')
-	print('                   [-m <grid-square>]')
-	print('                   [-n <on|off>]')
-	print('                   [-r <distance-in-miles>]')
-	print('                   [-t <targets>]')
-	print('                   [-v]')
-	print('')
-	sys.exit()
-
 def FileCheck(Filename: str):
 	if os.path.exists(Filename):
 		return
@@ -2361,8 +2244,10 @@ US_STATES = 'AK AL AR AZ CA CO CT DE FL GA ' + \
             'NJ NM NV NY OH OK OR PA RI SC ' + \
             'SD TN TX UT VA VT WA WI WV WY'
 
-# Default DISTANCE_UNITS in case it isn't set in the config file.
-DISTANCE_UNITS = 'mi'
+ArgV = sys.argv[1:]
+
+config = cConfig(ArgV)
+
 
 # Default the K3Y_YEAR in case it isn't set in the config file.
 K3Y_YEAR = datetime.now().year
@@ -2371,128 +2256,19 @@ K3Y_YEAR = datetime.now().year
 # Read and execute the contents of 'skcc_skimmer.cfg'.
 #
 
-try:
-	with open('skcc_skimmer.cfg', 'r', encoding='utf-8') as File:
-		ConfigFileString = File.read()
-except IOError:
-	print("Unable to open configuration file 'skcc_skimmer.cfg'.")
-	sys.exit()
+#exec(ConfigFileString)
 
-exec(ConfigFileString)
-
-if 'QUALIFIERS' in globals():
-	print("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'NEARBY' in globals():
-	print("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
-	sys.exit()
-
-if 'SPOTTER_PREFIXES' in globals():
-	print("'SPOTTER_PREFIXES' has been deprecated.")
-	sys.exit()
-
-if 'SPOTTERS_NEARBY' in globals():
-	print("'SPOTTERS_NEARBY' has been deprecated.")
-	sys.exit()
-
-if 'SKCC_FREQUENCIES' in globals():
-	print("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'HITS_FILE' in globals():
-	print("'HITS_FILE' is no longer supported.")
-	sys.exit()
-
-if 'HitCriteria' in globals():
-	print("'HitCriteria' is no longer supported.")
-	sys.exit()
-
-if 'StatusCriteria' in globals():
-	print("'StatusCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SkedCriteria' in globals():
-	print("'SkedCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SkedStatusCriteria' in globals():
-	print("'SkedStatusCriteria' is no longer supported.")
-	sys.exit()
-
-if 'SERVER' in globals():
-	print('SERVER is no longer supported.')
-	sys.exit()
-
-if 'SPOT_PERSISTENCE_MINUTES' not in globals():
-	SPOT_PERSISTENCE_MINUTES = 15
-
-if 'GOAL' in globals():
-	print("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
-	sys.exit()
-
-if 'GOALS' not in globals():
-	print("GOALS must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'TARGETS' not in globals():
-	print("TARGETS must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if 'HIGH_WPM' not in globals():
-	print("HIGH_WPM must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if HIGH_WPM['ACTION'] not in ('suppress', 'warn', 'always-display'):
-	print("HIGH_WPM['ACTION'] must be one of ('suppress', 'warn', 'always-display')")
-	sys.exit()
-
-if 'OFF_FREQUENCY' not in globals():
-	print("OFF_FREQUENCY must be defined in 'skcc_skimmer.cfg'.")
-	sys.exit()
-
-if OFF_FREQUENCY['ACTION'] not in ('suppress', 'warn'):
-	print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
-	sys.exit()
-
-if 'BANDS' in globals():
-	BANDS = [int(Band)  for Band in Split(str(BANDS))]
 
 CLUSTERS = 'SKCC RBN'
 
-def Parse(String: str, ALL_str: str, Type: str) -> list[str]:
-	ALL: list[str] = ALL_str.split()
-	List = Split(String.upper())
-
-	for x in List:
-		if x == 'ALL':
-			return ALL
-
-		if x == 'NONE':
-			return []
-
-		if x == 'CXN' and 'C' not in List:
-			List.append('C')
-
-		if x == 'TXN' and 'T' not in List:
-			List.append('T')
-
-		if x == 'SXN' and 'S' not in List:
-			List.append('S')
-
-		if x not in ALL:
-			print(f"Unrecognized {Type} '{x}'.")
-			sys.exit()
-
-	return List
 
 cSKCC.BlockDuringUpdateWindow()
 
-EXCLUSIONS       = Split(EXCLUSIONS.upper())
-US_STATES        = Split(US_STATES.upper())
-FRIENDS          = Split(FRIENDS.upper())
-MY_CALLSIGN      = MY_CALLSIGN.upper()
-VERBOSE          = False
+#EXCLUSIONS       = Split(config.EXCLUSIONS.upper())
+#US_STATES        = Split(US_STATES.upper())
+#FRIENDS          = Split(FRIENDS.upper())
+#MY_CALLSIGN      = config.#MY_CALLSIGN.upper()
+#VERBOSE          = False
 
 Levels = {
  'C'  :    100,
@@ -2501,130 +2277,18 @@ Levels = {
  'P'  : 500000,
 }
 
-ArgV = sys.argv[1:]
-
-try:
-	Options, Args = getopt.getopt(ArgV, \
-			'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'.replace(' ', ''), \
-			'adi= bands= brag-months= callsign= distance-units= goals= help interactive logfile= maidenhead= notification= radius= sked= targets= verbose'.split())
-except getopt.GetoptError as e:
-	print(e)
-	Usage()
-
-HaveCallSign = False
-
-if 'VERBOSE' not in globals():
-	VERBOSE = False
-
-if 'LOG_BAD_SPOTS' not in globals():
-	LOG_BAD_SPOTS = False
-
-INTERACTIVE = False
-
-for Option, Arg in Options:
-	if Option in ('-a', '--adi'):
-		ADI_FILE = Arg
-
-	elif Option in ('-b', '--bands'):
-		BANDS = [int(Band)  for Band in Split(Arg)]
-
-	elif Option in ('-B', '--brag-months'):
-		BRAG_MONTHS = int(Arg)
-
-	elif Option in ('-c', '--callsign'):
-		MY_CALLSIGN = Arg.upper()
-		HaveCallSign = True
-
-	elif Option in ('-d', '--distance-units'):
-		Arg = Arg.lower()
-
-		if Arg not in ('mi', 'km'):
-			print("DISTANCE_UNITS option must be either 'mi' or 'km'.")
-			sys.exit()
-
-		DISTANCE_UNITS = Arg
-
-	elif Option in ('-g', '--goals'):
-		GOALS = Arg
-
-	elif Option in ('-h', '--help'):
-		Usage()
-
-
-	elif Option in ('-i', '--interactive'):
-		INTERACTIVE = True
-
-	elif Option in ('-l', '--logfile'):
-		LOG_FILE['ENABLED']           = True
-		LOG_FILE['DELETE_ON_STARTUP'] = True
-		LOG_FILE['FILE_NAME']         = Arg
-
-	elif Option in ('-m', '--maidenhead'):
-		MY_GRIDSQUARE = Arg
-
-	elif Option in ('-n', '--notification'):
-		Arg = Arg.lower()
-
-		if Arg not in ('on', 'off'):
-			print("Notificiation option must be either 'on' or 'off'.")
-			sys.exit()
-
-		NOTIFICATION['ENABLED'] = Arg == 'on'
-
-	elif Option in ('-r', '--radius'):
-		SPOTTER_RADIUS = int(Arg)
-
-	elif Option in ('-s', '--sked'):
-		Arg = Arg.lower()
-
-		if Arg not in ('on', 'off'):
-			print("SKED option must be either 'on' or 'off'.")
-			sys.exit()
-
-		SKED['ENABLED'] = Arg == 'on'
-
-	elif Option in ('-t', '--targets'):
-		TARGETS = Arg
-
-	elif Option in ('-v', '--verbose'):
-		VERBOSE = True
-
-if VERBOSE:
-	PROGRESS_DOTS['ENABLED'] = False
-
-#
-# MY_CALLSIGN can be defined in skcc_skimmer.cfg.  It is not required
-# that it be supplied on the command line.
-#
-if not MY_CALLSIGN:
-	print("You must specify your callsign, either on the command line or in 'skcc_skimmer.cfg'.")
-	print('')
-	Usage()
-
-if not ADI_FILE:
-	print("You must supply an ADI file, either on the command line or in 'skcc_skimmer.cfg'.")
-	print('')
-	Usage()
-
-GOALS   = Parse(GOALS,   'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
-TARGETS = Parse(TARGETS, 'C CXN T TXN S SXN',                                  'target')
-
-if not GOALS and not TARGETS:
-	print('You must specify at least one goal or target.')
-	sys.exit()
-
-if 'QUALIFIERS' in globals():
-	print("INFO: You no longer need to specify QUALIFIERS.  You may remove it from 'skcc_skimmer.cfg'.")
+if config.VERBOSE:
+	config.PROGRESS_DOTS.ENABLED = False
 
 signal.signal(signal.SIGINT, signal_handler)
 
-FileCheck(ADI_FILE)
+FileCheck(config.ADI_FILE)
 
 Display  = cDisplay()
 SKCC     = cSKCC()
 
-if MY_CALLSIGN not in SKCC.Members:
-	print(f"'{MY_CALLSIGN}' is not a member of SKCC.")
+if config.MY_CALLSIGN not in SKCC.Members:
+	print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
 	sys.exit()
 
 QSOs = cQSO()
@@ -2635,7 +2299,7 @@ QSOs.PrintProgress()
 print('')
 QSOs.AwardsCheck()
 
-if INTERACTIVE:
+if config.INTERACTIVE:
 	print('')
 	print('Interactive mode. Enter one or more comma or space separated callsigns.')
 	print('')
@@ -2657,35 +2321,11 @@ if INTERACTIVE:
 			print('')
 			Lookups(Line)
 
-if 'NOTIFICATION' not in globals():
-	print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
-	sys.exit()
-
-BeepCondition: list[str] = NOTIFICATION['CONDITION'].lower().split(',')
-
-for Condition in BeepCondition:
-	if Condition not in ['goals', 'targets', 'friends']:
-		print("NOTIFICATION CONDITION must be 'goals' and/or 'targets' and/or 'friends'")
-		sys.exit()
-
-
-if 'MY_GRIDSQUARE' not in globals() or not MY_GRIDSQUARE:
-	print("'MY_GRIDSQUARE' must be specified in skcc_skimmer.cfg or on the command line.")
-	sys.exit()
-
-if not MY_GRIDSQUARE:
-	print("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
-	sys.exit()
-
-if 'SPOTTER_RADIUS' not in globals():
-	print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
-	sys.exit()
-
 Spotters = cSpotters()
 Spotters.GetSpotters()
 
 def FormatDistance(Miles: int) -> str:
-	if DISTANCE_UNITS == "mi":
+	if config.DISTANCE_UNITS == "mi":
 		return f'{Miles}mi'
 
 	return f'{Miles2Km(Miles)}km'
@@ -2703,8 +2343,8 @@ for Element in List:
 	print(f'    {Element}')
 
 
-if LOG_FILE['DELETE_ON_STARTUP']:
-	Filename = str(LOG_FILE['FILE_NAME'])
+if config.LOG_FILE.DELETE_ON_STARTUP:
+	Filename = config.LOG_FILE.FILE_NAME
 
 	if os.path.exists(Filename):
 		os.remove(Filename)
@@ -2715,9 +2355,9 @@ print('')
 
 SocketLoop = cSocketLoop()
 
-RBN = cRBN_Filter(SocketLoop, CallSign=MY_CALLSIGN, Clusters=CLUSTERS)
+RBN = cRBN_Filter(SocketLoop, CallSign=config.MY_CALLSIGN, Clusters=CLUSTERS)
 
-if SKED['ENABLED']:
+if config.SKED.ENABLED:
 	cSked()
 
 SocketLoop.Run()
