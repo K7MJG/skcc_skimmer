@@ -1,7 +1,7 @@
 import sys
 import getopt
 
-from typing  import Any, Literal, NoReturn
+from typing  import Any, Literal, NoReturn, get_args, TypedDict
 
 from cCommon import cCommon
 
@@ -20,7 +20,8 @@ class cConfig:
 	LOG_FILE = cLogFile()
 
 	class cHighWpm:
-		ACTION:    Literal['suppress', 'warn', 'always-display']
+		tAction = Literal['suppress', 'warn', 'always-display']
+		ACTION: tAction
 		THRESHOLD: int
 	HIGH_WPM = cHighWpm
 
@@ -56,6 +57,12 @@ class cConfig:
 	SPOTTER_RADIUS:           int
 
 	configFile: dict[str, Any]
+
+	class TypedConfig(TypedDict):
+		HIGH_WPM: 'cConfig.cHighWpm'
+
+
+	configFile2: TypedConfig
 
 	def __init__(self, ArgV: list[str]):
 		def ReadSkccSkimmerCfg() -> dict[str, Any]:
@@ -145,7 +152,12 @@ class cConfig:
 			highWpm = self.configFile['HIGH_WPM']
 
 			if 'ACTION' in highWpm:
-				self.HIGH_WPM.ACTION = highWpm['ACTION']
+				action: cConfig.cHighWpm.tAction = highWpm['ACTION']
+
+				if action not in get_args(cConfig.cHighWpm.tAction):
+					print(f"Must be one of {get_args(cConfig.cHighWpm.tAction)}.")
+
+				self.HIGH_WPM.ACTION = action
 
 			if 'THRESHOLD' in highWpm:
 				self.HIGH_WPM.THRESHOLD = int(highWpm['THRESHOLD'])
