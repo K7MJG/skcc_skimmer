@@ -216,20 +216,19 @@ class cConfig:
 		self.INTERACTIVE = False
 
 		for Option, Arg in Options:
-			match Option:
-				case '-a' | '--adi':
+			if Option ==  '-a' or Option == '--adi':
 					self.ADI_FILE = Arg
 
-				case '-b' | '--bands':
+			elif Option == '-b' or Option == '--bands':
 					self.BANDS = [int(Band)  for Band in cCommon.Split(Arg)]
 
-				case '-B' | '--brag-months':
+			elif Option == '-B' or Option == '--brag-months':
 					self.BRAG_MONTHS = int(Arg)
 
-				case '-c' | '--callsign':
+			elif Option == '-c'  or Option == '--callsign':
 					self.MY_CALLSIGN = Arg.upper()
 
-				case '-d' | '--distance-units':
+			elif Option == '-d' or Option == '--distance-units':
 					argLower = Arg.lower()
 
 					if argLower not in ('mi', 'km'):
@@ -238,24 +237,24 @@ class cConfig:
 
 					self.DISTANCE_UNITS = argLower
 
-				case '-g' | '--goals':
+			elif Option == '-g' or Option == '--goals':
 					self.GOALS = self.Parse(Arg, 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 
-				case '-h' | '--help':
+			elif Option == '-h' or Option == '--help':
 					self.Usage()
 
-				case '-i' | '--interactive':
+			elif Option == '-i' or Option == '--interactive':
 					self.INTERACTIVE = True
 
-				case '-l' | '--logfile':
+			elif Option == '-l' or Option == '--logfile':
 					self.LOG_FILE.ENABLED           = True
 					self.LOG_FILE.DELETE_ON_STARTUP = True
 					self.LOG_FILE.FILE_NAME         = Arg
 
-				case '-m' | '--maidenhead':
+			elif Option == '-m' or Option == '--maidenhead':
 					self.MY_GRIDSQUARE = Arg
 
-				case '-n' | '--notification':
+			elif Option == '-n' or Option == '--notification':
 					Arg = Arg.lower()
 
 					if Arg not in ('on', 'off'):
@@ -264,10 +263,10 @@ class cConfig:
 
 					self.NOTIFICATION.ENABLED = Arg == 'on'
 
-				case '-r' | '--radius':
+			elif Option == '-r' or Option == '--radius':
 					self.SPOTTER_RADIUS = int(Arg)
 
-				case '-s' | '--sked':
+			elif Option == '-s' or Option == '--sked':
 					Arg = Arg.lower()
 
 					if Arg not in ('on', 'off'):
@@ -276,13 +275,13 @@ class cConfig:
 
 					self.SKED.ENABLED = Arg == 'on'
 
-				case '-t' | '--targets':
+			elif Option == '-t' or Option == '--targets':
 					self.TARGETS = self.Parse(Arg, 'C CXN T TXN S SXN', 'target')
 
-				case '-v' | '--verbose':
+			elif Option == '-v' or Option == '--verbose':
 					self.VERBOSE = True
 
-				case _:
+			else:
 					self.Usage()
 
 
