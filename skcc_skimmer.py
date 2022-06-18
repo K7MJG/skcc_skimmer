@@ -1883,7 +1883,7 @@ class cSKCC:
 	def ReadLevelList(Type: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC award info from {URL}...')
 
-		response = requests.get('https://www.skccgroup.com/'+URL)
+		response = requests.get(f'https://www.skccgroup.com/{URL}')
 
 		if response.status_code != 200:
 			return {}
@@ -1924,7 +1924,7 @@ class cSKCC:
 	def ReadRoster(Name: str, URL: str) -> dict[str, int]:
 		print(f'Retrieving SKCC {Name} roster...')
 
-		response = requests.get('https://www.skccgroup.com/'+URL)
+		response = requests.get(f'https://www.skccgroup.com/{URL}')
 
 		if response.status_code != 200:
 			return {}
