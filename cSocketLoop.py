@@ -27,6 +27,8 @@
 	 mglenn@cox.net
 
 '''
+from __future__ import annotations
+
 import time
 import errno
 import socket

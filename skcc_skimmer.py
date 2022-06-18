@@ -81,8 +81,6 @@
 #     (Preinstalled)
 #
 
-from __future__ import division
-from __future__ import print_function
 from __future__ import annotations
 
 from datetime import timedelta
