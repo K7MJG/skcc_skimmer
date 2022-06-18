@@ -27,6 +27,9 @@
 	 mglenn@cox.net
 
 '''
+
+from __future__ import annotations
+
 import socket
 import random
 import time
