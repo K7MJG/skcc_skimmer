@@ -69,16 +69,8 @@
 #
 # Portability:
 #
-#   This script has been tested on:
-#
-#   - Windows, ActiveState Python Versions 2.7.8 and 3.4.1.
-#     (https://www.python.org/downloads/)
-#
-#   - Mac OS X, python 2.7.6.
-#     (Preinstalled)
-#
-#   - Raspberry Pi, python 2.7.3 and 3.2.3
-#     (Preinstalled)
+#   Requires Python version 3.8.10 or better. Also requires the following imports
+#   which may require a pip install.
 #
 
 from __future__ import annotations
@@ -86,7 +78,7 @@ from __future__ import annotations
 from datetime import timedelta
 from datetime import datetime
 
-from typing        import Any
+from typing        import Any, NoReturn, Literal
 
 from math          import radians, sin, cos, atan2, sqrt
 
@@ -107,7 +99,7 @@ import calendar
 import json
 import requests
 
-def Split(spaceSeparatedString: str):
+def Split(spaceSeparatedString: str) -> list[str | Any]:
   return re.split('[, ][ ]*', spaceSeparatedString.strip())
 
 def Effective(Date: str) -> str:
@@ -497,7 +489,7 @@ class cRBN_Filter(cRBN_Client):
 
 		return Zulu, Spotter, fFrequency, CallSign, CallSignSuffix, dB, WPM
 
-	def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str]):
+	def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str]) -> Literal['+', ' ']:
 		NotificationFlag = ' '
 
 		Now = time.time()
@@ -706,7 +698,7 @@ class cQSO(cStateMachine):
 
 		self.MyMemberNumber = MyMemberEntry['plain_number']
 
-	def STATE_Running(self):
+	def STATE_Running(self) -> dict[str, Any]:
 		def ENTER():
 			self.TimeoutInSeconds(self.RefreshPeriodSeconds)
 
@@ -731,7 +723,7 @@ class cQSO(cStateMachine):
 		_ = ENTER, TIMEOUT
 		return locals()
 
-	def AwardsCheck(self):
+	def AwardsCheck(self) -> None:
 		C_Level = len(self.ContactsForC)  // Levels['C']
 		T_Level = len(self.ContactsForT)  // Levels['T']
 		S_Level = len(self.ContactsForS)  // Levels['S']
@@ -817,7 +809,7 @@ class cQSO(cStateMachine):
 
 		return Remaining, X_Factor
 
-	def ReadQSOs(self):
+	def ReadQSOs(self) -> None:
 		Display.Print(f'Reading QSOs from {config.ADI_FILE}...')
 
 		self.QSOs = []
@@ -1156,12 +1148,12 @@ class cQSO(cStateMachine):
 
 		return List
 
-	def Refresh(self):
+	def Refresh(self) -> None:
 		self.ReadQSOs()
 		QSOs.GetGoalQSOs()
 		self.PrintProgress()
 
-	def GetBragQSOs(self, PrevMonth: int = 0, Print: bool = False):
+	def GetBragQSOs(self, PrevMonth: int = 0, Print: bool = False) -> None:
 		self.Brag = {}
 
 		DateOfInterestGMT = cFastDateTime.NowGMT()
@@ -1230,7 +1222,7 @@ class cQSO(cStateMachine):
 			MonthAbbrev = cFastDateTime.MonthNames[MonthIndex][:3]
 			print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(self.Brag)}')
 
-	def GetGoalQSOs(self):
+	def GetGoalQSOs(self) -> None:
 		def Good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None):
 			if MemberDate == '' or MyDate == '':
 				return False
@@ -1361,7 +1353,7 @@ class cQSO(cStateMachine):
 						if QsoSPC not in self.ContactsForWAS_S:
 							self.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-		def AwardP(QSOs: dict[str, tuple[str, str, int, str]]):
+		def AwardP(QSOs: dict[str, tuple[str, str, int, str]]) -> None:
 			PrefixList = QSOs.values()
 			PrefixList = sorted(PrefixList, key=lambda QsoTuple: QsoTuple[1])
 
@@ -1371,7 +1363,7 @@ class cQSO(cStateMachine):
 					iPoints += iMemberNumber
 					File.write(f'{Index+1:>4} {iMemberNumber:>8} {FirstName:<10.10} {Prefix:<6} {iPoints:>12,}\n')
 
-		def AwardCTS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]):
+		def AwardCTS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
 			QSOs = QSOs_dict.values()
 			QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
@@ -1380,7 +1372,7 @@ class cQSO(cStateMachine):
 					Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 					File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
 
-		def AwardWAS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]):
+		def AwardWAS(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
 			QSOs = QSOs_dict.values()
 			QSOs = sorted(QSOs, key=lambda QsoTuple: QsoTuple[0])
 
@@ -1395,7 +1387,7 @@ class cQSO(cStateMachine):
 					else:
 						File.write(f'{State}\n')
 
-		def TrackBRAG(QSOs: Any):
+		def TrackBRAG(QSOs: Any) -> None:
 			QSOs = QSOs.values()
 			QSOs = sorted(QSOs)
 
@@ -1490,7 +1482,7 @@ class cSpotters:
 		self.Spotters: dict[str, tuple[int, list[int]]] = {}
 
 	@staticmethod
-	def locator_to_latlong(locator: str):
+	def locator_to_latlong(locator: str) -> tuple[float, float | int]:
 		''' From pyhamtools '''
 
 		'''
@@ -1587,7 +1579,7 @@ class cSpotters:
 		return latitude, longitude
 
 	@staticmethod
-	def calculate_distance(locator1: str, locator2: str):
+	def calculate_distance(locator1: str, locator2: str) -> float:
 		''' From pyhamtools '''
 
 		'''
@@ -1654,7 +1646,7 @@ class cSpotters:
 
 		return d
 
-	def GetSpotters(self):
+	def GetSpotters(self) -> None:
 		def ParseBands(bandStringCsv: str):
 			# Each band ends with an 'm'.
 
@@ -1766,7 +1758,7 @@ class cSKCC:
 		self.PrefixLevel    = cSKCC.ReadRoster('PFX',   'operating_awards/pfx/prefix_roster.php')
 
 	@staticmethod
-	def WES(Year: int, Month: int):
+	def WES(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
 		FromDate      = cFastDateTime((Year, Month, 6))
 		StartDate     = FromDate.FirstWeekdayAfterDate('Sat')
 		StartDateTime = StartDate + timedelta(hours=12)
@@ -1775,7 +1767,7 @@ class cSKCC:
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def SKS(Year: int, Month: int):
+	def SKS(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
 		FromDate = cFastDateTime((Year, Month, 1))
 
 		StartDate = cFastDateTime(None)
@@ -1790,7 +1782,7 @@ class cSKCC:
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def SKSE(Year: int, Month: int):
+	def SKSE(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
 		FromDate      = cFastDateTime((Year, Month, 1))
 		StartDate     = FromDate.FirstWeekdayAfterDate('Thu')
 		StartDateTime = StartDate + timedelta(hours=20)
@@ -1799,7 +1791,7 @@ class cSKCC:
 		return StartDateTime, EndDateTime
 
 	@staticmethod
-	def DuringSprint(fastDateTime: cFastDateTime):
+	def DuringSprint(fastDateTime: cFastDateTime) -> bool:
 		Year  = fastDateTime.Year()
 		Month = fastDateTime.Month()
 
@@ -1821,7 +1813,7 @@ class cSKCC:
 		return False
 
 	@staticmethod
-	def BlockDuringUpdateWindow():
+	def BlockDuringUpdateWindow() -> None:
 		def TimeNowGMT():
 			TimeNowGMT = time.strftime('%H%M00', time.gmtime())
 			return int(TimeNowGMT)
@@ -1842,7 +1834,7 @@ class cSKCC:
 			locale sensitive and could be misinterpreted in other countries.
 	'''
 	@staticmethod
-	def NormalizeSkccDate(Date: str):
+	def NormalizeSkccDate(Date: str) -> str:
 		if not Date:
 			return ''
 
@@ -1991,7 +1983,7 @@ class cSKCC:
 				}
 
 	@staticmethod
-	def IsOnSkccFrequency(fFrequency: float, Tolerance: int = 10):
+	def IsOnSkccFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
 		for Band, Value in cSKCC.Frequencies.items():
 			if Band == 60 and fFrequency >= 5332-1.5 and fFrequency <= 5405+1.5:
 				return True
@@ -2005,7 +1997,7 @@ class cSKCC:
 		return False
 
 	@staticmethod
-	def WhichBand(fFrequency: float, Tolerance: int = 10):
+	def WhichBand(fFrequency: float, Tolerance: int = 10) -> None | int:
 		for Band, Value in cSKCC.Frequencies.items():
 			MidPoints = Value
 
@@ -2050,7 +2042,7 @@ class cSKCC:
 		return None
 
 	@staticmethod
-	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10):
+	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
 		WarcBands = [30, 17, 12]
 
 		for Band in WarcBands:
@@ -2062,7 +2054,7 @@ class cSKCC:
 
 		return False
 
-	def GetFullMemberNumber(self, CallSign: str):
+	def GetFullMemberNumber(self, CallSign: str) -> tuple[str, str]:
 		Entry = self.Members[CallSign]
 
 		MemberNumber = Entry['plain_number']
@@ -2088,12 +2080,12 @@ class cSKCC:
 
 		return (MemberNumber, Suffix)
 
-def Log(Line: str):
+def Log(Line: str) -> None:
 	if config.LOG_FILE.ENABLED:
 		with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
-def LogError(Line: str):
+def LogError(Line: str) -> None:
 	if config.LOG_BAD_SPOTS:
 		with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
@@ -2107,7 +2099,7 @@ def AbbreviateClass(Class: str, X_Factor: int) -> str:
 
 	return Class
 
-def BuildMemberInfo(CallSign: str):
+def BuildMemberInfo(CallSign: str) -> str:
 	Entry = SKCC.Members[CallSign]
 
 	Number, Suffix = SKCC.GetFullMemberNumber(CallSign)
@@ -2156,7 +2148,7 @@ def IsInBANDS(Frequency: float) -> bool:
 
 	return False
 
-def Lookups(LookupString: str):
+def Lookups(LookupString: str) -> None:
 	def PrintCallSign(CallSign: str):
 		Entry = SKCC.Members[CallSign]
 
@@ -2218,7 +2210,7 @@ def Lookups(LookupString: str):
 
 	print('')
 
-def FileCheck(Filename: str):
+def FileCheck(Filename: str) -> None | NoReturn:
 	if os.path.exists(Filename):
 		return
 
