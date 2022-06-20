@@ -2241,20 +2241,13 @@ config = cConfig(ArgV)
 # Default the K3Y_YEAR in case it isn't set in the config file.
 K3Y_YEAR = datetime.now().year
 
-#
-# Read and execute the contents of 'skcc_skimmer.cfg'.
-#
-
-#exec(ConfigFileString)
-
 
 CLUSTERS = 'SKCC RBN'
 
 
 cSKCC.BlockDuringUpdateWindow()
 
-MY_CALLSIGN      = config.MY_CALLSIGN.upper()
-VERBOSE          = False
+config.MY_CALLSIGN = config.MY_CALLSIGN.upper()
 
 Levels = {
  'C'  :    100,
