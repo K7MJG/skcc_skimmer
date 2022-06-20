@@ -107,6 +107,9 @@ import calendar
 import json
 import requests
 
+def Split(spaceSeparatedString: str):
+  return re.split('[, ][ ]*', spaceSeparatedString.strip())
+
 def Effective(Date: str) -> str:
 	TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
@@ -2236,11 +2239,7 @@ else:
 
 print(f'SKCC Skimmer version {VERSION}\n')
 
-US_STATES = 'AK AL AR AZ CA CO CT DE FL GA ' + \
-            'HI IA ID IL IN KS KY LA MA MD ' + \
-            'ME MI MN MO MS MT NC ND NE NH ' + \
-            'NJ NM NV NY OH OK OR PA RI SC ' + \
-            'SD TN TX UT VA VT WA WI WV WY'
+US_STATES = 'AK AL AR AZ CA CO CT DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY'.split(' ')
 
 ArgV = sys.argv[1:]
 
@@ -2262,11 +2261,8 @@ CLUSTERS = 'SKCC RBN'
 
 cSKCC.BlockDuringUpdateWindow()
 
-#EXCLUSIONS       = Split(config.EXCLUSIONS.upper())
-#US_STATES        = Split(US_STATES.upper())
-#FRIENDS          = Split(FRIENDS.upper())
-#MY_CALLSIGN      = config.#MY_CALLSIGN.upper()
-#VERBOSE          = False
+MY_CALLSIGN      = config.MY_CALLSIGN.upper()
+VERBOSE          = False
 
 Levels = {
  'C'  :    100,
