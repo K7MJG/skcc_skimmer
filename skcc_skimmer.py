@@ -1382,7 +1382,7 @@ class cQSO(cStateMachine):
 				for State in US_STATES:
 					if State in QSOsByState:
 						QsoSPC, _, QsoCallSign = QSOsByState[State]
-						FormattedDate = 'f{(QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
+						FormattedDate = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
 						File.write(f'{QsoSPC}    {QsoCallSign:<12}  {FormattedDate}\n')
 					else:
 						File.write(f'{State}\n')

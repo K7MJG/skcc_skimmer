@@ -1,4 +1,4 @@
-Note: For complete documentation, go to http://K7MJG.com/.
+Note: For complete documentation, go to https://K7MJG.com/.
 
 
 Quick Start:
