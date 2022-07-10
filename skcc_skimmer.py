@@ -390,29 +390,32 @@ class cSked(cStateMachine):
 		return SkedHit
 
 	def DisplayLogins(self) -> None:
-		response = requests.get('http://sked.skccgroup.com/get-status.php')
+		try:
+			response = requests.get('http://sked.skccgroup.com/get-status.php')
 
-		if response.status_code != 200:
-			return
+			if response.status_code != 200:
+				return
 
-		Content = response.text
-		Hits = {}
+			Content = response.text
+			Hits = {}
 
-		if Content:
-			try:
-				SkedLogins: list[tuple[str, str]] = json.loads(Content)
-				Hits = self.HandleLogins(SkedLogins, 'SKCC')
-			except Exception:
-				with open('DEBUG.txt', 'a', encoding='utf-8') as File:
-					File.write(Content + '\n')
+			if Content:
+				try:
+					SkedLogins: list[tuple[str, str]] = json.loads(Content)
+					Hits = self.HandleLogins(SkedLogins, 'SKCC')
+				except Exception:
+					with open('DEBUG.txt', 'a', encoding='utf-8') as File:
+						File.write(Content + '\n')
 
-				print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.")
+					print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.")
 
-		self.PreviousLogins = Hits
-		self.FirstPass = False
+			self.PreviousLogins = Hits
+			self.FirstPass = False
 
-		if Hits:
-			Display.Print('=======================================')
+			if Hits:
+				Display.Print('=======================================')
+		except:
+			print(f"\nProblem retrieving information from the Sked Page.  Skipping...")
 
 class cRBN_Filter(cRBN_Client):
 	LastSpotted: dict[str, tuple[float, float]]
@@ -1873,114 +1876,125 @@ class cSKCC:
 		return None
 
 	@staticmethod
-	def ReadLevelList(Type: str, URL: str) -> dict[str, int]:
+	def ReadLevelList(Type: str, URL: str) -> dict[str, int] | NoReturn:
 		print(f'Retrieving SKCC award info from {URL}...')
 
-		response = requests.get(f'https://www.skccgroup.com/{URL}')
+		try:
+			response = requests.get(f'https://www.skccgroup.com/{URL}')
 
-		if response.status_code != 200:
-			return {}
+			if response.status_code != 200:
+				return {}
 
-		LevelList = response.text
+			LevelList = response.text
 
-		Level: dict[str, int] = {}
-		TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
+			Level: dict[str, int] = {}
+			TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
-		for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
-			CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
+			for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
+				CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
 
-			if ' ' in CertNumber:
-				CertNumber, X_Factor = CertNumber.split()
-				X_Factor = int(X_Factor[1:])
-			else:
-				X_Factor = 1
+				if ' ' in CertNumber:
+					CertNumber, X_Factor = CertNumber.split()
+					X_Factor = int(X_Factor[1:])
+				else:
+					X_Factor = 1
 
-			Level[MemberNumber] = X_Factor
+				Level[MemberNumber] = X_Factor
 
-			SkccEffectiveDate = cSKCC.NormalizeSkccDate(EffectiveDate)
+				SkccEffectiveDate = cSKCC.NormalizeSkccDate(EffectiveDate)
 
-			if TodayGMT < SkccEffectiveDate:
-				print(f'  FYI: Brand new {Type}, {CallSign}, will be effective 00:00Z {EffectiveDate}')
-			elif Type == 'Tribune':
-				Match = re.search(r'\*Tx8: (.*?)$', Endorsements)
+				if TodayGMT < SkccEffectiveDate:
+					print(f'  FYI: Brand new {Type}, {CallSign}, will be effective 00:00Z {EffectiveDate}')
+				elif Type == 'Tribune':
+					Match = re.search(r'\*Tx8: (.*?)$', Endorsements)
 
-				if Match:
-					Tx8_Date = Match.group(1)
-					SkccEffectiveTx8_Date = cSKCC.NormalizeSkccDate(Tx8_Date)
+					if Match:
+						Tx8_Date = Match.group(1)
+						SkccEffectiveTx8_Date = cSKCC.NormalizeSkccDate(Tx8_Date)
 
-					if TodayGMT < SkccEffectiveTx8_Date:
-						print(f'  FYI: Brand new Tx8, {CallSign}, will be effective 00:00Z {Tx8_Date}')
+						if TodayGMT < SkccEffectiveTx8_Date:
+							print(f'  FYI: Brand new Tx8, {CallSign}, will be effective 00:00Z {Tx8_Date}')
 
-		return Level
+			return Level
+		except:
+			print(f"Unable to retrieve award info from main SKCC website.  Unable to continue.")
+			sys.exit()
 
 	@staticmethod
-	def ReadRoster(Name: str, URL: str) -> dict[str, int]:
+	def ReadRoster(Name: str, URL: str) -> dict[str, int] | NoReturn:
 		print(f'Retrieving SKCC {Name} roster...')
 
-		response = requests.get(f'https://www.skccgroup.com/{URL}')
+		try:
+			response = requests.get(f'https://www.skccgroup.com/{URL}')
 
-		if response.status_code != 200:
-			return {}
+			if response.status_code != 200:
+				return {}
 
-		HTML = response.text
+			HTML = response.text
 
-		Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
-		Columns_RegEx = re.compile(r'<td.*?>(.*?)</td>', re.M|re.I|re.S)
+			Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
+			Columns_RegEx = re.compile(r'<td.*?>(.*?)</td>', re.M|re.I|re.S)
 
-		RowMatches    = Rows_RegEx.findall(HTML)
+			RowMatches    = Rows_RegEx.findall(HTML)
 
-		Roster: dict[str, int] = {}
+			Roster: dict[str, int] = {}
 
-		for Row in (x for I, x in enumerate(RowMatches) if I > 0):
-			ColumnMatches = Columns_RegEx.findall(Row)
-			CertNumber    = ColumnMatches[0]
-			CallSign      = ColumnMatches[1]
+			for Row in (x for I, x in enumerate(RowMatches) if I > 0):
+				ColumnMatches = Columns_RegEx.findall(Row)
+				CertNumber    = ColumnMatches[0]
+				CallSign      = ColumnMatches[1]
 
-			if ' ' in CertNumber:
-				CertNumber, X_Factor = CertNumber.split()
-				X_Factor = int(X_Factor[1:])
-			else:
-				X_Factor = 1
+				if ' ' in CertNumber:
+					CertNumber, X_Factor = CertNumber.split()
+					X_Factor = int(X_Factor[1:])
+				else:
+					X_Factor = 1
 
-			Roster[CallSign] = X_Factor
+				Roster[CallSign] = X_Factor
 
-		return Roster
+			return Roster
+		except:
+			print("Unable to retrieve an award roster from the main SKCC site.  Unable to continue.")
+			sys.exit()
 
-
-	def ReadSkccData(self) -> None:
+	def ReadSkccData(self) -> None | NoReturn:
 		print('Retrieving SKCC award dates...')
 
-		response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt')
+		try:
+			response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt')
 
-		if response.status_code != 200:
-			return
+			if response.status_code != 200:
+				return
 
-		SkccList = response.text
+			SkccList = response.text
 
-		Lines = SkccList.splitlines()
+			Lines = SkccList.splitlines()
 
-		for Line in (x for I, x in enumerate(Lines) if I > 0):
-			_Number,CurrentCall,Name,_City,SPC,OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
+			for Line in (x for I, x in enumerate(Lines) if I > 0):
+				_Number,CurrentCall,Name,_City,SPC,OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
 
-			if OtherCalls:
-				OtherCallList = [x.strip() for x in OtherCalls.split(',')]
-			else:
-				OtherCallList = []
+				if OtherCalls:
+					OtherCallList = [x.strip() for x in OtherCalls.split(',')]
+				else:
+					OtherCallList = []
 
-			AllCalls = [CurrentCall] + OtherCallList
+				AllCalls = [CurrentCall] + OtherCallList
 
-			for Call in AllCalls:
-				self.Members[Call] = {
-						'name'         : Name,
-						'plain_number' : PlainNumber,
-						'spc'          : SPC,
-						'join_date'    : cSKCC.NormalizeSkccDate(Join_Date),
-						'c_date'       : cSKCC.NormalizeSkccDate(C_Date),
-						't_date'       : cSKCC.NormalizeSkccDate(T_Date),
-						'tx8_date'     : cSKCC.NormalizeSkccDate(TX8_Date),
-						's_date'       : cSKCC.NormalizeSkccDate(S_Date),
-						'main_call'    : CurrentCall,
-				}
+				for Call in AllCalls:
+					self.Members[Call] = {
+							'name'         : Name,
+							'plain_number' : PlainNumber,
+							'spc'          : SPC,
+							'join_date'    : cSKCC.NormalizeSkccDate(Join_Date),
+							'c_date'       : cSKCC.NormalizeSkccDate(C_Date),
+							't_date'       : cSKCC.NormalizeSkccDate(T_Date),
+							'tx8_date'     : cSKCC.NormalizeSkccDate(TX8_Date),
+							's_date'       : cSKCC.NormalizeSkccDate(S_Date),
+							'main_call'    : CurrentCall,
+					}
+		except:
+			print(f"Unable to retrieve award dates from main SKCC website.  Exiting.")
+			sys.exit()
 
 	@staticmethod
 	def IsOnSkccFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
@@ -2223,11 +2237,21 @@ def FileCheck(Filename: str) -> None | NoReturn:
 # Main
 #
 
-if os.path.exists('VERSION.txt'):
-	with open('VERSION.txt', 'r', encoding='utf-8') as File:
-		VERSION = File.read().rstrip()
-else:
-	VERSION = '<unknown>'
+#
+# cVersion is an uncontrolled file (not committed to Git).  It is created by
+# a release script to properly identify the version stamp of the release, so
+# this code imports the file if it exists or, if it does not, reverts to a
+# generic string.
+#
+try:
+	# pyright: reportMissingImports=false
+	import cVersion
+
+	# pyright: reportUnknownVariableType=false
+	# pyright: reportUnknownMemberType=false
+	VERSION = cVersion.VERSION
+except:
+	VERSION = '<dev>'
 
 print(f'SKCC Skimmer version {VERSION}\n')
 

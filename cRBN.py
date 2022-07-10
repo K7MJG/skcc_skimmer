@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import socket
 import random
-import time
 from typing import Any
 from cSocketLoop import cSocketLoop
 
@@ -147,16 +146,11 @@ class cRBN_Client(cRBN, cStateMachine):
 				self.Socket.setblocking(False)
 				self.SocketLoop.AddConnector(self.Socket, self)
 
-				while True:
-					try:
-						self.Socket.connect_ex(self.AddressTuple)
-					except socket.error:
-						print('\nNo apparent network connection.  Retrying...')
-						time.sleep(1)
-						continue
-					else:
-						self.TimeoutInSeconds(0.250)
-						break
+				try:
+					self.Socket.connect_ex(self.AddressTuple)
+				except socket.error:
+					print('\nNo apparent network connection.  Retrying...')
+					self.Transition(self.STATE_PauseAndReconnect)
 			else:
 				print('Failed to connect to any server.')
 				self.Transition(self.STATE_PauseAndReconnect)
@@ -166,7 +160,7 @@ class cRBN_Client(cRBN, cStateMachine):
 
 	def STATE_PauseAndReconnect(self):
 		def ENTER():
-			self.TimeoutInSeconds(1.5)
+			self.TimeoutInSeconds(5)
 
 		def TIMEOUT():
 			self.Transition(self.STATE_ConnectingToRBN)
