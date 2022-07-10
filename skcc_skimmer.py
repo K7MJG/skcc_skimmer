@@ -1250,11 +1250,9 @@ class cQSO(cStateMachine):
 		#fastStartOfMonth = TodayGMT.StartOfMonth()
 		#fastEndOfMonth   = TodayGMT.EndOfMonth()
 
-		''' TODO
 		if 'BRAG_MONTHS' in globals() and 'BRAG' in config.GOALS:
-			for PrevMonth in range( abs(config.BRAG_MONTHS), 0, -1 ):
-				QSOs.GetBragQSOs( PrevMonth = PrevMonth, Print=True )
-		'''
+			for PrevMonth in range(abs(config.BRAG_MONTHS), 0, -1):
+				QSOs.GetBragQSOs(PrevMonth = PrevMonth, Print=True)
 
 		# MWS - Process current month as well.
 		QSOs.GetBragQSOs(PrevMonth=0, Print=False)
