@@ -403,11 +403,11 @@ class cSked(cStateMachine):
 				try:
 					SkedLogins: list[tuple[str, str]] = json.loads(Content)
 					Hits = self.HandleLogins(SkedLogins, 'SKCC')
-				except Exception:
+				except Exception as ex:
 					with open('DEBUG.txt', 'a', encoding='utf-8') as File:
 						File.write(Content + '\n')
 
-					print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.")
+					print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
 			self.PreviousLogins = Hits
 			self.FirstPass = False
