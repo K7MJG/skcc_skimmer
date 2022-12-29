@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import socket
 import random
-from typing import Any
-from cSocketLoop import cSocketLoop
 
-from cStateMachine import cStateMachine
+from typing         import Any
+from .cSocketLoop   import cSocketLoop
+from .cStateMachine import cStateMachine
 
 MasterClusterList = {
 	'SKCC': [

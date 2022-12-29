@@ -3,9 +3,9 @@ from __future__ import annotations
 import sys
 import getopt
 
-from typing  import Any, Literal, NoReturn, get_args, TypedDict
+from typing      import Any, Literal, NoReturn, get_args, TypedDict
 
-from cCommon import cCommon
+from Lib.cCommon import cCommon
 
 class cConfig:
 	class cProgressDots:

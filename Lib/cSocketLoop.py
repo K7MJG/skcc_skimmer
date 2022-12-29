@@ -34,8 +34,8 @@ import errno
 import socket
 import select
 
-from typing        import Any
-from cStateMachine import cStateMachine
+from typing         import Any
+from .cStateMachine import cStateMachine
 
 class cSocketLoop:
 	ReaderSockets:    dict[Any, cStateMachine]
