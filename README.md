@@ -1,6 +1,3 @@
-For complete documentation, go to https://www.k7mjg.com/SKCC_Skimmer.
-
-
 ## Quick Start
 ***
 
