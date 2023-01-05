@@ -640,7 +640,7 @@ class cRBN_Filter(cRBN_Client):
 
 			if CallSign == 'K3Y':
 				NotificationFlag = self.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
-				Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {CallSignSuffix} {"; ".join(Report)}'
+				Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
 			else:
 				MemberInfo = BuildMemberInfo(CallSign)
 				NotificationFlag = self.HandleNotification(CallSign, GoalList, TargetList)
