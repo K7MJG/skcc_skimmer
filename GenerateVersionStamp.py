@@ -1,7 +1,7 @@
 import subprocess
 import sys
 
-def Main():
+def Main() -> None:
 	ArgV = sys.argv[1:]
 
 	if len(ArgV) != 1:
@@ -18,7 +18,7 @@ def Main():
 	versionDetail = subprocess.check_output(['git', 'show', '-s', '--oneline', '--format=%as (%h)', gitSha]).strip().decode('utf-8')
 	versionStamp = f'{version} / {versionDetail}'
 
-	with open(rf'cVersion.py', 'w', encoding='utf-8') as file:
+	with open(rf'Lib/cVersion.py', 'w', encoding='utf-8') as file:
 		file.write(f"VERSION = '{versionStamp}'\n")
 
 if __name__ == '__main__':

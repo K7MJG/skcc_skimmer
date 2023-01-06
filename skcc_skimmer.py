@@ -2243,11 +2243,11 @@ def FileCheck(Filename: str) -> None | NoReturn:
 #
 try:
 	# pyright: reportMissingImports=false
-	import cVersion
+	import Lib.cVersion
 
 	# pyright: reportUnknownVariableType=false
 	# pyright: reportUnknownMemberType=false
-	VERSION = cVersion.VERSION
+	VERSION = Lib.cVersion.VERSION
 except:
 	VERSION = '<dev>'
 
