@@ -170,6 +170,16 @@ class cFastDateTime:
 	def ToDateTime(self) -> datetime:
 		return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S')
 
+	def FirstWeekdayFromDate(self, TargetWeekday: str) -> cFastDateTime:
+		TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
+		DateTime = self.ToDateTime()
+
+		while DateTime.weekday() != TargetWeekdayNumber:
+			DateTime += timedelta(days=1)
+
+		return cFastDateTime(DateTime)
+
+
 	def FirstWeekdayAfterDate(self, TargetWeekday: str) -> cFastDateTime:
 		TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
 		DateTime = self.ToDateTime()
@@ -1760,10 +1770,13 @@ class cSKCC:
 
 	@staticmethod
 	def WES(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-		FromDate      = cFastDateTime((Year, Month, 6))
-		StartDate     = FromDate.FirstWeekdayAfterDate('Sat')
-		StartDateTime = StartDate + timedelta(hours=12)
-		EndDateTime   = StartDateTime + timedelta(hours=35, minutes=59, seconds=59)
+		FromDate       = cFastDateTime((Year, Month, 1))
+		
+		FirstSaturday  = FromDate.FirstWeekdayFromDate('Sat')       # first saturday
+		SecondSaturday = FirstSaturday.FirstWeekdayAfterDate('Sat') # second saturday
+
+		StartDateTime  = SecondSaturday + timedelta(hours=12)
+		EndDateTime    = StartDateTime + timedelta(hours=35, minutes=59, seconds=59)
 
 		return StartDateTime, EndDateTime
 
