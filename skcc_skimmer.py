@@ -57,7 +57,7 @@
 #
 #       The callsign is required unless you've specified MY_CALLSIGN in the skcc_skimmer.cfg file.
 #
-#       The ADI file is required unless you've specified ADI_FILE in the skcc_skimmer.cfg file.
+#       The ADI file is required unless you've specified config.ADI_FILE in the skcc_skimmer.cfg file.
 #
 #       GoalString: Any or all of: C,T,S,CXN,TXN,SXN,WAS,WAS-C,WAS-T,WAS-S,ALL,K3Y,NONE.
 #
@@ -73,7 +73,14 @@
 #   which may require a pip install.
 #
 
+
+
 from __future__ import annotations
+
+
+# n9se
+from os import system
+# ---
 
 from datetime import timedelta
 from datetime import datetime
@@ -85,7 +92,7 @@ from math          import radians, sin, cos, atan2, sqrt
 from cSocketLoop   import cSocketLoop
 from cStateMachine import cStateMachine
 from cRBN          import cRBN_Client
-from cConfig       import cConfig
+from cConfig_n9se  import cConfig
 from cCommon       import cCommon
 
 import signal
@@ -241,8 +248,15 @@ class cDisplay(cStateMachine):
 		self.SendEventArg('PRINT', text)
 
 def Beep() -> None:
-	sys.stdout.write('\a')
-	sys.stdout.flush()
+    # n9se
+    #sys.stdout.write('\a')
+    if not config.SPRINT_MODE:
+        system('say CQ')
+    else:
+        system('say SPC')
+    # ---
+    sys.stdout.write('\a')
+    sys.stdout.flush()
 
 class cSked(cStateMachine):
 	RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
@@ -562,7 +576,6 @@ class cRBN_Filter(cRBN_Client):
 		#-------------
 
 		OnFrequency = cSKCC.IsOnSkccFrequency(fFrequency, config.OFF_FREQUENCY.TOLERANCE)
-
 		if not OnFrequency:
 			if config.OFF_FREQUENCY.ACTION == 'warn':
 				Report.append('OFF SKCC FREQUENCY!')
@@ -611,7 +624,16 @@ class cRBN_Filter(cRBN_Client):
 			Report.append(f'THEY need you for {",".join(TargetList)}')
 
 		#-------------
-
+#n9se -----------
+# prevent multiple duplicate spots
+		if CallSign in RBN.LastSpotted:
+			fFrequency, SpotTime = RBN.LastSpotted[CallSign]
+			Now = time.time()
+			DeltaSeconds = max(int(Now - SpotTime), 1)
+			if DeltaSeconds < self.RenotificationDelay:
+				return
+#----------------
+           
 		if (SpottedNearby and (GoalList or TargetList)) or You or IsFriend:
 			RBN.LastSpotted[CallSign] = (fFrequency, time.time())
 
@@ -627,8 +649,8 @@ class cRBN_Filter(cRBN_Client):
 					del self.Notified[Call]
 
 			if CallSign not in self.Notified:
-				if NOTIFICATION['ENABLED']:
-					if (CallSign in FRIENDS and 'friends' in BeepCondition) or (GoalList and 'goals' in BeepCondition) or (TargetList and 'targets' in BeepCondition):
+				if config.NOTIFICATION.ENABLED:
+					if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
 						Beep()
 
 				NotificationFlag = '+'
@@ -684,6 +706,10 @@ class cQSO(cStateMachine):
 		self.ContactsForP       = {}
 		self.ContactsForK3Y     = []
 		self.QSOsByMemberNumber = {}
+#n9se -------------------
+		self.ContactsForCanProv = {}
+		self.ContactsForDXC     = {}
+#-----------------------
 
 		self.ReadQSOs()
 
@@ -703,20 +729,29 @@ class cQSO(cStateMachine):
 			self.TimeoutInSeconds(self.RefreshPeriodSeconds)
 
 		def TIMEOUT():
-			if os.path.getmtime(config.ADI_FILE) != self.AdiFileReadTimeStamp:
-				Display.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
+#n9se -----------------
+			if config.SPRINT_MODE:
+				thisFile = config.SPRINT_LOG
+				timeStamp = self.SprintlogFileReadTimeStamp
+			else:
+				thisFile = config.ADI_FILE
+				timeStamp = self.AdiFileReadTimeStamp
 
+			if os.path.getmtime(thisFile) != timeStamp:
+#n9se
+				if not config.SPRINT_MODE:
+					Display.Print(f"'{thisFile}' file is changing. Waiting for write to finish...")
 				# Once we detect the file has changed, we can't necessarily read it
 				# immediately because the logger may still be writing to it, so we wait
 				# until the write is complete.
 				while True:
-					Size = os.path.getsize(config.ADI_FILE)
+					Size = os.path.getsize(thisFile)
 					time.sleep(1)
 
-					if os.path.getsize(config.ADI_FILE) == Size:
+					if os.path.getsize(thisFile) == Size:
 						break
-
 				QSOs.Refresh()
+#-----------------------
 
 			self.TimeoutInSeconds(self.RefreshPeriodSeconds)
 
@@ -810,73 +845,89 @@ class cQSO(cStateMachine):
 		return Remaining, X_Factor
 
 	def ReadQSOs(self) -> None:
-		Display.Print(f'Reading QSOs from {config.ADI_FILE}...')
-
+		if not config.SPRINT_MODE:
+			Display.Print(f'Reading QSOs from {config.ADI_FILE}...')
 		self.QSOs = []
 
-		self.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
-
-		with open(config.ADI_FILE, 'rb') as File:
-			Contents = File.read().decode('utf-8', 'ignore')
-
-		_Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
-
-		Body = Body.strip(' \t\r\n\x1a')  # Include CNTL-Z
-
-		RecordTextList = re.split(r'<eor>', Body, 0, re.I|re.M)
-
-		Adi_RegEx = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
-
-		for RecordText in RecordTextList:
-			RecordText = RecordText.strip()
-
-			if not RecordText:
+# n9se: added for loop to accommodate sprint mode
+		for THIS_FILE in (config.ADI_FILE, config.SPRINT_LOG):
+			if not THIS_FILE:
 				continue
+			if THIS_FILE is config.ADI_FILE:
+				self.AdiFileReadTimeStamp = os.path.getmtime(THIS_FILE)
+				if config.SPRINT_MODE:
+					continue
+			elif THIS_FILE is config.SPRINT_LOG:
+				self.SprintlogFileReadTimeStamp = os.path.getmtime(THIS_FILE)
+				
 
-			AdiFileMatches = Adi_RegEx.findall(RecordText)
+			with open(THIS_FILE, 'rb') as File:
+				Contents = File.read().decode('utf-8', 'ignore')
 
-			Record: dict[str, str] = {}
+			_Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
 
-			for Key, Value in AdiFileMatches:
-				Record[Key.upper()] = Value
+			Body = Body.strip(' \t\r\n\x1a')  # Include CNTL-Z
 
-			#
-			# ADIF allows for QSO_DATE_OFF without QSO_DATE & TIME_OFF without TIME_ON.
-			#
-			# The Skimmer really doesn't care, so lets normalize and convert QSO_DATE_OFF to QSO_DATE
-			# and TIME_OFF to TIME_ON.
-			#
-			if ('QSO_DATE' not in Record) and ('QSO_DATE_OFF' in Record):
-				Record['QSO_DATE'] = Record['QSO_DATE_OFF']
-				del Record['QSO_DATE_OFF']
+			RecordTextList = re.split(r'<eor>', Body, 0, re.I|re.M)
 
-			if ('TIME_ON' not in Record) and ('TIME_OFF' in Record):
-				Record['TIME_ON'] = Record['TIME_OFF']
-				del Record['TIME_OFF']
+			Adi_RegEx = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
 
-			if not all(x in Record for x in ('CALL', 'QSO_DATE', 'TIME_ON')):
-				print('Warning: ADI record must have CALL, QSO_DATE, and TIME_ON fields. Skipping:')
-				print(RecordText)
-				continue
+			for RecordText in RecordTextList:
+				RecordText = RecordText.strip()
 
-			if 'MODE' in Record and Record['MODE'] != 'CW':
-				continue
+				if not RecordText:
+					continue
 
-			fFrequency = 0.0
+				AdiFileMatches = Adi_RegEx.findall(RecordText)
 
-			if 'FREQ' in Record:
-				try:
-					fFrequency = float(Record['FREQ']) * 1000   # kHz
-				except ValueError:
-					pass
+				Record: dict[str, str] = {}
 
-			QsoCallSign = Record['CALL']
-			QsoDate     = Record['QSO_DATE']+Record['TIME_ON']
-			QsoSPC      = Record['STATE'] if 'STATE' in Record else ''
-			QsoFreq     = fFrequency
-			QsoComment  = Record['COMMENT'] if 'COMMENT' in Record else ''
+				for Key, Value in AdiFileMatches:
+					Record[Key.upper()] = Value
 
-			self.QSOs.append((QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment))
+    			#
+    			# ADIF allows for QSO_DATE_OFF without QSO_DATE & TIME_OFF without TIME_ON.
+    			#
+    			# The Skimmer really doesn't care, so lets normalize and convert QSO_DATE_OFF to QSO_DATE
+    			# and TIME_OFF to TIME_ON.
+    			#
+				if ('QSO_DATE' not in Record) and ('QSO_DATE_OFF' in Record):
+					Record['QSO_DATE'] = Record['QSO_DATE_OFF']
+					del Record['QSO_DATE_OFF']
+
+				if ('TIME_ON' not in Record) and ('TIME_OFF' in Record):
+					Record['TIME_ON'] = Record['TIME_OFF']
+					del Record['TIME_OFF']
+
+				if not all(x in Record for x in ('CALL', 'QSO_DATE', 'TIME_ON')):
+					print('Warning: ADI record must have CALL, QSO_DATE, and TIME_ON fields. Skipping:')
+					print(RecordText)
+					continue
+
+				if 'MODE' in Record and Record['MODE'] != 'CW':
+					continue
+
+				fFrequency = 0.0
+
+				if 'FREQ' in Record:
+					try:
+						fFrequency = float(Record['FREQ']) * 1000   # kHz
+					except ValueError:
+						pass
+
+				QsoCallSign = Record['CALL']
+				QsoDate     = Record['QSO_DATE']+Record['TIME_ON']
+#n9se-------------
+				if 'STATE' in Record:
+					QsoSPC  = Record['STATE'] 
+				elif 'COUNTRY' in Record:
+					QsoSPC  = Record['COUNTRY'] 
+#------------------
+				QsoFreq     = fFrequency
+				QsoComment  = Record['COMMENT'] if 'COMMENT' in Record else ''
+
+				self.QSOs.append((QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment))
+# n9se ---- END FOR LOOP -------------------
 
 		self.QSOs = sorted(self.QSOs, key=lambda QsoTuple: QsoTuple[0])
 
@@ -963,6 +1014,11 @@ class cQSO(cStateMachine):
 			MonthName = cFastDateTime.MonthNames[MonthIndex]
 			print(f'Total worked towards {MonthName} Brag: {len(self.Brag)}')
 
+#n9se -------------------		
+#		if 'CAN' in config.GOALS:
+#			RemainingProvinces('PROV', self.ContactsForCanProv)
+#-------------------------
+
 	def GetGoalHits(self, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
 		if TheirCallSign not in SKCC.Members:
 			return []
@@ -1022,6 +1078,10 @@ class cQSO(cStateMachine):
 		if 'WAS' in config.GOALS:
 			SPC = TheirMemberEntry['spc']
 			if SPC in US_STATES and SPC not in self.ContactsForWAS:
+#				print('Their SPC:'+SPC)
+#				print('ContactsForWAS:')
+#				for thisSPC in self.ContactsForWAS:
+#					print(thisSPC)
 				List.append('WAS')
 
 		if 'WAS-C' in config.GOALS:
@@ -1057,6 +1117,18 @@ class cQSO(cStateMachine):
 						List.append(f'{AbbreviateClass("P", X_Factor)}(+{iTheirMemberNumber - iCurrentMemberNumber})')
 				else:
 					List.append(f'{AbbreviateClass("P", X_Factor)}(new +{iTheirMemberNumber})')
+
+#n9se -------------------
+		if 'DXC' in config.GOALS:
+			SPC = TheirMemberEntry['spc']
+		if SPC not in US_STATES and SPC not in CANADIAN_PROVINCES and SPC not in self.ContactsForDXC:
+			List.append('DXC')
+			
+		if 'CAN' in config.GOALS:
+			SPC = TheirMemberEntry['spc']
+		if SPC in CANADIAN_PROVINCES and SPC not in self.ContactsForCanProv:
+			List.append('CAN')
+#------------------------
 
 		return List
 
@@ -1151,7 +1223,10 @@ class cQSO(cStateMachine):
 	def Refresh(self) -> None:
 		self.ReadQSOs()
 		QSOs.GetGoalQSOs()
-		self.PrintProgress()
+#n9se
+		if not config.SPRINT_MODE:
+			self.PrintProgress()
+		print('Log updated....')
 
 	def GetBragQSOs(self, PrevMonth: int = 0, Print: bool = False) -> None:
 		self.Brag = {}
@@ -1242,6 +1317,11 @@ class cQSO(cStateMachine):
 		self.ContactsForWAS_S = {}
 		self.ContactsForP     = {}
 		self.ContactsForK3Y   = {}
+		
+#n9se ---------
+		self.ContactsForCanProv = {}
+		self.ContactsForDXC     = {}
+#--------------
 
 		#TodayGMT = cFastDateTime.NowGMT()
 		#fastStartOfMonth = TodayGMT.StartOfMonth()
@@ -1352,6 +1432,15 @@ class cQSO(cStateMachine):
 					if TheirS_Date and QsoDate >= TheirS_Date:
 						if QsoSPC not in self.ContactsForWAS_S:
 							self.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+#n9se------------------------
+			elif QsoSPC in CANADIAN_PROVINCES:
+				if QsoSPC not in self.ContactsForCanProv:
+					self.ContactsForCanProv[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+				
+			elif QsoSPC:
+				if QsoSPC not in self.ContactsForDXC:
+					self.ContactsForDXC[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+#--------------------------------
 
 		def AwardP(QSOs: dict[str, tuple[str, str, int, str]]) -> None:
 			PrefixList = QSOs.values()
@@ -1695,6 +1784,9 @@ class cSpotters:
 				Miles       = int(fMiles)
 				BandList    = ParseBands(csvBands)
 				self.Spotters[Spotter] = (Miles, BandList)
+        # n9se
+		if 'N9SE' in CLUSTERS:
+			self.Spotters['N9SE'] = (1,['10','12','15','17','20','30','40','80','160'])
 
 	def GetNearbySpotters(self) -> list[tuple[str, int]]:
 		List: list[tuple[str, int, list[int]]] = []
@@ -1899,7 +1991,8 @@ class cSKCC:
 
 			SkccEffectiveDate = cSKCC.NormalizeSkccDate(EffectiveDate)
 
-			if TodayGMT < SkccEffectiveDate:
+# n9se added 'and not config.SPRINT_MODE'
+			if TodayGMT < SkccEffectiveDate and not config.SPRINT_MODE:
 				print(f'  FYI: Brand new {Type}, {CallSign}, will be effective 00:00Z {EffectiveDate}')
 			elif Type == 'Tribune':
 				Match = re.search(r'\*Tx8: (.*?)$', Endorsements)
@@ -1991,7 +2084,9 @@ class cSKCC:
 			MidPoints = Value
 
 			for MidPoint in MidPoints:
-				if fFrequency >= MidPoint-Tolerance and fFrequency <= MidPoint+Tolerance:
+# n9se: Don't exclude higher freqs and Raised lower end 5kHz to help avoid contests
+#				if fFrequency >= MidPoint-Tolerance and fFrequency <= MidPoint+Tolerance:
+				if fFrequency >= MidPoint-Tolerance+5 and fFrequency <= MidPoint+(3*Tolerance):
 					return True
 
 		return False
@@ -2232,6 +2327,8 @@ else:
 print(f'SKCC Skimmer version {VERSION}\n')
 
 US_STATES = 'AK AL AR AZ CA CO CT DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY'.split(' ')
+#n9se
+CANADIAN_PROVINCES = 'NB NS QC ON MB SK AB BC NWT NL LB YT PEI NU'
 
 ArgV = sys.argv[1:]
 
@@ -2242,8 +2339,9 @@ config = cConfig(ArgV)
 K3Y_YEAR = datetime.now().year
 
 
-CLUSTERS = 'SKCC RBN'
-
+#CLUSTERS = 'SKCC RBN'
+#n9se
+CLUSTERS = config.CLUSTERS
 
 cSKCC.BlockDuringUpdateWindow()
 

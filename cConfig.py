@@ -57,7 +57,11 @@ class cConfig:
 	VERBOSE:                  bool
 	LOG_BAD_SPOTS:            bool
 	SPOTTER_RADIUS:           int
-
+#n9se ---------
+	SPRINT_MODE:              bool
+	SPRINT_LOG:               str
+	CLUSTERS:                 list[str]
+# -------------
 	configFile: dict[str, Any]
 
 	class TypedConfig(TypedDict):
@@ -93,7 +97,7 @@ class cConfig:
 			self.SPOTTER_RADIUS = int(self.configFile['SPOTTER_RADIUS'])
 
 		if 'GOALS' in self.configFile:
-			self.GOALS = self.Parse(self.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
+			self.GOALS = self.Parse(self.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y DXC CAN', 'goal')
 
 		if 'TARGETS' in self.configFile:
 			self.TARGETS = self.Parse(self.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
@@ -184,12 +188,25 @@ class cConfig:
 				self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = int(notification['RENOTIFICATION_DELAY_SECONDS'])
 			else:
 				self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = 30
+#n9se -----------
+		if 'CLUSTERS' in self.configFile:
+			self.CLUSTERS = self.configFile['CLUSTERS']
+		else:
+			self.CLUSTERS = 'SKCC RBN'
 
+		if 'SPRINT_MODE' in self.configFile:
+			self.SPRINT_MODE = bool(self.configFile['SPRINT_MODE'])
+		else:
+			self.SPRINT_MODE = False
+
+		if 'SPRINT_LOG' in self.configFile:
+			self.SPRINT_LOG = self.configFile['SPRINT_LOG']
+#-----------------			
 		if 'VERBOSE' in self.configFile:
 			self.VERBOSE = bool(self.configFile['VERBOSE'])
 		else:
 			self.VERBOSE = False
-
+            
 		if 'LOG_BAD_SPOTS' in self.configFile:
 			self.LOG_BAD_SPOTS = bool(self.configFile['LOG_BAD_SPOTS'])
 		else:
@@ -207,8 +224,14 @@ class cConfig:
 	def _ParseArgs(self, ArgV: list[str]):
 		try:
 			Options, _ = getopt.getopt(ArgV, \
-					'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'.replace(' ', ''), \
-					'adi= bands= brag-months= callsign= distance-units= goals= help interactive logfile= maidenhead= notification= radius= sked= targets= verbose'.split())
+#n9se 
+# added '--friend -f' to allow temporarily watching for a particular station
+# added '--cluster' to specify a specific predefined cluster to use (see RBN.py). e.g. --cluster=N9SE
+# added '--sprint -s' to activate sprint mode
+# added '--sprintlog -'p to specify a sprint log (solves problem of repeated notifications after a needed station has already been worked)
+# added '--exclude -x' comma seperated list of callsigns to exclude
+					'a:   b:     B:           c:                 d:              f:      g:     h    i           k:    l:       m:          n:            p:         r:      s       t:       v'.replace(' ', ''), \
+					'adi= bands= brag-months= callsign= cluster= distance-units= friend= goals= help interactive sked= logfile= maidenhead= notification= sprintlog= radius= sprint= targets= verbose'.split())
 		except getopt.GetoptError as e:
 			print(e)
 			self.Usage()
@@ -227,7 +250,11 @@ class cConfig:
 
 			elif Option == '-c'  or Option == '--callsign':
 					self.MY_CALLSIGN = Arg.upper()
-
+#n9se ---------------
+			elif Option == '--cluster':
+				self.CLUSTERS = Arg
+				print(Arg + ' has been temporarily assigned as the CLUSTER.')
+# -------------------
 			elif Option == '-d' or Option == '--distance-units':
 					argLower = Arg.lower()
 
@@ -237,6 +264,12 @@ class cConfig:
 
 					self.DISTANCE_UNITS = argLower
 
+            #n9se
+			elif Option in ('-f', '--friend'):
+				print(Arg + ' has been temporarily added to FRIENDS.')
+				print()
+				self.FRIENDS = self.FRIENDS + [Arg]
+                
 			elif Option == '-g' or Option == '--goals':
 					self.GOALS = self.Parse(Arg, 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 
@@ -246,6 +279,16 @@ class cConfig:
 			elif Option == '-i' or Option == '--interactive':
 					self.INTERACTIVE = True
 
+            #n9se
+			elif Option in ('-k', '--sked'):
+				Arg = Arg.lower()
+
+				if Arg not in ('on', 'off'):
+					print("SKED option must be either 'on' or 'off'.")
+					sys.exit(16)
+                  
+				self.SKED.ENABLED = Arg == 'on'   
+                 
 			elif Option == '-l' or Option == '--logfile':
 					self.LOG_FILE.ENABLED           = True
 					self.LOG_FILE.DELETE_ON_STARTUP = True
@@ -266,14 +309,20 @@ class cConfig:
 			elif Option == '-r' or Option == '--radius':
 					self.SPOTTER_RADIUS = int(Arg)
 
-			elif Option == '-s' or Option == '--sked':
-					Arg = Arg.lower()
+            # n9se -----------------------
+			elif Option in ('-p', '--sprintlog'):
+				self.SPRINT_LOG = Arg
 
-					if Arg not in ('on', 'off'):
-						print("SKED option must be either 'on' or 'off'.")
-						sys.exit()
+			elif Option in ('-s', '--sprint'):
+				self.SPRINT_MODE = True
+				self.GOALS = 'WAS,DXC,CAN'
+				if not self.SPRINT_LOG:
+					print("An additional sprint log must be specified. If a separate sprint log is not being used, specifiy 'none'.")
+					sys.exit(16)
+            #--------------------------------------
 
-					self.SKED.ENABLED = Arg == 'on'
+
+
 
 			elif Option == '-t' or Option == '--targets':
 					self.TARGETS = self.Parse(Arg, 'C CXN T TXN S SXN', 'target')
@@ -408,6 +457,13 @@ class cConfig:
 		print('                   [--radius <distance-in-miles>]')
 		print('                   [--targets <targets>]')
 		print('                   [--verbose]')
+  # n9se
+		print('                   [--cluster <cluster name>] Specify a cluster to use (see RBN.py)')
+		print('                   [--exclude <comma-separated-callsigns>] list of callsigns to exclude')
+		print('                   [--sked <on|off>]')
+		print('                   [--sprint] activate sprint mode')
+		print('                   [--sprintlog <logfile-name>]')
+  # ---
 		print(' or...')
 		print('')
 		print('   skcc_skimmer.py')
@@ -415,8 +471,14 @@ class cConfig:
 		print('                   [-b <comma-separated-bands>]')
 		print('                   [-c <your-callsign>]')
 		print('                   [-g <goals>]')
-		print('                   [-h]')
-		print('                   [-i]')
+		print('                   [-h]. Help')
+		print('                   [-i] Interactive mode')
+  # n9se
+		print('                   [-k <on|off>] turn on/off sked page')
+		print('                   [-s] activate sprint mode')
+		print('                   [-p <logfile-name>] sprint log file')
+		print('                   [-x <comma-separated-callsigns>] list of callsigns to exclude')
+  # ---
 		print('                   [-l <logfile-name>]')
 		print('                   [-m <grid-square>]')
 		print('                   [-n <on|off>]')
