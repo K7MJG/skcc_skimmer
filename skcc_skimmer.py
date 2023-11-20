@@ -3,7 +3,7 @@
 
 	 The MIT License (MIT)
 
-	 Copyright (c) 2015-2022 Mark J Glenn
+	 Copyright (c) 2015-2023 Mark J Glenn
 
 	 Permission is hereby granted, free of charge, to any person obtaining a copy
 	 of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,7 @@
 	 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 	 SOFTWARE.
 
-	 Mark Glenn, 2015
+	 Mark Glenn
 	 mglenn@cox.net
 
 '''
@@ -73,11 +73,12 @@
 #   which may require a pip install.
 #
 
-from __future__ import annotations
+#from __future__ import annotations
 
 from datetime import timedelta
 from datetime import datetime
 
+from types         import FrameType
 from typing        import Any, NoReturn, Literal
 
 from math          import radians, sin, cos, atan2, sqrt
@@ -99,7 +100,7 @@ import calendar
 import json
 import requests
 
-def Split(spaceSeparatedString: str) -> list[str | Any]:
+def Split(spaceSeparatedString: str) -> list[str]:
   return re.split('[, ][ ]*', spaceSeparatedString.strip())
 
 def Effective(Date: str) -> str:
@@ -152,11 +153,11 @@ class cFastDateTime:
 
 		return List
 
-	def StartOfMonth(self) -> cFastDateTime:
+	def StartOfMonth(self) -> 'cFastDateTime':
 		Year, Month, _Day, _Hour, _Minute, _Second = self.SplitDateTime()
 		return cFastDateTime(f'{Year:0>4}{Month:0>2}{1:0>2}000000')
 
-	def EndOfMonth(self) -> cFastDateTime:
+	def EndOfMonth(self) -> 'cFastDateTime':
 		Year, Month, _Day, _Hour, _Minute, _Second = self.SplitDateTime()
 		_, DaysInMonth = calendar.monthrange(Year, Month)
 		return cFastDateTime(f'{Year:0>4}{Month:0>2}{DaysInMonth:0>2}235959')
@@ -170,7 +171,7 @@ class cFastDateTime:
 	def ToDateTime(self) -> datetime:
 		return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S')
 
-	def FirstWeekdayFromDate(self, TargetWeekday: str) -> cFastDateTime:
+	def FirstWeekdayFromDate(self, TargetWeekday: str) -> 'cFastDateTime':
 		TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
 		DateTime = self.ToDateTime()
 
@@ -180,7 +181,7 @@ class cFastDateTime:
 		return cFastDateTime(DateTime)
 
 
-	def FirstWeekdayAfterDate(self, TargetWeekday: str) -> cFastDateTime:
+	def FirstWeekdayAfterDate(self, TargetWeekday: str) -> 'cFastDateTime':
 		TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
 		DateTime = self.ToDateTime()
 
@@ -193,20 +194,20 @@ class cFastDateTime:
 	def __repr__(self) -> str:
 		return self.FastDateTime
 
-	def __lt__(self, Right: cFastDateTime) -> bool:
+	def __lt__(self, Right: 'cFastDateTime') -> bool:
 		return self.FastDateTime < Right.FastDateTime
 
-	def __le__(self, Right: cFastDateTime) -> bool:
+	def __le__(self, Right: 'cFastDateTime') -> bool:
 		return self.FastDateTime <= Right.FastDateTime
 
-	def __gt__(self, Right: cFastDateTime) -> bool:
+	def __gt__(self, Right: 'cFastDateTime') -> bool:
 		return self.FastDateTime > Right.FastDateTime
 
-	def __add__(self, Delta: timedelta) -> cFastDateTime:
+	def __add__(self, Delta: timedelta) -> 'cFastDateTime':
 		return cFastDateTime(self.ToDateTime() + Delta)
 
 	@staticmethod
-	def NowGMT() -> cFastDateTime:
+	def NowGMT() -> 'cFastDateTime':
 		return cFastDateTime(time.gmtime())
 
 
@@ -673,8 +674,7 @@ class cQSO(cStateMachine):
 	ContactsForP:     dict[str, tuple[str, str, int, str]]
 	ContactsForK3Y:   Any  # Resolve this type
 
-	Brag: dict[str, tuple[str, str, str, float]]
-
+	Brag:             dict[str, tuple[str, str, str, float]]
 
 	QSOsByMemberNumber: dict[str, list[str]]
 
@@ -1147,7 +1147,7 @@ class cQSO(cStateMachine):
 				List.append('S')
 
 		if 'SXN' in config.TARGETS and TheirS_Date and self.MyT_Date:
-			NextLevel = SKCC.SenatorLevel[TheirMemberNumber]+1
+			NextLevel = SKCC.SenatorLevel[TheirMemberNumber] + 1
 
 			if NextLevel <= 10:
 				if TheirMemberNumber in self.QSOsByMemberNumber:
@@ -1292,8 +1292,8 @@ class cQSO(cStateMachine):
 
 			# K3Y
 			if 'K3Y' in config.GOALS:
-				StartDate = f'{K3Y_YEAR}0102000000'
-				EndDate   = f'{K3Y_YEAR}0201000000'
+				StartDate = f'{config.K3Y_YEAR}0102000000'
+				EndDate   = f'{config.K3Y_YEAR}0201000000'
 
 				if QsoDate >= StartDate and QsoDate < EndDate:
 					K3Y_RegEx = r'.*?K3Y[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
@@ -1429,7 +1429,7 @@ class cQSO(cStateMachine):
 		def PrintK3Y_Contacts():
 			# Could be cleaner, but want to match order on the SKCC K3Y website.
 			print('')
-			print(f'K3Y {K3Y_YEAR}')
+			print(f'K3Y {config.K3Y_YEAR}')
 			print('========')
 			print(f'{"Station": <8}|', end = '')
 			print(f'{"160m": ^7}|', end = '')
@@ -1564,10 +1564,10 @@ class cSpotters:
 				raise ValueError
 
 		if len(locator) == 6:
-				if ord(locator[4]) > ord('X') or ord(locator[4]) < ord('A'):
-						raise ValueError
-				if ord(locator[5]) > ord('X') or ord(locator[5]) < ord('A'):
-						raise ValueError
+			if ord(locator[4]) > ord('X') or ord(locator[4]) < ord('A'):
+				raise ValueError
+			if ord(locator[5]) > ord('X') or ord(locator[5]) < ord('A'):
+				raise ValueError
 
 		longitude  = (ord(locator[0]) - ord('A')) * 20 - 180
 		latitude   = (ord(locator[1]) - ord('A')) * 10 - 90
@@ -1575,17 +1575,17 @@ class cSpotters:
 		latitude  += (ord(locator[3]) - ord('0'))
 
 		if len(locator) == 6:
-				longitude += ((ord(locator[4])) - ord('A')) * (2 / 24)
-				latitude  += ((ord(locator[5])) - ord('A')) * (1 / 24)
+			longitude += ((ord(locator[4])) - ord('A')) * (2 / 24)
+			latitude  += ((ord(locator[5])) - ord('A')) * (1 / 24)
 
-				# move to center of subsquare
-				longitude += 1 / 24.0
-				latitude  += 0.5 / 24.0
+			# move to center of subsquare
+			longitude += 1 / 24.0
+			latitude  += 0.5 / 24.0
 
 		else:
-				# move to center of square
-				longitude += 1
-				latitude  += 0.5
+			# move to center of square
+			longitude += 1
+			latitude  += 0.5
 
 		return latitude, longitude
 
@@ -1885,6 +1885,9 @@ class cSKCC:
 		#
 		CallSign = CallSign.strip(string.punctuation.strip('/'))
 
+		if CallSign in self.Members or CallSign == 'K3Y':
+			return CallSign
+
 		if '/' in CallSign:
 			if CallSign in self.Members:
 				return CallSign
@@ -1903,8 +1906,6 @@ class cSKCC:
 
 			if Suffix in self.Members:
 				return Suffix
-		elif CallSign in self.Members or CallSign == 'K3Y':
-			return CallSign
 
 		return None
 
@@ -1923,7 +1924,7 @@ class cSKCC:
 			Level: dict[str, int] = {}
 			TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
-			for Line in (x for I, x in enumerate(LevelList.splitlines()) if I > 0):
+			for Line in LevelList.splitlines()[1:]:
 				CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
 
 				if ' ' in CertNumber:
@@ -1972,7 +1973,7 @@ class cSKCC:
 
 			Roster: dict[str, int] = {}
 
-			for Row in (x for I, x in enumerate(RowMatches) if I > 0):
+			for Row in RowMatches[1:]:
 				ColumnMatches = Columns_RegEx.findall(Row)
 				CertNumber    = ColumnMatches[0]
 				CallSign      = ColumnMatches[1]
@@ -1995,38 +1996,33 @@ class cSKCC:
 
 		try:
 			response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt')
-
-			if response.status_code != 200:
-				return
-
-			SkccList = response.text
-
-			Lines = SkccList.splitlines()
-
-			for Line in (x for I, x in enumerate(Lines) if I > 0):
-				_Number,CurrentCall,Name,_City,SPC,OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
-
-				if OtherCalls:
-					OtherCallList = [x.strip() for x in OtherCalls.split(',')]
-				else:
-					OtherCallList = []
-
-				AllCalls = [CurrentCall] + OtherCallList
-
-				for Call in AllCalls:
-					self.Members[Call] = {
-							'name'         : Name,
-							'plain_number' : PlainNumber,
-							'spc'          : SPC,
-							'join_date'    : cSKCC.NormalizeSkccDate(Join_Date),
-							'c_date'       : cSKCC.NormalizeSkccDate(C_Date),
-							't_date'       : cSKCC.NormalizeSkccDate(T_Date),
-							'tx8_date'     : cSKCC.NormalizeSkccDate(TX8_Date),
-							's_date'       : cSKCC.NormalizeSkccDate(S_Date),
-							'main_call'    : CurrentCall,
-					}
-		except:
+		except requests.exceptions.RequestException:
 			print(f"Unable to retrieve award dates from main SKCC website.  Exiting.")
+			sys.exit(1)
+
+		if response.status_code != 200:
+			return
+
+		SkccList = response.text
+		Lines = SkccList.splitlines()
+
+		try:
+			for Line in Lines[1:]:
+				_Number,CurrentCall,Name,_City,SPC,_OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
+
+				self.Members[CurrentCall] = {
+					'name'         : Name,
+					'plain_number' : PlainNumber,
+					'spc'          : SPC,
+					'join_date'    : cSKCC.NormalizeSkccDate(Join_Date),
+					'c_date'       : cSKCC.NormalizeSkccDate(C_Date),
+					't_date'       : cSKCC.NormalizeSkccDate(T_Date),
+					'tx8_date'     : cSKCC.NormalizeSkccDate(TX8_Date),
+					's_date'       : cSKCC.NormalizeSkccDate(S_Date),
+					'main_call'    : CurrentCall,
+				}
+		except (ValueError, IndexError):
+			print("Unable to process the retrieved data. Exiting.")
 			sys.exit()
 
 	@staticmethod
@@ -2056,37 +2052,39 @@ class cSKCC:
 
 	@staticmethod
 	def WhichArrlBand(fFrequency: float) -> int | None:
-		if fFrequency > 1800 and fFrequency < 2000:
+		if 1800 < fFrequency < 2000:
 			return 160
 
-		if fFrequency > 3500 and fFrequency < 3600:
+		elif 3500 < fFrequency < 3600:
 			return 80
 
-		if fFrequency > 7000 and fFrequency < 7125:
+		elif 7000 < fFrequency < 7125:
 			return 40
 
-		if fFrequency > 10100 and fFrequency < 10150:
+		elif 10100 < fFrequency < 10150:
 			return 30
 
-		if fFrequency > 14000 and fFrequency < 14150:
+		elif 14000 < fFrequency < 14150:
 			return 20
 
-		if fFrequency > 18068 and fFrequency < 18168:
+		elif 18068 < fFrequency < 18168:
 			return 17
 
-		if fFrequency > 21000 and fFrequency < 21450:
+		elif 21000 < fFrequency < 21450:
 			return 15
 
-		if fFrequency > 24890 and fFrequency < 24990:
+		elif 24890 < fFrequency < 24990:
 			return 12
 
-		if fFrequency > 28000 and fFrequency < 29700:
+		elif 28000 < fFrequency < 29700:
 			return 10
 
-		if fFrequency > 50000 and fFrequency < 54000:
+		elif 50000 < fFrequency < 54000:
 			return 6
 
-		return None
+		else:
+			return None
+
 
 	@staticmethod
 	def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
@@ -2137,7 +2135,7 @@ def LogError(Line: str) -> None:
 		with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
 			File.write(Line + '\n')
 
-def signal_handler(_signal: Any, _frame: Any):
+def signal_handler(_signal: int, _frame: FrameType | None) -> NoReturn:
 	sys.exit()
 
 def AbbreviateClass(Class: str, X_Factor: int) -> str:
@@ -2158,42 +2156,28 @@ def BuildMemberInfo(CallSign: str) -> str:
 
 def IsInBANDS(Frequency: float) -> bool:
 	def InRange(Band: int, fFrequency: float, Low: float, High: float) -> bool:
-		return Band in config.BANDS and fFrequency >= Low and fFrequency <= High
+		return Band in config.BANDS and Low <= fFrequency <= High
 
-	if InRange(160, Frequency, 1800, 2000):
-		return True
+	bands = {
+		160: (1800, 2000),
+		80:  (3500, 4000),
+		60:  (5330.5-1.5, 5403.5+1.5),
+		40:  (7000, 7300),
+		30:  (10100, 10150),
+		20:  (14000, 14350),
+		17:  (18068, 18168),
+		15:  (21000, 21450),
+		12:  (24890, 24990),
+		10:  (28000, 29700),
+		6:   (50000, 50100),
+	}
 
-	if InRange(80, Frequency, 3500, 4000):
-		return True
-
-	if InRange(60, Frequency, 5330.5-1.5, 5403.5+1.5):
-		return True
-
-	if InRange(40, Frequency, 7000, 7300):
-		return True
-
-	if InRange(30, Frequency, 10100, 10150):
-		return True
-
-	if InRange(20, Frequency, 14000, 14350):
-		return True
-
-	if InRange(17, Frequency, 18068, 18168):
-		return True
-
-	if InRange(15, Frequency, 21000, 21450):
-		return True
-
-	if InRange(12, Frequency, 24890, 24990):
-		return True
-
-	if InRange(10, Frequency, 28000, 29700):
-		return True
-
-	if InRange(6, Frequency, 50000, 50100):
-		return True
+	for band, (low, high) in bands.items():
+		if InRange(band, Frequency, low, high):
+			return True
 
 	return False
+
 
 def Lookups(LookupString: str) -> None:
 	def PrintCallSign(CallSign: str):
@@ -2276,28 +2260,27 @@ def FileCheck(Filename: str) -> None | NoReturn:
 # this code imports the file if it exists or, if it does not, reverts to a
 # generic string.
 #
-try:
-	# pyright: reportMissingImports=false
-	import Lib.cVersion
 
-	# pyright: reportUnknownVariableType=false
-	# pyright: reportUnknownMemberType=false
-	VERSION = Lib.cVersion.VERSION
-except:
+VERSION: str | None = None
+
+try:
+	from Lib.cVersion import VERSION
+except ImportError:
 	VERSION = '<dev>'
 
 print(f'SKCC Skimmer version {VERSION}\n')
 
-US_STATES = 'AK AL AR AZ CA CO CT DE FL GA HI IA ID IL IN KS KY LA MA MD ME MI MN MO MS MT NC ND NE NH NJ NM NV NY OH OK OR PA RI SC SD TN TX UT VA VT WA WI WV WY'.split(' ')
+US_STATES = [
+    'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+    'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
+    'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
+    'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+    'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
+]
 
 ArgV = sys.argv[1:]
 
 config = cConfig(ArgV)
-
-
-# Default the K3Y_YEAR in case it isn't set in the config file.
-K3Y_YEAR = datetime.now().year
-
 
 CLUSTERS = 'SKCC RBN'
 

@@ -1,9 +1,39 @@
-from __future__ import annotations
+#!/usr/bin/python3
+'''
+
+	 The MIT License (MIT)
+
+	 Copyright (c) 2015-2023 Mark J Glenn
+
+	 Permission is hereby granted, free of charge, to any person obtaining a copy
+	 of this software and associated documentation files (the "Software"), to deal
+	 in the Software without restriction, including without limitation the rights
+	 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	 copies of the Software, and to permit persons to whom the Software is
+	 furnished to do so, subject to the following conditions:
+
+	 The above copyright notice and this permission notice shall be included in all
+	 copies or substantial portions of the Software.
+
+	 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	 AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+	 SOFTWARE.
+
+	 Mark Glenn
+	 mglenn@cox.net
+
+'''
+
 
 import sys
 import getopt
 
-from typing      import Any, Literal, NoReturn, get_args, TypedDict
+from typing   import Any, Literal, NoReturn, get_args, TypedDict
+from datetime import datetime
 
 from Lib.cCommon import cCommon
 
@@ -57,6 +87,7 @@ class cConfig:
 	VERBOSE:                  bool
 	LOG_BAD_SPOTS:            bool
 	SPOTTER_RADIUS:           int
+	K3Y_YEAR:                 int
 
 	configFile: dict[str, Any]
 
@@ -199,6 +230,11 @@ class cConfig:
 			self.DISTANCE_UNITS = self.configFile['DISTANCE_UNITS']
 		else:
 			self.DISTANCE_UNITS = 'mi'
+
+		if 'K3Y_YEAR' in self.configFile:
+			self.K3Y_YEAR = self.configFile['K3Y_YEAR']
+		else:
+			self.K3Y_YEAR = datetime.now().year
 
 		self._ParseArgs(ArgV)
 
