@@ -101,7 +101,7 @@ import json
 import requests
 
 def Split(spaceSeparatedString: str) -> list[str]:
-  return re.split('[, ][ ]*', spaceSeparatedString.strip())
+    return re.split('[, ][ ]*', spaceSeparatedString.strip())
 
 def Effective(Date: str) -> str:
     TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
@@ -316,7 +316,7 @@ class cSked(cStateMachine):
             GoalList = []
 
             if 'K3Y' in config.GOALS:
-                K3Y_Freq_RegEx = r'.*?K3Y[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)(?:.*?\b(\d+(?:\.\d+)?))?'
+                K3Y_Freq_RegEx = r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)(?:.*?\b(\d+(?:\.\d+)?))?'
                 Matches = re.match(K3Y_Freq_RegEx, Status, re.IGNORECASE)
 
                 if Matches:
