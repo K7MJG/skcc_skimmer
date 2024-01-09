@@ -347,9 +347,9 @@ class cSked(cStateMachine):
 
                     if FreqMatches:
                         if FreqMatches.group(1):
-                            FrequencyStr = FreqMatches.group(1)
-                            FrequencyStr = FrequencyStr.replace('.', '', 1)
-                            Frequency = float(FrequencyStr) / 1000
+                            parts = FreqMatches.group(1).split('.', 2)
+                            FrequencyStr = f'{parts[0]}.{parts[1]}{parts[2]}'
+                            Frequency = float(FrequencyStr)
                         elif FreqMatches.group(2):
                             FrequencyStr = FreqMatches.group(2)
                             Frequency = float(FrequencyStr)
@@ -363,9 +363,7 @@ class cSked(cStateMachine):
                             FrequencyStr = FreqMatches.group(4)
                             Frequency = float(FrequencyStr) / 1000
 
-                        return Frequency
-
-                    return None
+                    return Frequency
 
                 blah = Status
 
