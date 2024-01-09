@@ -1325,7 +1325,7 @@ class cQSO(cStateMachine):
                 EndDate   = f'{config.K3Y_YEAR}0201000000'
 
                 if QsoDate >= StartDate and QsoDate < EndDate:
-                    K3Y_RegEx = r'.*?K3Y[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
+                    K3Y_RegEx = r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
                     Matches = re.match(K3Y_RegEx, QsoComment, re.IGNORECASE)
 
                     if Matches:
@@ -1475,9 +1475,11 @@ class cQSO(cStateMachine):
 
 
             def PrintStation(Station: str):
+                _Prefix, Suffix = re.split('[/-]', Station)
+
                 def PrintBand(Band: int):
-                    if (Station in self.ContactsForK3Y) and (Band in self.ContactsForK3Y[Station]):
-                        print(f'{" " + self.ContactsForK3Y[Station][Band]: <7}|', end = '')
+                    if (Suffix in self.ContactsForK3Y) and (Band in self.ContactsForK3Y[Suffix]):
+                        print(f'{" " + self.ContactsForK3Y[Suffix][Band]: <7}|', end = '')
                     else:
                         print(f'{"": <7}|', end = '')
 
@@ -1693,7 +1695,6 @@ class cSpotters:
             BandList = [int(x[:-1]) for x in bandStringCsv.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
             return BandList
 
-        print('')
         print(f"Finding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
         response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
@@ -2188,7 +2189,7 @@ def IsInBANDS(FrequencyKHz: float) -> bool:
     bands = {
         160: (1800, 2000),
         80:  (3500, 4000),
-        60:  (5330.5-1.5, 5403.5+1.5),
+        60:  (5330.5 - 1.5, 5403.5 + 1.5),
         40:  (7000, 7300),
         30:  (10100, 10150),
         20:  (14000, 14350),
