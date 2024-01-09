@@ -316,40 +316,91 @@ class cSked(cStateMachine):
             GoalList = []
 
             if 'K3Y' in config.GOALS:
-                K3Y_Freq_RegEx = r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)(?:.*?\b(\d+(?:\.\d+)?))?'
-                Matches = re.match(K3Y_Freq_RegEx, Status, re.IGNORECASE)
+                def CollectStation() -> str | None:
+                    K3Y_RegEx = r'.*?(?:K3Y/([0-9]|KP4|KH6|KL7))'
+                    Matches = re.match(K3Y_RegEx, Status, re.IGNORECASE)
 
-                if Matches:
-                    CallSignSuffix = Matches.group(1)
-                    CallSignSuffix = CallSignSuffix.upper()
-                    Freq = 0.0
+                    if Matches:
+                        CallSignSuffix = Matches.group(1)
+                        CallSignSuffix = CallSignSuffix.upper()
+                        return CallSignSuffix
 
-                    if Matches.group(2):
-                        FreqString = Matches.group(2)
+                    SKM_RegEx = r'.*?(?:SKM[\/-](AF|AS|EU|NA|OC|SA))'
+                    Matches = re.match(SKM_RegEx, Status, re.IGNORECASE)
 
-                        # Group 1 examples: 7.055.5 14.055.5
-                        # Group 2 examples: 7.055   14.055
-                        # Group 3 examples: 7055.5  14055.5
-                        # Group 4 examples: 7055    14055
-                        Freq_RegEx = r"(\d{1,2}\.\d{3}\.\d{1})|(\d{1,2}\.\d{3})|(\d+\.\d{1})|(\d{4,5})"
-                        FreqMatches = re.match(Freq_RegEx, FreqString)
+                    if Matches:
+                        CallSignSuffix = Matches.group(1)
+                        CallSignSuffix = CallSignSuffix.upper()
+                        return CallSignSuffix
 
-                        if FreqMatches:
-                            if FreqMatches.group(1):
-                                FreqString = FreqString.replace('.', '', 1)
-                                Freq = float(FreqString) * 1000
-                            if FreqMatches.group(2):
-                                Freq = float(FreqString) * 1000
-                            elif FreqMatches.group(3) or FreqMatches.group(4):
-                                Freq = float(FreqString)
+                    return None
 
-                            Band = cSKCC.WhichBand(Freq)
+                def CollectFrequency() -> float | None:
+                    # Group 1 examples: 7.055.5 14.055.5
+                    # Group 2 examples: 7.055   14.055
+                    # Group 3 examples: 7055.5  14055.5
+                    # Group 4 examples: 7055    14055
+                    Freq_RegEx = r"(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})"
+                    FreqMatches = re.match(Freq_RegEx, Status)
+
+                    Frequency: float | None = None
+
+                    if FreqMatches:
+                        if FreqMatches.group(1):
+                            FrequencyStr = FreqMatches.group(1)
+                            FrequencyStr = FrequencyStr.replace('.', '', 1)
+                            Frequency = float(FrequencyStr) / 1000
+                        elif FreqMatches.group(2):
+                            FrequencyStr = FreqMatches.group(2)
+                            Frequency = float(FrequencyStr)
+                        elif FreqMatches.group(3):
+                            FrequencyStr = FreqMatches.group(3)
+                            oldPosition = FrequencyStr.find('.')
+                            newPosition = oldPosition - 3
+                            FrequencyStr = FrequencyStr[:newPosition] + '.' + FrequencyStr[newPosition:].replace('.', '')
+                            Frequency = float(FrequencyStr)
+                        elif FreqMatches.group(4):
+                            FrequencyStr = FreqMatches.group(4)
+                            Frequency = float(FrequencyStr) / 1000
+
+                        return Frequency
+
+                    return None
+
+                blah = Status
+
+                Status = '14.055.5'
+                Frequency = CollectFrequency()
+
+                Status = '7.055'
+                Frequency = CollectFrequency()
+
+                Status = '14055.500'
+                Frequency = CollectFrequency()
+
+                Status = '7055.5'
+                Frequency = CollectFrequency()
+
+                Status = '14055'
+                Frequency = CollectFrequency()
+
+                Status = '7055'
+                Frequency = CollectFrequency()
+
+
+                Status = blah
+                if Status != '':
+                    Station = CollectStation()
+
+                    if Station:
+                        Frequency = CollectFrequency()
+
+                        if Frequency:
+                            Band = cSKCC.WhichBand(Frequency)
 
                             if Band:
-                                if (not CallSignSuffix in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[CallSignSuffix]):
-                                    GoalList.append(f'K3Y/{CallSignSuffix} ({Band}m)')
-                    else:
-                        GoalList.append(f'K3Y/{CallSignSuffix}')
+                                if (not Station in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[Station]):
+                                    GoalList.append(f'K3Y/{Station} ({Band}m)')
 
             GoalList = GoalList + QSOs.GetGoalHits(CallSign)
 
