@@ -317,13 +317,13 @@ class cSked(cStateMachine):
 
             if 'K3Y' in config.GOALS:
                 def CollectStation() -> tuple[str, str] | None:
-                    K3Y_RegEx = r'(K3Y)/([0-9]|KP4|KH6|KL7)'
+                    K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
                     Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
 
                     if Matches:
                         return Matches.group(1), Matches.group(2).upper()
 
-                    SKM_RegEx = r'(SKM)[\/-](AF|AS|EU|NA|OC|SA)'
+                    SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
                     Matches = re.search(SKM_RegEx, Status, re.IGNORECASE)
 
                     if Matches:
@@ -336,7 +336,7 @@ class cSked(cStateMachine):
                     # Group 2 examples: 7.055   14.055
                     # Group 3 examples: 7055.5  14055.5
                     # Group 4 examples: 7055    14055
-                    Freq_RegEx = r"(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})"
+                    Freq_RegEx = r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b"
                     FreqMatches = re.search(Freq_RegEx, Status)
 
                     FrequencyKHz: float | None = None
