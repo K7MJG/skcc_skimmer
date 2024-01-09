@@ -298,7 +298,7 @@ class cSked(cStateMachine):
             Report: list[str] = [BuildMemberInfo(CallSign)]
 
             if CallSign in RBN.LastSpotted:
-                fFrequency, StartTime = RBN.LastSpotted[CallSign]
+                FrequencyKHz, StartTime = RBN.LastSpotted[CallSign]
 
                 Now = time.time()
                 DeltaSeconds = max(int(Now - StartTime), 1)
@@ -308,97 +308,77 @@ class cSked(cStateMachine):
                 elif DeltaSeconds > 60:
                     DeltaMinutes = DeltaSeconds // 60
                     Units = 'minutes' if DeltaMinutes > 1 else 'minute'
-                    Report.append(f'Last spotted {DeltaMinutes} {Units} ago on {fFrequency}')
+                    Report.append(f'Last spotted {DeltaMinutes} {Units} ago on {FrequencyKHz}')
                 else:
                     Units = 'seconds' if DeltaSeconds > 1 else 'second'
-                    Report.append(f'Last spotted {DeltaSeconds} {Units} ago on {fFrequency}')
+                    Report.append(f'Last spotted {DeltaSeconds} {Units} ago on {FrequencyKHz}')
 
             GoalList = []
 
             if 'K3Y' in config.GOALS:
-                def CollectStation() -> str | None:
-                    K3Y_RegEx = r'.*?(?:K3Y/([0-9]|KP4|KH6|KL7))'
-                    Matches = re.match(K3Y_RegEx, Status, re.IGNORECASE)
+                def CollectStation() -> tuple[str, str] | None:
+                    K3Y_RegEx = r'(K3Y)/([0-9]|KP4|KH6|KL7)'
+                    Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
 
                     if Matches:
-                        CallSignSuffix = Matches.group(1)
-                        CallSignSuffix = CallSignSuffix.upper()
-                        return CallSignSuffix
+                        return Matches.group(1), Matches.group(2).upper()
 
-                    SKM_RegEx = r'.*?(?:SKM[\/-](AF|AS|EU|NA|OC|SA))'
-                    Matches = re.match(SKM_RegEx, Status, re.IGNORECASE)
+                    SKM_RegEx = r'(SKM)[\/-](AF|AS|EU|NA|OC|SA)'
+                    Matches = re.search(SKM_RegEx, Status, re.IGNORECASE)
 
                     if Matches:
-                        CallSignSuffix = Matches.group(1)
-                        CallSignSuffix = CallSignSuffix.upper()
-                        return CallSignSuffix
+                        return Matches.group(1), Matches.group(2).upper()
 
                     return None
 
-                def CollectFrequency() -> float | None:
+                def CollectFrequencyKHz() -> float | None:
                     # Group 1 examples: 7.055.5 14.055.5
                     # Group 2 examples: 7.055   14.055
                     # Group 3 examples: 7055.5  14055.5
                     # Group 4 examples: 7055    14055
                     Freq_RegEx = r"(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})"
-                    FreqMatches = re.match(Freq_RegEx, Status)
+                    FreqMatches = re.search(Freq_RegEx, Status)
 
-                    Frequency: float | None = None
+                    FrequencyKHz: float | None = None
 
                     if FreqMatches:
                         if FreqMatches.group(1):
-                            parts = FreqMatches.group(1).split('.', 2)
-                            FrequencyStr = f'{parts[0]}.{parts[1]}{parts[2]}'
-                            Frequency = float(FrequencyStr)
+                            FrequencyStr = FreqMatches.group(1)
+                            FrequencyStr = FrequencyStr.replace('.', '', 1)
+                            FrequencyKHz = float(FrequencyStr)
                         elif FreqMatches.group(2):
                             FrequencyStr = FreqMatches.group(2)
-                            Frequency = float(FrequencyStr)
+                            FrequencyKHz = float(FrequencyStr) * 1000
                         elif FreqMatches.group(3):
                             FrequencyStr = FreqMatches.group(3)
-                            oldPosition = FrequencyStr.find('.')
-                            newPosition = oldPosition - 3
-                            FrequencyStr = FrequencyStr[:newPosition] + '.' + FrequencyStr[newPosition:].replace('.', '')
-                            Frequency = float(FrequencyStr)
+                            FrequencyKHz = float(FrequencyStr)
                         elif FreqMatches.group(4):
                             FrequencyStr = FreqMatches.group(4)
-                            Frequency = float(FrequencyStr) / 1000
+                            FrequencyKHz = float(FrequencyStr)
 
-                    return Frequency
+                    return FrequencyKHz
 
-                blah = Status
+                def Combine(Type: str, Station: str):
+                    if Type == 'SKM':
+                        return f'SKM-{Station}'
+                    else:
+                        return f'K3Y/{Station}'
 
-                Status = '14.055.5'
-                Frequency = CollectFrequency()
-
-                Status = '7.055'
-                Frequency = CollectFrequency()
-
-                Status = '14055.500'
-                Frequency = CollectFrequency()
-
-                Status = '7055.5'
-                Frequency = CollectFrequency()
-
-                Status = '14055'
-                Frequency = CollectFrequency()
-
-                Status = '7055'
-                Frequency = CollectFrequency()
-
-
-                Status = blah
                 if Status != '':
-                    Station = CollectStation()
+                    FullTuple = CollectStation()
 
-                    if Station:
-                        Frequency = CollectFrequency()
+                    if FullTuple:
+                        Type, Station = FullTuple
+                        FrequencyKHz = CollectFrequencyKHz()
 
-                        if Frequency:
-                            Band = cSKCC.WhichBand(Frequency)
+                        if FrequencyKHz:
+                            Band = cSKCC.WhichBand(FrequencyKHz)
 
                             if Band:
                                 if (not Station in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[Station]):
-                                    GoalList.append(f'K3Y/{Station} ({Band}m)')
+                                    GoalList.append(f'{Combine(Type, Station)} ({Band}m)')
+                        else:
+                            GoalList.append(f'{Combine(Type, Station)}')
 
             GoalList = GoalList + QSOs.GetGoalHits(CallSign)
 
@@ -509,14 +489,14 @@ class cRBN_Filter(cRBN_Client):
             LogError(Line)
             return None
 
-        Spotter, Frequency = Line[6:24].split('-#:')
+        Spotter, FrequencyKHzStr = Line[6:24].split('-#:')
 
-        Frequency = float(Frequency.lstrip())
-        CallSign  = Line[26:35].rstrip()
-        dB        = int(Line[47:49].strip())
-        Zulu      = Line[70:75]
-        CW        = Line[41:47].rstrip()
-        Beacon    = Line[62:68].rstrip()
+        FrequencyKHzStr = FrequencyKHzStr.lstrip()
+        CallSign        = Line[26:35].rstrip()
+        dB              = int(Line[47:49].strip())
+        Zulu            = Line[70:75]
+        CW              = Line[41:47].rstrip()
+        Beacon          = Line[62:68].rstrip()
 
         if CW != 'CW':
             return None
@@ -539,7 +519,7 @@ class cRBN_Filter(cRBN_Client):
             return None
 
         try:
-            fFrequency = float(Frequency)
+            FrequencyKHz = float(FrequencyKHzStr)
         except ValueError:
             LogError(Line)
             return None
@@ -550,7 +530,7 @@ class cRBN_Filter(cRBN_Client):
             CallSign, CallSignSuffix = CallSign.split('/', 1)
             CallSignSuffix = CallSignSuffix.upper()
 
-        return Zulu, Spotter, fFrequency, CallSign, CallSignSuffix, dB, WPM
+        return Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM
 
     def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str]) -> Literal['+', ' ']:
         NotificationFlag = ' '
@@ -580,7 +560,7 @@ class cRBN_Filter(cRBN_Client):
         if not Spot:
             return
 
-        Zulu, Spotter, fFrequency, CallSign, CallSignSuffix, dB, WPM = Spot
+        Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM = Spot
 
         Report: list[str] = []
 
@@ -596,7 +576,7 @@ class cRBN_Filter(cRBN_Client):
 
         #-------------
 
-        if not IsInBANDS(fFrequency):
+        if not IsInBANDS(FrequencyKHz):
             return
 
         #-------------
@@ -624,7 +604,7 @@ class cRBN_Filter(cRBN_Client):
 
         #-------------
 
-        OnFrequency = cSKCC.IsOnSkccFrequency(fFrequency, config.OFF_FREQUENCY.TOLERANCE)
+        OnFrequency = cSKCC.IsOnSkccFrequency(FrequencyKHz, config.OFF_FREQUENCY.TOLERANCE)
 
         if not OnFrequency:
             if config.OFF_FREQUENCY.ACTION == 'warn':
@@ -656,12 +636,12 @@ class cRBN_Filter(cRBN_Client):
 
         if 'K3Y' in config.GOALS and CallSign == 'K3Y':
             if (CallSignSuffix != ''):
-                Band = cSKCC.WhichArrlBand(fFrequency)
+                Band = cSKCC.WhichArrlBand(FrequencyKHz)
 
                 if (not CallSignSuffix in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[CallSignSuffix]):
                     GoalList = [f'K3Y/{CallSignSuffix} ({Band}m)']
 
-        GoalList = GoalList + QSOs.GetGoalHits(CallSign, fFrequency)
+        GoalList = GoalList + QSOs.GetGoalHits(CallSign, FrequencyKHz)
 
         if GoalList:
             Report.append(f'YOU need them for {",".join(GoalList)}')
@@ -676,11 +656,11 @@ class cRBN_Filter(cRBN_Client):
         #-------------
 
         if (SpottedNearby and (GoalList or TargetList)) or You or IsFriend:
-            RBN.LastSpotted[CallSign] = (fFrequency, time.time())
+            RBN.LastSpotted[CallSign] = (FrequencyKHz, time.time())
 
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
 
-            FrequencyString = f'{fFrequency:.1f}'
+            FrequencyString = f'{FrequencyKHz:.1f}'
 
             '''
             Now = time.time()
@@ -1501,7 +1481,7 @@ class cQSO(cStateMachine):
                     else:
                         print(f'{"": <7}|', end = '')
 
-                print(f'{"K3Y/"+Station: <8}|', end = '')
+                print(f'{Station: <8}|', end = '')
                 PrintBand(160)
                 PrintBand(80)
                 PrintBand(40)
@@ -1514,25 +1494,25 @@ class cQSO(cStateMachine):
                 PrintBand(6)
                 print()
 
-            PrintStation('0')
-            PrintStation('1')
-            PrintStation('2')
-            PrintStation('3')
-            PrintStation('4')
-            PrintStation('5')
-            PrintStation('6')
-            PrintStation('7')
-            PrintStation('8')
-            PrintStation('9')
-            PrintStation('KH6')
-            PrintStation('KL7')
-            PrintStation('KP4')
-            PrintStation('AF')
-            PrintStation('AS')
-            PrintStation('EU')
-            PrintStation('NA')
-            PrintStation('OC')
-            PrintStation('SA')
+            PrintStation('K3Y/0')
+            PrintStation('K3Y/1')
+            PrintStation('K3Y/2')
+            PrintStation('K3Y/3')
+            PrintStation('K3Y/4')
+            PrintStation('K3Y/5')
+            PrintStation('K3Y/6')
+            PrintStation('K3Y/7')
+            PrintStation('K3Y/8')
+            PrintStation('K3Y/9')
+            PrintStation('K3Y/KH6')
+            PrintStation('K3Y/KL7')
+            PrintStation('K3Y/KP4')
+            PrintStation('SKM-AF')
+            PrintStation('SKM-AS')
+            PrintStation('SKM-EU')
+            PrintStation('SKM-NA')
+            PrintStation('SKM-OC')
+            PrintStation('SKM-SA')
 
         if 'K3Y' in config.GOALS:
             PrintK3Y_Contacts()
@@ -1788,11 +1768,11 @@ class cSKCC:
         'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
     }
 
-    Frequencies = {
-        160 : [1813],
+    CallingFrequenciesKHz = {
+        160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
-        40  : [7055,  7120],
+        40  : [7038, 7055,  7114],
         30  : [10120],
         20  : [14050, 14114],
         17  : [18080],
@@ -2075,60 +2055,58 @@ class cSKCC:
             sys.exit()
 
     @staticmethod
-    def IsOnSkccFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
-        for Band, Value in cSKCC.Frequencies.items():
-            if Band == 60 and fFrequency >= 5332-1.5 and fFrequency <= 5405+1.5:
+    def IsOnSkccFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
+        for Band, Value in cSKCC.CallingFrequenciesKHz.items():
+            if Band == 60 and FrequencyKHz >= 5332-1.5 and FrequencyKHz <= 5405+1.5:
                 return True
 
             MidPoints = Value
 
             for MidPoint in MidPoints:
-                if fFrequency >= MidPoint-Tolerance and fFrequency <= MidPoint+Tolerance:
+                if FrequencyKHz >= MidPoint-ToleranceKHz and FrequencyKHz <= MidPoint+ToleranceKHz:
                     return True
 
         return False
 
     @staticmethod
-    def WhichBand(fFrequency: float, Tolerance: int = 10) -> None | int:
-        for Band, Value in cSKCC.Frequencies.items():
-            MidPoints = Value
-
-            for MidPoint in MidPoints:
-                if fFrequency >= MidPoint-Tolerance and fFrequency <= MidPoint+Tolerance:
+    def WhichBand(FrequencyKHz: float, ToleranceKHz: float = 10) -> None | int:
+        for Band, MidPointsKHz in cSKCC.CallingFrequenciesKHz.items():
+            for MidPointKHz in MidPointsKHz:
+                if FrequencyKHz >= MidPointKHz-ToleranceKHz and FrequencyKHz <= MidPointKHz+ToleranceKHz:
                     return Band
 
         return None
 
     @staticmethod
-    def WhichArrlBand(fFrequency: float) -> int | None:
-        if 1800 < fFrequency < 2000:
+    def WhichArrlBand(FrequencyKHz: float) -> int | None:
+        if 1800 < FrequencyKHz < 2000:
             return 160
 
-        elif 3500 < fFrequency < 3600:
+        elif 3500 < FrequencyKHz < 3600:
             return 80
 
-        elif 7000 < fFrequency < 7125:
+        elif 7000 < FrequencyKHz < 7125:
             return 40
 
-        elif 10100 < fFrequency < 10150:
+        elif 10100 < FrequencyKHz < 10150:
             return 30
 
-        elif 14000 < fFrequency < 14150:
+        elif 14000 < FrequencyKHz < 14150:
             return 20
 
-        elif 18068 < fFrequency < 18168:
+        elif 18068 < FrequencyKHz < 18168:
             return 17
 
-        elif 21000 < fFrequency < 21450:
+        elif 21000 < FrequencyKHz < 21450:
             return 15
 
-        elif 24890 < fFrequency < 24990:
+        elif 24890 < FrequencyKHz < 24990:
             return 12
 
-        elif 28000 < fFrequency < 29700:
+        elif 28000 < FrequencyKHz < 29700:
             return 10
 
-        elif 50000 < fFrequency < 54000:
+        elif 50000 < FrequencyKHz < 54000:
             return 6
 
         else:
@@ -2136,14 +2114,14 @@ class cSKCC:
 
 
     @staticmethod
-    def IsOnWarcFrequency(fFrequency: float, Tolerance: int = 10) -> bool:
+    def IsOnWarcFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
         WarcBands = [30, 17, 12]
 
         for Band in WarcBands:
-            MidPoints = cSKCC.Frequencies[Band]
+            CallingFreqenciesKHz = cSKCC.CallingFrequenciesKHz[Band]
 
-            for MidPoint in MidPoints:
-                if fFrequency >= MidPoint-Tolerance and fFrequency <= MidPoint+Tolerance:
+            for CallingFrequencyKHz in CallingFreqenciesKHz:
+                if FrequencyKHz >= (CallingFrequencyKHz - ToleranceKHz) and FrequencyKHz <= (CallingFrequencyKHz + ToleranceKHz):
                     return True
 
         return False
@@ -2203,9 +2181,9 @@ def BuildMemberInfo(CallSign: str) -> str:
 
     return f'({Number:>5} {Suffix:<4} {Name:<9.9} {SPC:>3})'
 
-def IsInBANDS(Frequency: float) -> bool:
-    def InRange(Band: int, fFrequency: float, Low: float, High: float) -> bool:
-        return Band in config.BANDS and Low <= fFrequency <= High
+def IsInBANDS(FrequencyKHz: float) -> bool:
+    def InRange(Band: int, FrequencyKHz_: float, Low: float, High: float) -> bool:
+        return Band in config.BANDS and Low <= FrequencyKHz_ <= High
 
     bands = {
         160: (1800, 2000),
@@ -2221,8 +2199,8 @@ def IsInBANDS(Frequency: float) -> bool:
         6:   (50000, 50100),
     }
 
-    for band, (low, high) in bands.items():
-        if InRange(band, Frequency, low, high):
+    for band, (lowKHz, highKHz) in bands.items():
+        if InRange(band, FrequencyKHz, lowKHz, highKHz):
             return True
 
     return False
