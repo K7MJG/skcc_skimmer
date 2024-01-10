@@ -336,7 +336,7 @@ class cSked(cStateMachine):
                     # Group 2 examples: 7.055   14.055
                     # Group 3 examples: 7055.5  14055.5
                     # Group 4 examples: 7055    14055
-                    Freq_RegEx = r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b"
+                    Freq_RegEx = r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$"
                     FreqMatches = re.search(Freq_RegEx, Status)
 
                     FrequencyKHz: float | None = None
@@ -562,6 +562,7 @@ class cRBN_Filter(cRBN_Client):
 
         Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM = Spot
 
+
         Report: list[str] = []
 
         #-------------
@@ -604,13 +605,14 @@ class cRBN_Filter(cRBN_Client):
 
         #-------------
 
-        OnFrequency = cSKCC.IsOnSkccFrequency(FrequencyKHz, config.OFF_FREQUENCY.TOLERANCE)
+        if CallSign != 'K3Y':
+            OnFrequency = cSKCC.IsOnSkccFrequency(FrequencyKHz, config.OFF_FREQUENCY.TOLERANCE)
 
-        if not OnFrequency:
-            if config.OFF_FREQUENCY.ACTION == 'warn':
-                Report.append('OFF SKCC FREQUENCY!')
-            elif config.OFF_FREQUENCY.ACTION == 'suppress':
-                return
+            if not OnFrequency:
+                if config.OFF_FREQUENCY.ACTION == 'warn':
+                    Report.append('OFF SKCC FREQUENCY!')
+                elif config.OFF_FREQUENCY.ACTION == 'suppress':
+                    return
 
         #-------------
 
