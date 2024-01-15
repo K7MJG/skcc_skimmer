@@ -226,7 +226,6 @@ class cDisplay(cStateMachine):
             if self.DotsOutput > 0:
                 print('')
 
-            text = Stripped(text)
             print(text)
             self.DotsOutput = 0
 
@@ -854,13 +853,14 @@ class cQSO(cStateMachine):
         return Remaining, X_Factor
 
     def ReadQSOs(self) -> None:
-        Display.Print(f'Reading QSOs from {config.ADI_FILE}...')
+        AdiFileAbsolute = os.path.abspath(config.ADI_FILE)
+        Display.Print(f"\nReading QSOs for {config.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
         self.QSOs = []
 
         self.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
 
-        with open(config.ADI_FILE, 'rb') as File:
+        with open(AdiFileAbsolute, 'rb') as File:
             Contents = File.read().decode('utf-8', 'ignore')
 
         _Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
@@ -964,7 +964,6 @@ class cQSO(cStateMachine):
 
         print(f'BANDS: {", ".join(str(Band)  for Band in config.BANDS)}')
 
-        print('')
 
         PrintRemaining('C', len(self.ContactsForC))
 
@@ -1697,7 +1696,7 @@ class cSpotters:
             BandList = [int(x[:-1]) for x in bandStringCsv.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
             return BandList
 
-        print(f"Finding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
+        print(f"\nFinding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
         response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
 
@@ -1775,7 +1774,7 @@ class cSKCC:
         160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
-        40  : [7038, 7055,  7114],
+        40  : [7038, 7055, 7114],
         30  : [10120],
         20  : [14050, 14114],
         17  : [18080],
@@ -2040,9 +2039,18 @@ class cSKCC:
 
         try:
             for Line in Lines[1:]:
-                _Number,CurrentCall,Name,_City,SPC,_OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
+                _Number,CurrentCall,Name,_City,SPC,OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
 
-                self.Members[CurrentCall] = {
+                if OtherCalls:
+                    OtherCallList = [x.strip() for x in OtherCalls.split(',')]
+                else:
+                    OtherCallList = []
+
+                AllCalls = [CurrentCall] + OtherCallList
+
+                for Call in AllCalls:
+                    self.Members[Call] = {
+
                     'name'         : Name,
                     'plain_number' : PlainNumber,
                     'spc'          : SPC,
