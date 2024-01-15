@@ -242,9 +242,13 @@ class cConfig:
 
     def _ParseArgs(self, ArgV: list[str]):
         try:
-            Options, _ = getopt.getopt(ArgV, \
-                    'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'.replace(' ', ''), \
-                    'adi= bands= brag-months= callsign= distance-units= goals= help interactive logfile= maidenhead= notification= radius= sked= targets= verbose'.split())
+            shortOptions = 'a:   b:     B:           c:        d:              g:     h    i           l:       m:          n:            r:      s:    t:       v'
+            longOptions  = 'adi= bands= brag-months= callsign= distance-units= goals= help interactive logfile= maidenhead= notification= radius= sked= targets= verbose'
+
+            shortArgs = shortOptions.replace(' ', '')
+            longArgs  = [str(x) for x in longOptions.split()]
+
+            Options, _ = getopt.getopt(ArgV, shortArgs, longArgs)
         except getopt.GetoptError as e:
             print(e)
             self.Usage()
