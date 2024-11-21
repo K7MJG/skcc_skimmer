@@ -531,7 +531,7 @@ class cRBN_Filter(cRBN_Client):
 
         return Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM
 
-    def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str]) -> Literal['+', ' ']:
+    def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str], SpottedNearby: bool) -> Literal['+', ' ']:
         NotificationFlag = ' '
 
         Now = time.time()
@@ -542,7 +542,7 @@ class cRBN_Filter(cRBN_Client):
 
         if CallSign not in self.Notified:
             if config.NOTIFICATION.ENABLED:
-                if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
+                if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION) or (SpottedNearby and 'spotted' in config.NOTIFICATION.CONDITION):
                     Beep()
 
             NotificationFlag = '+'
@@ -680,11 +680,11 @@ class cRBN_Filter(cRBN_Client):
             '''
 
             if CallSign == 'K3Y':
-                NotificationFlag = self.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
+                NotificationFlag = self.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList, SpottedNearby)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
                 MemberInfo = BuildMemberInfo(CallSign)
-                NotificationFlag = self.HandleNotification(CallSign, GoalList, TargetList)
+                NotificationFlag = self.HandleNotification(CallSign, GoalList, TargetList, SpottedNearby)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
             Display.Print(Out)

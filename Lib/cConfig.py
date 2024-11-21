@@ -69,7 +69,7 @@ class cConfig:
 
     class cNotification:
         ENABLED:                      bool
-        CONDITION:                    list[str]   # list[Literal['goals', 'targets', 'friends']]
+        CONDITION:                    list[str]   # list[Literal['goals', 'targets', 'friends', 'spotted']]
         RENOTIFICATION_DELAY_SECONDS: int
     NOTIFICATION = cNotification
 
@@ -205,8 +205,8 @@ class cConfig:
                 conditions = cCommon.Split(notification['CONDITION'])
 
                 for condition in conditions:
-                    if condition not in ['goals', 'targets', 'friends']:
-                        print(f"NOTIFICATION CONDITION '{condition}' must be 'goals' and/or 'targets' and/or 'friends'")
+                    if condition not in ['goals', 'targets', 'friends', 'spotted']:
+                        print(f"NOTIFICATION CONDITION '{condition}' must be 'goals' and/or 'targets' and/or 'friends' and/or 'spotted'")
                         sys.exit()
 
                 self.NOTIFICATION.CONDITION = conditions
