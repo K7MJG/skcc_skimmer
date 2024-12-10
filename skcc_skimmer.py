@@ -73,8 +73,6 @@
 #   which may require a pip install.
 #
 
-#from __future__ import annotations
-
 from datetime import timedelta
 from datetime import datetime
 
@@ -1422,11 +1420,12 @@ class cQSO(cStateMachine):
             with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
                 for State in US_STATES:
                     if State in QSOsByState:
-                        QsoSPC, _, QsoCallSign = QSOsByState[State]
+                        QsoSPC, QsoDate, QsoCallSign = QSOsByState[State]
                         FormattedDate = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
                         File.write(f'{QsoSPC}    {QsoCallSign:<12}  {FormattedDate}\n')
                     else:
                         File.write(f'{State}\n')
+
 
         def TrackBRAG(QSOs: Any) -> None:
             QSOs = QSOs.values()
