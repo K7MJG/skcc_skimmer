@@ -99,15 +99,13 @@ class cConfig:
 
     def __init__(self, ArgV: list[str]):
         def ReadSkccSkimmerCfg() -> dict[str, Any]:
-            try:
-                with open('skcc_skimmer.cfg', 'r', encoding='utf-8') as File:
-                    ConfigFileString = File.read()
-                    exec(ConfigFileString)
-            except IOError:
-                print("Unable to open configuration file 'skcc_skimmer.cfg'.")
-                sys.exit()
+            config_vars: dict[str, Any] = {}
+			
+            with open('skcc_skimmer.cfg', 'r', encoding='utf-8') as configFile:
+                ConfigFileString = configFile.read()
+                exec(ConfigFileString, {}, config_vars)
 
-            return locals()
+            return config_vars
 
         self.configFile = ReadSkccSkimmerCfg()
 

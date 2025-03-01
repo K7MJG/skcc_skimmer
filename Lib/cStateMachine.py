@@ -50,9 +50,6 @@ class cStateMachine:
         if self.State not in self.EventFunctions:
             self.EventFunctions = self.State()
 
-            if self.EventFunctions is None:
-                print(f'Must return locals in {self.State.__name__}')
-
         return
 
     def SendEvent(self, Event: str):

@@ -1769,7 +1769,7 @@ class cSKCC:
         'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
     }
 
-    CallingFrequenciesKHz = {
+    CallingFrequenciesKHz: dict[int, list[float]] = {
         160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
@@ -2195,7 +2195,7 @@ def IsInBANDS(FrequencyKHz: float) -> bool:
     def InRange(Band: int, FrequencyKHz_: float, Low: float, High: float) -> bool:
         return Band in config.BANDS and Low <= FrequencyKHz_ <= High
 
-    bands = {
+    bands: dict[int, tuple[float, float]] = {
         160: (1800, 2000),
         80:  (3500, 4000),
         60:  (5330.5 - 1.5, 5403.5 + 1.5),
