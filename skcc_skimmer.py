@@ -82,7 +82,6 @@ from typing        import Any, NoReturn, Literal
 from math          import radians, sin, cos, atan2, sqrt
 
 from Lib.cSocketLoop   import cSocketLoop
-from Lib.cStateMachine import cStateMachine
 from Lib.cRBN          import cRBN_Client
 from Lib.cConfig       import cConfig
 from Lib.cCommon       import cCommon
@@ -219,6 +218,7 @@ class cDisplay:
             print()
 
         print(text)
+        cls.DotsOutput = 0
 
     @classmethod
     async def DotsLoop(cls):
@@ -668,7 +668,7 @@ class cRBN_Filter(cRBN_Client):
             Display.Print(Out)
             Log(f'{ZuluDate} {Out}')
 
-class cQSO(cStateMachine):
+class cQSO:
     MyMemberNumber: str
 
     ContactsForC:     dict[str, tuple[str, str, str]]
@@ -691,7 +691,6 @@ class cQSO(cStateMachine):
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
     def __init__(self):
-        cStateMachine.__init__(self, self.STATE_Running, Debug = False)
         self.QSOs = []
 
         self.Brag               = {}
@@ -708,8 +707,6 @@ class cQSO(cStateMachine):
 
         self.ReadQSOs()
 
-        self.RefreshPeriodSeconds = 3
-
         MyMemberEntry       = SKCC.Members[config.MY_CALLSIGN]
         self.MyJoin_Date    = Effective(MyMemberEntry['join_date'])
         self.MyC_Date       = Effective(MyMemberEntry['c_date'])
@@ -719,12 +716,10 @@ class cQSO(cStateMachine):
 
         self.MyMemberNumber = MyMemberEntry['plain_number']
 
-    def STATE_Running(self) -> dict[str, Any]:
-        def ENTER():
-            self.TimeoutInSeconds(self.RefreshPeriodSeconds)
-
-        def TIMEOUT():
-            if os.path.getmtime(config.ADI_FILE) != self.AdiFileReadTimeStamp:
+    @classmethod
+    async def WatchLogFile(cls):
+        while True:
+            if os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
                 Display.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
                 # Once we detect the file has changed, we can't necessarily read it
@@ -732,17 +727,18 @@ class cQSO(cStateMachine):
                 # until the write is complete.
                 while True:
                     Size = os.path.getsize(config.ADI_FILE)
-                    time.sleep(1)
+                    await asyncio.sleep(1)
 
                     if os.path.getsize(config.ADI_FILE) == Size:
                         break
 
                 QSOs.Refresh()
 
-            self.TimeoutInSeconds(self.RefreshPeriodSeconds)
+            await asyncio.sleep(3)
 
-        _ = ENTER, TIMEOUT
-        return locals()
+    @classmethod
+    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
+        eventLoop.create_task(cls.WatchLogFile())
 
     def AwardsCheck(self) -> None:
         C_Level = len(self.ContactsForC)  // Levels['C']
@@ -2397,6 +2393,8 @@ RBN = cRBN_Filter(SocketLoop, CallSign=config.MY_CALLSIGN, Clusters=CLUSTERS)
 
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
+
+cQSO.Start(eventLoop)
 
 if config.SKED.ENABLED:
     cSked.Start(eventLoop)
