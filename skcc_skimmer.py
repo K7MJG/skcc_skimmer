@@ -87,6 +87,7 @@ from Lib.cRBN          import cRBN_Client
 from Lib.cConfig       import cConfig
 from Lib.cCommon       import cCommon
 
+import asyncio
 import signal
 import time
 import sys
@@ -209,73 +210,41 @@ class cFastDateTime:
         return cFastDateTime(time.gmtime())
 
 
-class cDisplay(cStateMachine):
-    def __init__(self):
-        cStateMachine.__init__(self, self.STATE_Running, Debug = False)
-        self.DotsOutput = 0
-        self.Run()
+class cDisplay:
+    DotsOutput = 0
 
-    def STATE_Running(self):
-        def ENTER():
-            if config.PROGRESS_DOTS.ENABLED:
-                self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
+    @classmethod
+    def Print(cls, text: str):
+        if cls.DotsOutput > 0:
+            print()
 
-        def PRINT(text: str):
-            if self.DotsOutput > 0:
-                print('')
+        print(text)
 
-            print(text)
-            self.DotsOutput = 0
-
-            if config.PROGRESS_DOTS.ENABLED:
-                self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
-
-        def TIMEOUT():
+    @classmethod
+    async def DotsLoop(cls):
+        while True:
+            await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
             sys.stdout.write('.')
             sys.stdout.flush()
-            self.DotsOutput += 1
+            cls.DotsOutput += 1
 
-            if self.DotsOutput > config.PROGRESS_DOTS.DOTS_PER_LINE:
-                print('')
-                self.DotsOutput = 0
-
-            if config.PROGRESS_DOTS.ENABLED:
-                self.TimeoutInSeconds(config.PROGRESS_DOTS.DISPLAY_SECONDS)
-
-        _ = ENTER, PRINT, TIMEOUT # Forced reference for type checking.
-        return locals()
-
-    def Print(self, text: str = ''):
-        self.SendEventArg('PRINT', text)
+    @classmethod
+    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
+        eventLoop.create_task(cls.DotsLoop())
 
 def Beep() -> None:
     sys.stdout.write('\a')
     sys.stdout.flush()
 
-class cSked(cStateMachine):
+class cSked:
     RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    SkedSite = None
 
-    def __init__(self):
-        cStateMachine.__init__(self, self.STATE_Running, Debug = False)
-        self.SkedSite = None
-        self.PreviousLogins = {}
-        self.FirstPass = True
+    PreviousLogins = {}
+    FirstPass = True
 
-    def STATE_Running(self):
-        def Common():
-            self.DisplayLogins()
-            self.TimeoutInSeconds(config.SKED.CHECK_SECONDS)
-
-        def ENTER():
-            Common()
-
-        def TIMEOUT():
-            Common()
-
-        _ = ENTER, TIMEOUT
-        return locals()
-
-    def HandleLogins(self, SkedLogins: list[tuple[str, str]], Heading: str):
+    @classmethod
+    def HandleLogins(cls, SkedLogins: list[tuple[str, str]], Heading: str):
         SkedHit: dict[str, list[str]] = {}
         GoalList: list[str] = []
         TargetList: list[str] = []
@@ -403,10 +372,10 @@ class cSked(cStateMachine):
             ZuluTime = time.strftime('%H%MZ', GMT)
             ZuluDate = time.strftime('%Y-%m-%d', GMT)
 
-            if self.FirstPass:
+            if cls.FirstPass:
                 NewLogins = []
             else:
-                NewLogins = list(set(SkedHit)-set(self.PreviousLogins))
+                NewLogins = list(set(SkedHit)-set(cls.PreviousLogins))
 
             Display.Print('=========== '+Heading+' Sked Page '+'=' * (16-len(Heading)))
 
@@ -426,7 +395,8 @@ class cSked(cStateMachine):
 
         return SkedHit
 
-    def DisplayLogins(self) -> None:
+    @classmethod
+    def DisplayLogins(cls) -> None:
         try:
             response = requests.get('http://sked.skccgroup.com/get-status.php')
 
@@ -439,20 +409,30 @@ class cSked(cStateMachine):
             if Content:
                 try:
                     SkedLogins: list[tuple[str, str]] = json.loads(Content)
-                    Hits = self.HandleLogins(SkedLogins, 'SKCC')
+                    Hits = cls.HandleLogins(SkedLogins, 'SKCC')
                 except Exception as ex:
                     with open('DEBUG.txt', 'a', encoding='utf-8') as File:
                         File.write(Content + '\n')
 
                     print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
-            self.PreviousLogins = Hits
-            self.FirstPass = False
+            cls.PreviousLogins = Hits
+            cls.FirstPass = False
 
             if Hits:
                 Display.Print('=======================================')
         except:
             print(f"\nProblem retrieving information from the Sked Page.  Skipping...")
+
+    @classmethod
+    async def RunForever(cls):
+        while True:
+            await asyncio.sleep(config.SKED.CHECK_SECONDS)
+            cls.DisplayLogins()
+
+    @classmethod
+    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
+        eventLoop.create_task(cls.RunForever())
 
 class cRBN_Filter(cRBN_Client):
     LastSpotted: dict[str, tuple[float, float]]
@@ -861,11 +841,11 @@ class cQSO(cStateMachine):
         with open(AdiFileAbsolute, 'rb') as File:
             Contents = File.read().decode('utf-8', 'ignore')
 
-        _Header, Body = re.split(r'<eoh>', Contents, 0, re.I|re.M)
+        _Header, Body = re.split(r'<eoh>', Contents, maxsplit=0, flags=re.I|re.M)
 
         Body = Body.strip(' \t\r\n\x1a')  # Include CNTL-Z
 
-        RecordTextList = re.split(r'<eor>', Body, 0, re.I|re.M)
+        RecordTextList = re.split(r'<eor>', Body, maxsplit=0, flags=re.I|re.M)
 
         Adi_RegEx = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
 
@@ -2413,7 +2393,15 @@ SocketLoop = cSocketLoop()
 
 RBN = cRBN_Filter(SocketLoop, CallSign=config.MY_CALLSIGN, Clusters=CLUSTERS)
 
+
+
+eventLoop = asyncio.new_event_loop()
+asyncio.set_event_loop(eventLoop)
+
 if config.SKED.ENABLED:
-    cSked()
+    cSked.Start(eventLoop)
+
+cDisplay.Start(eventLoop)
+eventLoop.run_forever()  # Keep the loop running until stopped
 
 SocketLoop.Run()
