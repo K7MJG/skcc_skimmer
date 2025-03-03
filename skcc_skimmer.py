@@ -3,7 +3,7 @@
 
      The MIT License (MIT)
 
-     Copyright (c) 2015-2024 Mark J Glenn
+     Copyright (c) 2015-2025 Mark J Glenn
 
      Permission is hereby granted, free of charge, to any person obtaining a copy
      of this software and associated documentation files (the "Software"), to deal
@@ -81,10 +81,8 @@ from typing        import Any, NoReturn, Literal
 
 from math          import radians, sin, cos, atan2, sqrt
 
-from Lib.cSocketLoop   import cSocketLoop
-from Lib.cRBN          import cRBN_Client
 from Lib.cConfig       import cConfig
-from Lib.cCommon       import cCommon
+from collections.abc   import AsyncGenerator
 
 import asyncio
 import signal
@@ -208,7 +206,6 @@ class cFastDateTime:
     def NowGMT() -> 'cFastDateTime':
         return cFastDateTime(time.gmtime())
 
-
 class cDisplay:
     DotsOutput = 0
 
@@ -263,14 +260,14 @@ class cSked:
 
             Report: list[str] = [BuildMemberInfo(CallSign)]
 
-            if CallSign in RBN.LastSpotted:
-                FrequencyKHz, StartTime = RBN.LastSpotted[CallSign]
+            if CallSign in cRBN.LastSpotted:
+                FrequencyKHz, StartTime = cRBN.LastSpotted[CallSign]
 
                 Now = time.time()
                 DeltaSeconds = max(int(Now - StartTime), 1)
 
                 if DeltaSeconds > config.SPOT_PERSISTENCE_MINUTES * 60:
-                    del RBN.LastSpotted[CallSign]
+                    del cRBN.LastSpotted[CallSign]
                 elif DeltaSeconds > 60:
                     DeltaMinutes = DeltaSeconds // 60
                     Units = 'minutes' if DeltaMinutes > 1 else 'minute'
@@ -434,26 +431,18 @@ class cSked:
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
         eventLoop.create_task(cls.RunForever())
 
-class cRBN_Filter(cRBN_Client):
-    LastSpotted: dict[str, tuple[float, float]]
-    Notified: dict[str, float]
+class cRBN:
+    LastSpotted: dict[str, tuple[float, float]] = {}
+    Notified: dict[str, float] = {}
 
     Zulu_RegEx = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
     dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
-    def __init__(self, SocketLoop: cSocketLoop, CallSign: str, Clusters: str):
-        cRBN_Client.__init__(self, SocketLoop, CallSign, Clusters)
-        self.Data = ''
-        self.LastSpotted = {}
-        self.Notified = {}
-        self.RenotificationDelay = config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
-
-    def RawData(self, Data: str):
-        self.Data += Data
-
-        while '\r\n' in self.Data:
-            Line, self.Data = self.Data.split('\r\n', 1)
-            self.HandleSpot(Line)
+    @classmethod
+    async def HandleSpots(cls) -> None:
+        """Broadcast messages to all authenticated clients using the async generator."""
+        async for data in DxClient.feed_generator():
+            cRBN.HandleSpot(data.rstrip().decode('ascii'))
 
     @staticmethod
     def ParseSpot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
@@ -481,11 +470,11 @@ class cRBN_Filter(cRBN_Client):
         if Beacon == 'BEACON':
             return None
 
-        if not cRBN_Filter.Zulu_RegEx.match(Zulu):
+        if not cRBN.Zulu_RegEx.match(Zulu):
             LogError(Line)
             return None
 
-        if not cRBN_Filter.dB_RegEx.match(Line[47:52]):
+        if not cRBN.dB_RegEx.match(Line[47:52]):
             LogError(Line)
             return None
 
@@ -509,30 +498,32 @@ class cRBN_Filter(cRBN_Client):
 
         return Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM
 
-    def HandleNotification(self, CallSign: str, GoalList: list[str], TargetList: list[str]) -> Literal['+', ' ']:
+    @classmethod
+    def HandleNotification(cls, CallSign: str, GoalList: list[str], TargetList: list[str]) -> Literal['+', ' ']:
         NotificationFlag = ' '
 
         Now = time.time()
 
-        for Call in dict(self.Notified):
-            if Now > self.Notified[Call]:
-                del self.Notified[Call]
+        for Call in dict(cls.Notified):
+            if Now > cls.Notified[Call]:
+                del cls.Notified[Call]
 
-        if CallSign not in self.Notified:
+        if CallSign not in cls.Notified:
             if config.NOTIFICATION.ENABLED:
                 if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
                     Beep()
 
             NotificationFlag = '+'
-            self.Notified[CallSign] = Now + self.RenotificationDelay
+            cls.Notified[CallSign] = Now + config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
 
         return NotificationFlag
 
-    def HandleSpot(self, Line: str) -> None:
+    @classmethod
+    def HandleSpot(cls, Line: str) -> None:
         if config.VERBOSE:
             print(f'   {Line}')
 
-        Spot = cRBN_Filter.ParseSpot(Line)
+        Spot = cRBN.ParseSpot(Line)
 
         if not Spot:
             return
@@ -635,7 +626,7 @@ class cRBN_Filter(cRBN_Client):
         #-------------
 
         if (SpottedNearby and (GoalList or TargetList)) or You or IsFriend:
-            RBN.LastSpotted[CallSign] = (FrequencyKHz, time.time())
+            cRBN.LastSpotted[CallSign] = (FrequencyKHz, time.time())
 
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
 
@@ -658,11 +649,11 @@ class cRBN_Filter(cRBN_Client):
             '''
 
             if CallSign == 'K3Y':
-                NotificationFlag = self.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
+                NotificationFlag = cls.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
                 MemberInfo = BuildMemberInfo(CallSign)
-                NotificationFlag = self.HandleNotification(CallSign, GoalList, TargetList)
+                NotificationFlag = cls.HandleNotification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
             Display.Print(Out)
@@ -2191,7 +2182,6 @@ def IsInBANDS(FrequencyKHz: float) -> bool:
 
     return False
 
-
 def Lookups(LookupString: str) -> None:
     def PrintCallSign(CallSign: str):
         Entry = SKCC.Members[CallSign]
@@ -2224,7 +2214,7 @@ def Lookups(LookupString: str) -> None:
 
         print(f'  {CallSign} - {"; ".join(Report)}')
 
-    LookupList = cCommon.Split(LookupString.upper())
+    LookupList = Split(LookupString.upper())
 
     for Item in LookupList:
         Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
@@ -2262,6 +2252,50 @@ def FileCheck(Filename: str) -> None | NoReturn:
     print(f"File '{Filename}' does not exist.")
     print('')
     sys.exit()
+
+class DxClient:
+    @staticmethod
+    async def feed_generator() -> AsyncGenerator[bytes, None]:
+        """Asynchronous generator that yields data from the DX telnet feed."""
+        global spot_count, start_time
+
+        reader: asyncio.StreamReader | None = None
+        writer: asyncio.StreamWriter | None = None
+
+        while True:
+            try:
+                print(f"Connecting to DX telnet feed at skimmer.skccgroup.com:7000")
+
+                reader, writer = await asyncio.open_connection('skimmer.skccgroup.com', 7000)
+
+                # This handles the initial handshake.
+                data = await reader.readuntil(b"call: ")
+
+                writer.write(f"K7MJG\r\n".encode("ascii"))
+                await writer.drain()
+
+                data = await reader.readuntil(b">\r\n\r\n")
+
+                while True:
+                    data = await reader.readuntil(b'\n')
+                    yield data
+            except (
+                asyncio.IncompleteReadError,
+                ConnectionResetError,
+                BrokenPipeError,
+            ) as e:
+                print(f"DX feed connection error: {e}, reconnecting...")
+                await asyncio.sleep(5)
+            except Exception as e:
+                print(f"Unexpected DX feed error: {e}")
+            finally:
+                try:
+                    if writer is not None:
+                        writer.close()
+                        await writer.wait_closed()
+                except BaseException:
+                    pass
+
 
 #
 # Main
@@ -2385,21 +2419,15 @@ print('')
 print('Running...')
 print('')
 
-SocketLoop = cSocketLoop()
-
-RBN = cRBN_Filter(SocketLoop, CallSign=config.MY_CALLSIGN, Clusters=CLUSTERS)
-
-
-
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
 
 cQSO.Start(eventLoop)
+
+eventLoop.create_task(cRBN.HandleSpots())
 
 if config.SKED.ENABLED:
     cSked.Start(eventLoop)
 
 cDisplay.Start(eventLoop)
 eventLoop.run_forever()  # Keep the loop running until stopped
-
-SocketLoop.Run()
