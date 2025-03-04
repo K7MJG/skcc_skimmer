@@ -43,8 +43,6 @@
 # WAS-T and WAS-C changes contributed by Nick, KC0MYW.
 
 #
-
-#
 # Quickstart:
 #
 #  1. Make sure that you have Python installed.
@@ -69,7 +67,7 @@
 #
 # Portability:
 #
-#   Requires Python version 3.8.10 or better. Also requires the following imports
+#   Requires Python version 3.11 or better. Also requires the following imports
 #   which may require a pip install.
 #
 
@@ -96,52 +94,39 @@ import calendar
 import json
 import requests
 
-def Split(spaceSeparatedString: str) -> list[str]:
-    return re.split('[, ][ ]*', spaceSeparatedString.strip())
+class cUtil:
+    @staticmethod
+    def Split(spaceSeparatedString: str) -> list[str]:
+        return re.split('[, ][ ]*', spaceSeparatedString.strip())
 
-def Effective(Date: str) -> str:
-    TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
+    @staticmethod
+    def Effective(Date: str) -> str:
+        TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
 
-    if TodayGMT >= Date:
-        return Date
+        if TodayGMT >= Date:
+            return Date
 
-    return ''
+        return ''
 
-def Miles2Km(Miles: int) -> int:
-    return int((Miles * 1.609344) + .5)
+    @staticmethod
+    def Miles2Km(Miles: int) -> int:
+        return int((Miles * 1.609344) + .5)
 
-def Stripped(text: str) -> str:
-    return ''.join([c for c in text if 31 < ord(c) < 127])
+    @staticmethod
+    def Stripped(text: str) -> str:
+        return ''.join([c for c in text if 31 < ord(c) < 127])
 
-#!/usr/bin/python3
-'''
+    @staticmethod
+    def Beep() -> None:
+        sys.stdout.write('\a')
+        sys.stdout.flush()
 
-     The MIT License (MIT)
+    @staticmethod
+    def FormatDistance(Miles: int) -> str:
+        if config.DISTANCE_UNITS == "mi":
+            return f'{Miles}mi'
 
-     Copyright (c) 2015-2023 Mark J Glenn
-
-     Permission is hereby granted, free of charge, to any person obtaining a copy
-     of this software and associated documentation files (the "Software"), to deal
-     in the Software without restriction, including without limitation the rights
-     to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-     copies of the Software, and to permit persons to whom the Software is
-     furnished to do so, subject to the following conditions:
-
-     The above copyright notice and this permission notice shall be included in all
-     copies or substantial portions of the Software.
-
-     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-     IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-     FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-     AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-     SOFTWARE.
-
-     Mark Glenn
-     mglenn@cox.net
-
-'''
+        return f'{cUtil.Miles2Km(Miles)}km'
 
 class cConfig:
     class cProgressDots:
@@ -200,7 +185,6 @@ class cConfig:
     class TypedConfig(TypedDict):
         HIGH_WPM: 'cConfig.cHighWpm'
 
-
     configFile2: TypedConfig
 
     def __init__(self, ArgV: list[str]):
@@ -228,19 +212,19 @@ class cConfig:
             self.SPOTTER_RADIUS = int(self.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in self.configFile:
-            self.GOALS = self.Parse(self.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
+            self.GOALS = self.ParseGoals(self.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
 
         if 'TARGETS' in self.configFile:
-            self.TARGETS = self.Parse(self.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
+            self.TARGETS = self.ParseGoals(self.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
 
         if 'BANDS' in self.configFile:
-            self.BANDS = [int(Band)  for Band in Split(self.configFile['BANDS'])]
+            self.BANDS = [int(Band)  for Band in cUtil.Split(self.configFile['BANDS'])]
 
         if 'FRIENDS' in self.configFile:
-            self.FRIENDS = [friend  for friend in Split(self.configFile['FRIENDS'])]
+            self.FRIENDS = [friend  for friend in cUtil.Split(self.configFile['FRIENDS'])]
 
         if 'EXCLUSIONS' in self.configFile:
-            self.EXCLUSIONS = [friend  for friend in Split(self.configFile['EXCLUSIONS'])]
+            self.EXCLUSIONS = [friend  for friend in cUtil.Split(self.configFile['EXCLUSIONS'])]
 
         if 'LOG_FILE' in self.configFile:
             logFile = self.configFile['LOG_FILE']
@@ -306,7 +290,7 @@ class cConfig:
                 self.NOTIFICATION.ENABLED = bool(notification['ENABLED'])
 
             if 'CONDITION' in notification:
-                conditions = Split(notification['CONDITION'])
+                conditions = cUtil.Split(notification['CONDITION'])
 
                 for condition in conditions:
                     if condition not in ['goals', 'targets', 'friends']:
@@ -370,7 +354,7 @@ class cConfig:
         if args.adi:
             self.ADI_FILE = args.adi
         if args.bands:
-            self.BANDS = [int(band) for band in Split(args.bands)]
+            self.BANDS = [int(band) for band in cUtil.Split(args.bands)]
         if args.brag_months:
             self.BRAG_MONTHS = args.brag_months
         if args.callsign:
@@ -378,7 +362,7 @@ class cConfig:
         if args.distance_units:
             self.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            self.GOALS = self.Parse(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y", "goal")
+            self.GOALS = self.ParseGoals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y", "goal")
         if args.logfile:
             self.LOG_FILE.ENABLED = True
             self.LOG_FILE.DELETE_ON_STARTUP = True
@@ -392,8 +376,7 @@ class cConfig:
         if args.sked:
             self.SKED.ENABLED = args.sked == "on"
         if args.targets:
-            self.TARGETS = self.Parse(args.targets, "C CXN T TXN S SXN", "target")
-
+            self.TARGETS = self.ParseGoals(args.targets, "C CXN T TXN S SXN", "target")
 
     def _ValidateConfig(self):
         #
@@ -536,32 +519,31 @@ class cConfig:
         print('')
         sys.exit()
 
-    def Parse(self, String: str, ALL_str: str, Type: str) -> list[str]:
-        ALL  = ALL_str.split()
-        List = Split(String.upper())
+    def ParseGoals(self, String: str, ALL_str: str, Type: str) -> list[str]:
+        ALL    = ALL_str.split()
+        parsed = cUtil.Split(String.upper())
 
-        for x in List:
+        for x in parsed:
             if x == 'ALL':
                 return ALL
 
             if x == 'NONE':
                 return []
 
-            if x == 'CXN' and 'C' not in List:
-                List.append('C')
+            if x == 'CXN' and 'C' not in parsed:
+                parsed.append('C')
 
-            if x == 'TXN' and 'T' not in List:
-                List.append('T')
+            if x == 'TXN' and 'T' not in parsed:
+                parsed.append('T')
 
-            if x == 'SXN' and 'S' not in List:
-                List.append('S')
+            if x == 'SXN' and 'S' not in parsed:
+                parsed.append('S')
 
             if x not in ALL:
                 print(f"Unrecognized {Type} '{x}'.")
                 sys.exit()
 
-        return List
-
+        return parsed
 
 class cFastDateTime:
     FastDateTime: str
@@ -679,10 +661,6 @@ class cDisplay:
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
         eventLoop.create_task(cls.DotsLoop())
 
-def Beep() -> None:
-    sys.stdout.write('\a')
-    sys.stdout.flush()
-
 class cSked:
     RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
     SkedSite = None
@@ -710,14 +688,14 @@ class cSked:
 
             Report: list[str] = [BuildMemberInfo(CallSign)]
 
-            if CallSign in cRBN.LastSpotted:
-                FrequencyKHz, StartTime = cRBN.LastSpotted[CallSign]
+            if CallSign in cSPOTS.LastSpotted:
+                FrequencyKHz, StartTime = cSPOTS.LastSpotted[CallSign]
 
                 Now = time.time()
                 DeltaSeconds = max(int(Now - StartTime), 1)
 
                 if DeltaSeconds > config.SPOT_PERSISTENCE_MINUTES * 60:
-                    del cRBN.LastSpotted[CallSign]
+                    del cSPOTS.LastSpotted[CallSign]
                 elif DeltaSeconds > 60:
                     DeltaMinutes = DeltaSeconds // 60
                     Units = 'minutes' if DeltaMinutes > 1 else 'minute'
@@ -809,7 +787,7 @@ class cSked:
                 Report.append('friend')
 
             if Status:
-                Report.append(f'STATUS: {Stripped(Status)}')
+                Report.append(f'STATUS: {cUtil.Stripped(Status)}')
 
             if TargetList or GoalList or IsFriend:
                 SkedHit[CallSign] = Report
@@ -824,20 +802,20 @@ class cSked:
             else:
                 NewLogins = list(set(SkedHit)-set(cls.PreviousLogins))
 
-            Display.Print('=========== '+Heading+' Sked Page '+'=' * (16-len(Heading)))
+            cDisplay.Print('=========== '+Heading+' Sked Page '+'=' * (16-len(Heading)))
 
             for CallSign in sorted(SkedHit):
                 if CallSign in NewLogins:
                     if config.NOTIFICATION.ENABLED:
                         if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
-                            Beep()
+                            cUtil.Beep()
 
                     NewIndicator = '+'
                 else:
                     NewIndicator = ' '
 
                 Out = f'{ZuluTime}{NewIndicator}{CallSign:<6} {"; ".join(SkedHit[CallSign])}'
-                Display.Print(Out)
+                cDisplay.Print(Out)
                 Log(f'{ZuluDate} {Out}')
 
         return SkedHit
@@ -867,7 +845,7 @@ class cSked:
             cls.FirstPass = False
 
             if Hits:
-                Display.Print('=======================================')
+                cDisplay.Print('=======================================')
         except:
             print(f"\nProblem retrieving information from the Sked Page.  Skipping...")
 
@@ -881,7 +859,7 @@ class cSked:
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
         eventLoop.create_task(cls.RunForever())
 
-class cRBN:
+class cSPOTS:
     LastSpotted: dict[str, tuple[float, float]] = {}
     Notified: dict[str, float] = {}
 
@@ -890,9 +868,8 @@ class cRBN:
 
     @classmethod
     async def HandleSpots(cls) -> None:
-        """Broadcast messages to all authenticated clients using the async generator."""
-        async for data in DxClient.feed_generator():
-            cRBN.HandleSpot(data.rstrip().decode('ascii'))
+        async for data in cRBN.feed_generator():
+            cSPOTS.HandleSpot(data.rstrip().decode('ascii'))
 
     @staticmethod
     def ParseSpot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
@@ -920,11 +897,11 @@ class cRBN:
         if Beacon == 'BEACON':
             return None
 
-        if not cRBN.Zulu_RegEx.match(Zulu):
+        if not cSPOTS.Zulu_RegEx.match(Zulu):
             LogError(Line)
             return None
 
-        if not cRBN.dB_RegEx.match(Line[47:52]):
+        if not cSPOTS.dB_RegEx.match(Line[47:52]):
             LogError(Line)
             return None
 
@@ -961,7 +938,7 @@ class cRBN:
         if CallSign not in cls.Notified:
             if config.NOTIFICATION.ENABLED:
                 if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
-                    Beep()
+                    cUtil.Beep()
 
             NotificationFlag = '+'
             cls.Notified[CallSign] = Now + config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
@@ -973,7 +950,7 @@ class cRBN:
         if config.VERBOSE:
             print(f'   {Line}')
 
-        Spot = cRBN.ParseSpot(Line)
+        Spot = cSPOTS.ParseSpot(Line)
 
         if not Spot:
             return
@@ -1007,7 +984,7 @@ class cRBN:
                 Miles = Spotters.GetDistance(Spotter)
 
                 MilesDisplay      = f'{Miles}mi'
-                KilometersDisplay = f'{Miles2Km(Miles)}km'
+                KilometersDisplay = f'{cUtil.Miles2Km(Miles)}km'
                 Distance          = MilesDisplay if config.DISTANCE_UNITS == 'mi' else KilometersDisplay
 
                 Report.append(f'by {Spotter}({Distance}, {int(dB)}dB)')
@@ -1076,7 +1053,7 @@ class cRBN:
         #-------------
 
         if (SpottedNearby and (GoalList or TargetList)) or You or IsFriend:
-            cRBN.LastSpotted[CallSign] = (FrequencyKHz, time.time())
+            cSPOTS.LastSpotted[CallSign] = (FrequencyKHz, time.time())
 
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
 
@@ -1106,7 +1083,7 @@ class cRBN:
                 NotificationFlag = cls.HandleNotification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
-            Display.Print(Out)
+            cDisplay.Print(Out)
             Log(f'{ZuluDate} {Out}')
 
 class cQSO:
@@ -1149,11 +1126,11 @@ class cQSO:
         self.ReadQSOs()
 
         MyMemberEntry       = SKCC.Members[config.MY_CALLSIGN]
-        self.MyJoin_Date    = Effective(MyMemberEntry['join_date'])
-        self.MyC_Date       = Effective(MyMemberEntry['c_date'])
-        self.MyT_Date       = Effective(MyMemberEntry['t_date'])
-        self.MyS_Date       = Effective(MyMemberEntry['s_date'])
-        self.MyTX8_Date     = Effective(MyMemberEntry['tx8_date'])
+        self.MyJoin_Date    = cUtil.Effective(MyMemberEntry['join_date'])
+        self.MyC_Date       = cUtil.Effective(MyMemberEntry['c_date'])
+        self.MyT_Date       = cUtil.Effective(MyMemberEntry['t_date'])
+        self.MyS_Date       = cUtil.Effective(MyMemberEntry['s_date'])
+        self.MyTX8_Date     = cUtil.Effective(MyMemberEntry['tx8_date'])
 
         self.MyMemberNumber = MyMemberEntry['plain_number']
 
@@ -1161,7 +1138,7 @@ class cQSO:
     async def WatchLogFile(cls):
         while True:
             if os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
-                Display.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
+                cDisplay.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
                 # Once we detect the file has changed, we can't necessarily read it
                 # immediately because the logger may still be writing to it, so we wait
@@ -1269,7 +1246,7 @@ class cQSO:
 
     def ReadQSOs(self) -> None:
         AdiFileAbsolute = os.path.abspath(config.ADI_FILE)
-        Display.Print(f"\nReading QSOs for {config.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
+        cDisplay.Print(f"\nReading QSOs for {config.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
         self.QSOs = []
 
@@ -1429,9 +1406,9 @@ class cQSO:
             return []
 
         TheirMemberEntry  = SKCC.Members[TheirCallSign]
-        TheirC_Date       = Effective(TheirMemberEntry['c_date'])
-        TheirT_Date       = Effective(TheirMemberEntry['t_date'])
-        TheirS_Date       = Effective(TheirMemberEntry['s_date'])
+        TheirC_Date       = cUtil.Effective(TheirMemberEntry['c_date'])
+        TheirT_Date       = cUtil.Effective(TheirMemberEntry['t_date'])
+        TheirS_Date       = cUtil.Effective(TheirMemberEntry['s_date'])
         TheirMemberNumber = TheirMemberEntry['plain_number']
 
         List: list[str] = []
@@ -1526,11 +1503,11 @@ class cQSO:
             return []
 
         TheirMemberEntry  = SKCC.Members[TheirCallSign]
-        TheirJoin_Date    = Effective(TheirMemberEntry['join_date'])
-        TheirC_Date       = Effective(TheirMemberEntry['c_date'])
-        TheirT_Date       = Effective(TheirMemberEntry['t_date'])
-        TheirTX8_Date     = Effective(TheirMemberEntry['tx8_date'])
-        TheirS_Date       = Effective(TheirMemberEntry['s_date'])
+        TheirJoin_Date    = cUtil.Effective(TheirMemberEntry['join_date'])
+        TheirC_Date       = cUtil.Effective(TheirMemberEntry['c_date'])
+        TheirT_Date       = cUtil.Effective(TheirMemberEntry['t_date'])
+        TheirTX8_Date     = cUtil.Effective(TheirMemberEntry['tx8_date'])
+        TheirS_Date       = cUtil.Effective(TheirMemberEntry['s_date'])
         TheirMemberNumber = TheirMemberEntry['plain_number']
 
         List: list[str] = []
@@ -1653,7 +1630,7 @@ class cQSO:
             fastQsoDate = cFastDateTime(QsoDate)
 
             if fastStartOfMonth < fastQsoDate < fastEndOfMonth:
-                TheirJoin_Date = Effective(TheirMemberEntry['join_date'])
+                TheirJoin_Date = cUtil.Effective(TheirMemberEntry['join_date'])
 
                 if TheirJoin_Date and TheirJoin_Date < QsoDate:
                     DuringSprint = cSKCC.DuringSprint(fastQsoDate)
@@ -1726,10 +1703,10 @@ class cQSO:
             MainCallSign = SKCC.Members[QsoCallSign]['main_call']
 
             TheirMemberEntry  = SKCC.Members[MainCallSign]
-            TheirJoin_Date    = Effective(TheirMemberEntry['join_date'])
-            TheirC_Date       = Effective(TheirMemberEntry['c_date'])
-            TheirT_Date       = Effective(TheirMemberEntry['t_date'])
-            TheirS_Date       = Effective(TheirMemberEntry['s_date'])
+            TheirJoin_Date    = cUtil.Effective(TheirMemberEntry['join_date'])
+            TheirC_Date       = cUtil.Effective(TheirMemberEntry['c_date'])
+            TheirT_Date       = cUtil.Effective(TheirMemberEntry['t_date'])
+            TheirS_Date       = cUtil.Effective(TheirMemberEntry['s_date'])
 
             TheirMemberNumber = TheirMemberEntry['plain_number']
 
@@ -2175,7 +2152,6 @@ class cSpotters:
         Miles, _ = self.Spotters[Spotter]
         return Miles
 
-
 class cSKCC:
     CenturionLevel: dict[str, int]
     TribuneLevel: dict[str, int]
@@ -2506,39 +2482,24 @@ class cSKCC:
 
     @staticmethod
     def WhichArrlBand(FrequencyKHz: float) -> int | None:
-        if 1800 < FrequencyKHz < 2000:
-            return 160
+        band_ranges = [
+            (160,  1800,  2000),
+            ( 80,  3500,  3600),
+            ( 40,  7000,  7125),
+            ( 30, 10100, 10150),
+            ( 20, 14000, 14150),
+            ( 17, 18068, 18168),
+            ( 15, 21000, 21450),
+            ( 12, 24890, 24990),
+            ( 10, 28000, 29700),
+            (  6, 50000, 54000),
+        ]
 
-        elif 3500 < FrequencyKHz < 3600:
-            return 80
+        for band, lower, upper in band_ranges:
+            if lower < FrequencyKHz < upper:
+                return band
 
-        elif 7000 < FrequencyKHz < 7125:
-            return 40
-
-        elif 10100 < FrequencyKHz < 10150:
-            return 30
-
-        elif 14000 < FrequencyKHz < 14150:
-            return 20
-
-        elif 18068 < FrequencyKHz < 18168:
-            return 17
-
-        elif 21000 < FrequencyKHz < 21450:
-            return 15
-
-        elif 24890 < FrequencyKHz < 24990:
-            return 12
-
-        elif 28000 < FrequencyKHz < 29700:
-            return 10
-
-        elif 50000 < FrequencyKHz < 54000:
-            return 6
-
-        else:
-            return None
-
+        return None
 
     @staticmethod
     def IsOnWarcFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
@@ -2561,16 +2522,16 @@ class cSKCC:
         Suffix = ''
         Level  = 1
 
-        if Effective(Entry['s_date']):
+        if cUtil.Effective(Entry['s_date']):
             Suffix = 'S'
             Level = self.SenatorLevel[MemberNumber]
-        elif Effective(Entry['t_date']):
+        elif cUtil.Effective(Entry['t_date']):
             Suffix = 'T'
             Level = self.TribuneLevel[MemberNumber]
 
-            if Level == 8 and not Effective(Entry['tx8_date']):
+            if Level == 8 and not cUtil.Effective(Entry['tx8_date']):
                 Level = 7
-        elif Effective(Entry['c_date']):
+        elif cUtil.Effective(Entry['c_date']):
             Suffix = 'C'
             Level = self.CenturionLevel[MemberNumber]
 
@@ -2664,7 +2625,7 @@ def Lookups(LookupString: str) -> None:
 
         print(f'  {CallSign} - {"; ".join(Report)}')
 
-    LookupList = Split(LookupString.upper())
+    LookupList = cUtil.Split(LookupString.upper())
 
     for Item in LookupList:
         Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
@@ -2703,10 +2664,9 @@ def FileCheck(Filename: str) -> None | NoReturn:
     print('')
     sys.exit()
 
-class DxClient:
+class cRBN:
     @staticmethod
     async def feed_generator() -> AsyncGenerator[bytes, None]:
-        """Asynchronous generator that yields data from the DX telnet feed."""
         global spot_count, start_time
 
         reader: asyncio.StreamReader | None = None
@@ -2714,7 +2674,7 @@ class DxClient:
 
         while True:
             try:
-                print(f"Connecting to DX telnet feed at skimmer.skccgroup.com:7000")
+                print(f"Connecting to telnet feed at skimmer.skccgroup.com:7000")
 
                 reader, writer = await asyncio.open_connection('skimmer.skccgroup.com', 7000)
 
@@ -2779,18 +2739,13 @@ ArgV = sys.argv[1:]
 
 config = cConfig(ArgV)
 
-CLUSTERS = 'SKCC RBN'
-
-
 cSKCC.BlockDuringUpdateWindow()
 
-config.MY_CALLSIGN = config.MY_CALLSIGN.upper()
-
 Levels = {
- 'C'  :    100,
- 'T'  :     50,
- 'S'  :    200,
- 'P'  : 500000,
+    'C'  :    100,
+    'T'  :     50,
+    'S'  :    200,
+    'P'  : 500000,
 }
 
 if config.VERBOSE:
@@ -2800,8 +2755,7 @@ signal.signal(signal.SIGINT, signal_handler)
 
 FileCheck(config.ADI_FILE)
 
-Display  = cDisplay()
-SKCC     = cSKCC()
+SKCC = cSKCC()
 
 if config.MY_CALLSIGN not in SKCC.Members:
     print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
@@ -2840,23 +2794,16 @@ if config.INTERACTIVE:
 Spotters = cSpotters()
 Spotters.GetSpotters()
 
-def FormatDistance(Miles: int) -> str:
-    if config.DISTANCE_UNITS == "mi":
-        return f'{Miles}mi'
+nearby_list_with_distance = Spotters.GetNearbySpotters()
+formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.FormatDistance(Miles)})'  for Spotter, Miles in nearby_list_with_distance]
+SPOTTERS_NEARBY = [Spotter  for Spotter, _ in nearby_list_with_distance]
 
-    return f'{Miles2Km(Miles)}km'
+print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
 
+wrapped_spotter_lines = textwrap.wrap(', '.join(formatted_nearby_list_with_distance), width=80)
 
-NearbyList = Spotters.GetNearbySpotters()
-SpotterList = [f'{Spotter}({FormatDistance(Miles)})'  for Spotter, Miles in NearbyList]
-SPOTTERS_NEARBY = [Spotter  for Spotter, _ in NearbyList]
-
-print(f'  Found {len(SpotterList)} spotters:')
-
-List = textwrap.wrap(', '.join(SpotterList), width=80)
-
-for Element in List:
-    print(f'    {Element}')
+for spotter_line in wrapped_spotter_lines:
+    print(f'    {spotter_line}')
 
 
 if config.LOG_FILE.DELETE_ON_STARTUP:
@@ -2874,7 +2821,7 @@ asyncio.set_event_loop(eventLoop)
 
 cQSO.Start(eventLoop)
 
-eventLoop.create_task(cRBN.HandleSpots())
+eventLoop.create_task(cSPOTS.HandleSpots())
 
 if config.SKED.ENABLED:
     cSked.Start(eventLoop)
