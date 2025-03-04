@@ -75,12 +75,14 @@ from datetime import timedelta
 from datetime import datetime
 
 from types         import FrameType
-from typing        import Any, NoReturn, Literal, TypedDict, get_args, Final
+from typing        import Any, NoReturn, Literal, get_args, Final
 
 from math          import radians, sin, cos, atan2, sqrt
 
 import argparse
 from collections.abc   import AsyncGenerator
+
+from dataclasses import dataclass, field
 
 import asyncio
 import signal
@@ -124,41 +126,91 @@ class cUtil:
         return f'{cUtil.Miles2Km(Miles)}km'
 
 class cConfig:
+    @dataclass
     class cProgressDots:
-        ENABLED:         bool
-        DISPLAY_SECONDS: int
-        DOTS_PER_LINE:   int
-    PROGRESS_DOTS = cProgressDots()
+        ENABLED:         bool = True
+        DISPLAY_SECONDS: int  = 10
+        DOTS_PER_LINE:   int  = 30
+    def init_progress_dots(self):
+        progress_config = self.configFile.get("PROGRESS_DOTS", {})
+        self.PROGRESS_DOTS = cConfig.cProgressDots(
+            ENABLED         = bool(progress_config.get("ENABLED", cConfig.cProgressDots.ENABLED)),
+            DISPLAY_SECONDS = progress_config.get("DISPLAY_SECONDS", cConfig.cProgressDots.DISPLAY_SECONDS),
+            DOTS_PER_LINE   =  progress_config.get("DOTS_PER_LINE", cConfig.cProgressDots.DOTS_PER_LINE),
+        )
 
+    @dataclass
     class cLogFile:
-        FILE_NAME:         str
-        ENABLED:           bool
-        LOG_FILE:          str
-        DELETE_ON_STARTUP: bool
-    LOG_FILE = cLogFile()
+        FILE_NAME:         str | None = None
+        ENABLED:           bool = True
+        LOG_FILE:          str | None = None
+        DELETE_ON_STARTUP: bool = False
+    def init_logfile(self):
+        log_file_config = self.configFile.get("LOG_FILE", {})
+        self.LOG_FILE = cConfig.cLogFile(
+            ENABLED           = bool(log_file_config.get("ENABLED", cConfig.cLogFile.ENABLED)),
+            FILE_NAME         = log_file_config.get("FILE_NAME", cConfig.cLogFile.FILE_NAME),
+            DELETE_ON_STARTUP = bool(log_file_config.get("DELETE_ON_STARTUP", cConfig.cLogFile.DELETE_ON_STARTUP))
+        )
 
+    @dataclass
     class cHighWpm:
         tAction = Literal['suppress', 'warn', 'always-display']
-        ACTION: tAction
-        THRESHOLD: int
-    HIGH_WPM = cHighWpm
+        ACTION: tAction = 'always-display'
+        THRESHOLD: int = 15
+    def init_high_wpm(self):
+        high_wpm_config = self.configFile.get("HIGH_WPM", {})
+        action: cConfig.cHighWpm.tAction = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
+        if action not in get_args(cConfig.cHighWpm.tAction):
+            print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.cHighWpm.tAction)}.")
+            action = cConfig.cHighWpm.ACTION
 
+        self.HIGH_WPM = cConfig.cHighWpm(
+            ACTION    = action,
+            THRESHOLD = int(high_wpm_config.get("THRESHOLD", cConfig.cHighWpm.THRESHOLD))
+        )
+
+    @dataclass
     class cOffFrequency:
-        ACTION:    Literal['suppress', 'warn']
-        TOLERANCE: int
-    OFF_FREQUENCY = cOffFrequency()
+        ACTION:    Literal['suppress', 'warn'] = 'suppress'
+        TOLERANCE: int = 0
+    def init_off_frequency(self):
+        off_frequency_config = self.configFile.get("OFF_FREQUENCY", {})
+        self.OFF_FREQUENCY = cConfig.cOffFrequency(
+            ACTION    =     off_frequency_config.get("ACTION",    cConfig.cOffFrequency.ACTION),
+            TOLERANCE = int(off_frequency_config.get("TOLERANCE", cConfig.cOffFrequency.TOLERANCE))
+        )
 
+
+    @dataclass
     class cSked:
-        ENABLED:       bool
-        CHECK_SECONDS: int
-    SKED = cSked
+        ENABLED:       bool = True
+        CHECK_SECONDS: int  = 60
+    def init_sked(self):
+        sked_config = self.configFile.get("SKED", {})
+        self.SKED = cConfig.cSked(
+            ENABLED       = sked_config.get("ENABLED",       cConfig.cSked.ENABLED),
+            CHECK_SECONDS = sked_config.get("CHECK_SECONDS", cConfig.cSked.CHECK_SECONDS),
+        )
 
+    @dataclass
     class cNotification:
-        ENABLED:                      bool
-        CONDITION:                    list[str]   # list[Literal['goals', 'targets', 'friends']]
-        RENOTIFICATION_DELAY_SECONDS: int
-    NOTIFICATION = cNotification
-
+        DEFAULT_CONDITION = ['goals', 'targets', 'friends']  # ✅ Class-level default
+        ENABLED: bool = True
+        CONDITION: list[str] = field(default_factory=lambda: cConfig.cNotification.DEFAULT_CONDITION)
+        RENOTIFICATION_DELAY_SECONDS: int = 30
+    def init_notifications(self):
+        notification_config = self.configFile.get("NOTIFICATION", {})
+        conditions = cUtil.Split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # ✅ Use DEFAULT_CONDITION
+        invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
+        if invalid_conditions:
+            print(f"Invalid NOTIFICATION CONDITION(s): {invalid_conditions}. Must be 'goals', 'targets', or 'friends'.")
+            sys.exit()
+        self.NOTIFICATION = cConfig.cNotification(
+            ENABLED                      = bool(notification_config.get("ENABLED", cConfig.cNotification.ENABLED)),
+            CONDITION                    = conditions,
+            RENOTIFICATION_DELAY_SECONDS = int(notification_config.get("RENOTIFICATION_DELAY_SECONDS", cConfig.cNotification.RENOTIFICATION_DELAY_SECONDS))
+        )
 
     MY_CALLSIGN:              str
     ADI_FILE:                 str
@@ -176,11 +228,6 @@ class cConfig:
     K3Y_YEAR:                 int
 
     configFile: dict[str, Any]
-
-    class TypedConfig(TypedDict):
-        HIGH_WPM: 'cConfig.cHighWpm'
-
-    configFile2: TypedConfig
 
     def __init__(self, ArgV: list[str]):
         def ReadSkccSkimmerCfg() -> dict[str, Any]:
@@ -216,73 +263,12 @@ class cConfig:
         if 'EXCLUSIONS' in self.configFile:
             self.EXCLUSIONS = [friend  for friend in cUtil.Split(self.configFile['EXCLUSIONS'])]
 
-        if 'LOG_FILE' in self.configFile:
-            logFile = self.configFile['LOG_FILE']
-
-            if 'ENABLED' in logFile:
-                self.LOG_FILE.ENABLED = bool(logFile['ENABLED'])
-
-            if 'FILE_NAME' in logFile:
-                self.LOG_FILE.FILE_NAME = logFile['FILE_NAME']
-
-            if 'DELETE_ON_STARTUP' in logFile:
-                self.LOG_FILE.DELETE_ON_STARTUP = logFile['DELETE_ON_STARTUP']
-
-
-        if 'PROGRESS_DOTS' in self.configFile:
-            progressDots = self.configFile['PROGRESS_DOTS']
-            self.PROGRESS_DOTS.ENABLED = bool(progressDots.get('ENABLED', False))
-            self.PROGRESS_DOTS.DISPLAY_SECONDS = progressDots.get('DISPLAY_SECONDS', 0)
-            self.PROGRESS_DOTS.DOTS_PER_LINE = progressDots.get('DOTS_PER_LINE', 0)
-
-        if 'SKED' in self.configFile:
-            sked = self.configFile['SKED']
-
-            if 'ENABLED' in sked:
-                self.SKED.ENABLED = bool(sked['ENABLED'])
-
-            if 'CHECK_SECONDS' in sked:
-                self.SKED.CHECK_SECONDS = int(sked['CHECK_SECONDS'])
-
-        if 'OFF_FREQUENCY' in self.configFile:
-            offFrequency = self.configFile['OFF_FREQUENCY']
-            self.OFF_FREQUENCY.ACTION = offFrequency.get('ACTION', 'suppress')  # Default to 'suppress'
-            self.OFF_FREQUENCY.TOLERANCE = int(offFrequency.get('TOLERANCE', 0))  # Default to 0
-
-        if 'HIGH_WPM' in self.configFile:
-            highWpm = self.configFile['HIGH_WPM']
-
-            if 'ACTION' in highWpm:
-                action: cConfig.cHighWpm.tAction = highWpm['ACTION']
-
-                if action not in get_args(cConfig.cHighWpm.tAction):
-                    print(f"Must be one of {get_args(cConfig.cHighWpm.tAction)}.")
-
-                self.HIGH_WPM.ACTION = action
-
-            if 'THRESHOLD' in highWpm:
-                self.HIGH_WPM.THRESHOLD = int(highWpm['THRESHOLD'])
-
-        if 'NOTIFICATION' in self.configFile:
-            notification = self.configFile['NOTIFICATION']
-
-            if 'ENABLED' in notification:
-                self.NOTIFICATION.ENABLED = bool(notification['ENABLED'])
-
-            if 'CONDITION' in notification:
-                conditions = cUtil.Split(notification['CONDITION'])
-
-                for condition in conditions:
-                    if condition not in ['goals', 'targets', 'friends']:
-                        print(f"NOTIFICATION CONDITION '{condition}' must be 'goals' and/or 'targets' and/or 'friends'")
-                        sys.exit()
-
-                self.NOTIFICATION.CONDITION = conditions
-
-            if 'THRESHOLD' in notification:
-                self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = int(notification['RENOTIFICATION_DELAY_SECONDS'])
-            else:
-                self.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS = 30
+        self.init_logfile()
+        self.init_progress_dots()
+        self.init_sked()
+        self.init_notifications()
+        self.init_off_frequency()
+        self.init_high_wpm()
 
         if 'VERBOSE' in self.configFile:
             self.VERBOSE = bool(self.configFile['VERBOSE'])
@@ -305,7 +291,6 @@ class cConfig:
             self.K3Y_YEAR = datetime.now().year
 
         self._ParseArgs(ArgV)
-
         self._ValidateConfig()
 
     def _ParseArgs(self, ArgV: list[str]) -> None:
@@ -2071,7 +2056,7 @@ class cSpotters:
             BandList = [int(x[:-1]) for x in bandStringCsv.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
             return BandList
 
-        print(f"\nFinding RBN Spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
+        print(f"\nFinding RBN spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
         response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
 
@@ -2523,7 +2508,7 @@ class cSKCC:
         return (MemberNumber, Suffix)
 
 def Log(Line: str) -> None:
-    if config.LOG_FILE.ENABLED:
+    if config.LOG_FILE.ENABLED and config.LOG_FILE.FILE_NAME is not None:
         with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
             File.write(Line + '\n')
 
@@ -2790,7 +2775,7 @@ for spotter_line in wrapped_spotter_lines:
 if config.LOG_FILE.DELETE_ON_STARTUP:
     Filename = config.LOG_FILE.FILE_NAME
 
-    if os.path.exists(Filename):
+    if Filename is not None and os.path.exists(Filename):
         os.remove(Filename)
 
 
@@ -2802,5 +2787,7 @@ cQSO.Start(eventLoop)
 cSPOTS.Start(eventLoop)
 cDisplay.Start(eventLoop)
 cSked.Start(eventLoop) if config.SKED.ENABLED else None
+
+print('')
 
 eventLoop.run_forever()  # Keep the loop running until stopped
