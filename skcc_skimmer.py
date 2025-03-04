@@ -75,7 +75,7 @@ from datetime import timedelta
 from datetime import datetime
 
 from types         import FrameType
-from typing        import Any, NoReturn, Literal, TypedDict, get_args
+from typing        import Any, NoReturn, Literal, TypedDict, get_args, Final
 
 from math          import radians, sin, cos, atan2, sqrt
 
@@ -106,7 +106,6 @@ class cUtil:
     @staticmethod
     def Miles2Km(Miles: int) -> int:
         return round(Miles * 1.609344)
-
 
     @staticmethod
     def Stripped(text: str) -> str:
@@ -195,7 +194,6 @@ class cConfig:
 
         self.configFile = ReadSkccSkimmerCfg()
 
-
         self.MY_CALLSIGN = self.configFile.get('MY_CALLSIGN', '')
         self.ADI_FILE = self.configFile.get('ADI_FILE', '')
         self.MY_GRIDSQUARE = self.configFile.get('MY_GRIDSQUARE', '')
@@ -236,7 +234,6 @@ class cConfig:
             self.PROGRESS_DOTS.ENABLED = bool(progressDots.get('ENABLED', False))
             self.PROGRESS_DOTS.DISPLAY_SECONDS = progressDots.get('DISPLAY_SECONDS', 0)
             self.PROGRESS_DOTS.DOTS_PER_LINE = progressDots.get('DOTS_PER_LINE', 0)
-
 
         if 'SKED' in self.configFile:
             sked = self.configFile['SKED']
@@ -647,7 +644,7 @@ class cDisplay:
         eventLoop.create_task(cls.DotsLoop())
 
 class cSked:
-    RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    RegEx: Final = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
     SkedSite = None
 
     PreviousLogins = {}
@@ -2146,12 +2143,12 @@ class cSKCC:
     TribuneLevel: dict[str, int]
     SenatorLevel: dict[str, int]
 
-    MonthAbbreviations = {
+    MonthAbbreviations: Final[dict[str, int]] = {
         'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4,  'May':5,  'Jun':6,
         'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
     }
 
-    CallingFrequenciesKHz: dict[int, list[float]] = {
+    CallingFrequenciesKHz: Final[dict[int, list[float]]] = {
         160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
@@ -2471,7 +2468,7 @@ class cSKCC:
 
     @staticmethod
     def WhichArrlBand(FrequencyKHz: float) -> int | None:
-        band_ranges = [
+        band_ranges: Final[list[tuple[int, int, int]]] = [
             (160,  1800,  2000),
             ( 80,  3500,  3600),
             ( 40,  7000,  7125),
@@ -2562,7 +2559,7 @@ def IsInBANDS(FrequencyKHz: float) -> bool:
     def InRange(Band: int, FrequencyKHz_: float, Low: float, High: float) -> bool:
         return Band in config.BANDS and Low <= FrequencyKHz_ <= High
 
-    bands: dict[int, tuple[float, float]] = {
+    bands: Final[dict[int, tuple[float, float]]] = {
         160: (1800, 2000),
         80:  (3500, 4000),
         60:  (5330.5 - 1.5, 5403.5 + 1.5),
@@ -2663,7 +2660,7 @@ class cRBN:
 
         while True:
             try:
-                print(f"Connecting to telnet feed at skimmer.skccgroup.com:7000")
+                print(f"Connecting to RBN feed...")
 
                 reader, writer = await asyncio.open_connection('skimmer.skccgroup.com', 7000)
 
@@ -2716,7 +2713,7 @@ except ImportError:
 
 print(f'SKCC Skimmer version {VERSION}\n')
 
-US_STATES = [
+US_STATES: Final[list[str]] = [
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
     'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
@@ -2730,7 +2727,7 @@ config = cConfig(ArgV)
 
 cSKCC.BlockDuringUpdateWindow()
 
-Levels = {
+Levels: Final[dict[str, int]] = {
     'C'  :    100,
     'T'  :     50,
     'S'  :    200,
