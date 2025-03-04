@@ -71,20 +71,18 @@
 #   which may require a pip install.
 #
 
-from datetime import timedelta
-from datetime import datetime
+from datetime        import timedelta
+from datetime        import datetime
 
-from types         import FrameType
-from typing        import Any, NoReturn, Literal, get_args, Final
+from types           import FrameType
+from typing          import Any, NoReturn, Literal, get_args, Final
+from math            import radians, sin, cos, atan2, sqrt
 
-from math          import radians, sin, cos, atan2, sqrt
-
-import argparse
-from collections.abc   import AsyncGenerator
-
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator
+from dataclasses     import dataclass, field
 
 import asyncio
+import argparse
 import signal
 import time
 import sys
@@ -181,7 +179,6 @@ class cConfig:
             TOLERANCE = int(off_frequency_config.get("TOLERANCE", cConfig.cOffFrequency.TOLERANCE))
         )
 
-
     @dataclass
     class cSked:
         ENABLED:       bool = True
@@ -227,7 +224,7 @@ class cConfig:
     SPOTTER_RADIUS:           int
     K3Y_YEAR:                 int
 
-    configFile: dict[str, Any]
+    configFile:               dict[str, Any]
 
     def __init__(self, ArgV: list[str]):
         def ReadSkccSkimmerCfg() -> dict[str, Any]:
@@ -831,7 +828,7 @@ class cSPOTS:
 
     @classmethod
     async def HandleSpots(cls) -> None:
-        async for data in cRBN.feed_generator():
+        async for data in cRBN.feed_generator(config.MY_CALLSIGN):
             cSPOTS.HandleSpot(data.rstrip().decode('ascii'))
 
     @staticmethod
@@ -1211,90 +1208,56 @@ class cQSO:
 
         return Remaining, X_Factor
 
+
     def ReadQSOs(self) -> None:
+        """ Reads QSOs from the ADIF log file and processes them efficiently. """
+
         AdiFileAbsolute = os.path.abspath(config.ADI_FILE)
         cDisplay.Print(f"\nReading QSOs for {config.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
         self.QSOs = []
-
         self.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
 
-        with open(AdiFileAbsolute, 'rb') as File:
-            Contents = File.read().decode('utf-8', 'ignore')
+        with open(AdiFileAbsolute, 'rb') as file:
+            Body = re.split(r'<eoh>', file.read().decode('utf-8', 'ignore'), flags=re.I | re.M)[-1].strip(' \t\r\n\x1a')
 
-        _Header, Body = re.split(r'<eoh>', Contents, maxsplit=0, flags=re.I|re.M)
+        Adi_RegEx: Final = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
 
-        Body = Body.strip(' \t\r\n\x1a')  # Include CNTL-Z
+        for record_text in filter(None, map(str.strip, re.split(r'<eor>', Body, flags=re.I | re.M))):
+            record = {k.upper(): v for k, v in Adi_RegEx.findall(record_text)}
 
-        RecordTextList = re.split(r'<eor>', Body, maxsplit=0, flags=re.I|re.M)
+            # Normalize QSO_DATE and TIME_ON fields
+            record.setdefault('QSO_DATE', record.pop('QSO_DATE_OFF', None))
+            record.setdefault('TIME_ON', record.pop('TIME_OFF', None))
 
-        Adi_RegEx = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
-
-        for RecordText in RecordTextList:
-            RecordText = RecordText.strip()
-
-            if not RecordText:
+            if not all(k in record for k in ('CALL', 'QSO_DATE', 'TIME_ON')) or record.get('MODE') != 'CW':
                 continue
 
-            AdiFileMatches = Adi_RegEx.findall(RecordText)
+            # Frequency conversion to kHz (default 0.0 if missing or invalid)
+            fFrequency = float(record.get('FREQ', 0.0)) * 1000 if record.get('FREQ', '').replace('.', '', 1).isdigit() else 0.0
 
-            Record: dict[str, str] = {}
+            # Append QSO data
+            self.QSOs.append((
+                record['QSO_DATE'] + record['TIME_ON'],
+                record['CALL'],
+                record.get('STATE', ''),
+                fFrequency,
+                record.get('COMMENT', '')
+            ))
 
-            for Key, Value in AdiFileMatches:
-                Record[Key.upper()] = Value
+        # Sort QSOs by date
+        self.QSOs.sort(key=lambda qso: qso[0])
 
-            #
-            # ADIF allows for QSO_DATE_OFF without QSO_DATE & TIME_OFF without TIME_ON.
-            #
-            # The Skimmer really doesn't care, so lets normalize and convert QSO_DATE_OFF to QSO_DATE
-            # and TIME_OFF to TIME_ON.
-            #
-            if ('QSO_DATE' not in Record) and ('QSO_DATE_OFF' in Record):
-                Record['QSO_DATE'] = Record['QSO_DATE_OFF']
-                del Record['QSO_DATE_OFF']
-
-            if ('TIME_ON' not in Record) and ('TIME_OFF' in Record):
-                Record['TIME_ON'] = Record['TIME_OFF']
-                del Record['TIME_OFF']
-
-            if not all(x in Record for x in ('CALL', 'QSO_DATE', 'TIME_ON')):
-                print('Warning: ADI record must have CALL, QSO_DATE, and TIME_ON fields. Skipping:')
-                print(RecordText)
+        # Process and map QSOs by member number
+        for qso_date, call_sign, _, _, _ in self.QSOs:
+            call_sign = SKCC.ExtractCallSign(call_sign)
+            if not call_sign or call_sign == 'K3Y':
                 continue
 
-            if 'MODE' in Record and Record['MODE'] != 'CW':
-                continue
+            member_number = SKCC.Members.get(call_sign, {}).get('plain_number')
+            if member_number:
+                self.QSOsByMemberNumber.setdefault(member_number, []).append(qso_date)
 
-            fFrequency = 0.0
-
-            if 'FREQ' in Record:
-                try:
-                    fFrequency = float(Record['FREQ']) * 1000   # kHz
-                except ValueError:
-                    pass
-
-            QsoCallSign = Record['CALL']
-            QsoDate     = Record['QSO_DATE']+Record['TIME_ON']
-            QsoSPC      = Record['STATE'] if 'STATE' in Record else ''
-            QsoFreq     = fFrequency
-            QsoComment  = Record['COMMENT'] if 'COMMENT' in Record else ''
-
-            self.QSOs.append((QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment))
-
-        self.QSOs = sorted(self.QSOs, key=lambda QsoTuple: QsoTuple[0])
-
-        for QsoDate, CallSign, _SPC, _Freq, _Comment in self.QSOs:
-            CallSign = SKCC.ExtractCallSign(CallSign)
-
-            if not CallSign or CallSign == 'K3Y':
-                continue
-
-            MemberNumber = SKCC.Members[CallSign]['plain_number']
-
-            if MemberNumber not in self.QSOsByMemberNumber:
-                self.QSOsByMemberNumber[MemberNumber] = [QsoDate]
-            else:
-                self.QSOsByMemberNumber[MemberNumber].append(QsoDate)
 
     def CalcPrefixPoints(self) -> int:
         iPoints = 0
@@ -2631,47 +2594,37 @@ def FileCheck(Filename: str) -> None | NoReturn:
     print('')
     sys.exit()
 
+
 class cRBN:
     @staticmethod
-    async def feed_generator() -> AsyncGenerator[bytes, None]:
-        global spot_count, start_time
-
-        reader: asyncio.StreamReader | None = None
-        writer: asyncio.StreamWriter | None = None
-
+    async def feed_generator(callsign: str) -> AsyncGenerator[bytes, None]:
         while True:
-            try:
-                print(f"Connecting to RBN feed...")
+            reader: asyncio.StreamReader | None = None
+            writer: asyncio.StreamWriter | None = None
 
+            try:
                 reader, writer = await asyncio.open_connection('skimmer.skccgroup.com', 7000)
 
-                # This handles the initial handshake.
-                data = await reader.readuntil(b"call: ")
-
-                writer.write(f"K7MJG\r\n".encode("ascii"))
+                await reader.readuntil(b"call: ")
+                writer.write(f"{callsign}\r\n".encode("ascii"))
                 await writer.drain()
-
-                data = await reader.readuntil(b">\r\n\r\n")
+                await reader.readuntil(b">\r\n\r\n")
 
                 while True:
-                    data = await reader.readuntil(b'\n')
-                    yield data
-            except (
-                asyncio.IncompleteReadError,
-                ConnectionResetError,
-                BrokenPipeError,
-            ) as e:
-                print(f"DX feed connection error: {e}, reconnecting...")
+                    yield await reader.readuntil(b'\n')
+
+            except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
+                print(f"RBN feed connection error: {e}, reconnecting...")
                 await asyncio.sleep(5)
             except Exception as e:
                 print(f"Unexpected DX feed error: {e}")
             finally:
-                try:
-                    if writer is not None:
-                        writer.close()
+                if writer is not None:
+                    writer.close()
+                    try:
                         await writer.wait_closed()
-                except BaseException:
-                    pass
+                    except Exception:
+                        pass
 
 
 #
@@ -2788,6 +2741,8 @@ cSPOTS.Start(eventLoop)
 cDisplay.Start(eventLoop)
 cSked.Start(eventLoop) if config.SKED.ENABLED else None
 
-print('')
+print()
+print('Running...')
+print()
 
 eventLoop.run_forever()  # Keep the loop running until stopped
