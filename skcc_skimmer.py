@@ -246,12 +246,8 @@ class cConfig:
 
         if 'OFF_FREQUENCY' in self.configFile:
             offFrequency = self.configFile['OFF_FREQUENCY']
-
-            if 'ACTION' in offFrequency:
-                self.OFF_FREQUENCY.ACTION = offFrequency['ACTION']
-
-            if 'TOLERANCE' in offFrequency:
-                self.OFF_FREQUENCY.TOLERANCE = int(offFrequency['TOLERANCE'])
+            self.OFF_FREQUENCY.ACTION = offFrequency.get('ACTION', 'suppress')  # Default to 'suppress'
+            self.OFF_FREQUENCY.TOLERANCE = int(offFrequency.get('TOLERANCE', 0))  # Default to 0
 
         if 'HIGH_WPM' in self.configFile:
             highWpm = self.configFile['HIGH_WPM']
@@ -2802,15 +2798,13 @@ print('Running...')
 print('')
 
 
-
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
 
+# Start workers
 cQSO.Start(eventLoop)
 cSPOTS.Start(eventLoop)
 cDisplay.Start(eventLoop)
-
-if config.SKED.ENABLED:
-    cSked.Start(eventLoop)
+cSked.Start(eventLoop) if config.SKED.ENABLED else None
 
 eventLoop.run_forever()  # Keep the loop running until stopped
