@@ -94,6 +94,9 @@ import calendar
 import json
 import requests
 
+RBN_SERVER = 'skimmer.skccgroup.com'
+RBN_PORT   = 7000
+
 class cUtil:
     @staticmethod
     def Split(text: str) -> list[str]:
@@ -525,7 +528,7 @@ class cFastDateTime:
                 self.FastDateTime = f'{Year:0>4}{Month:0>2}{Day:0>2}000000'
             elif len(Object) == 6:
                 Year, Month, Day, Hour, Minute, Second = Object
-                self.FastDateTime = f'{Year:0>4}{Month:0>2}{Day:0>2}{Hour:0>2}{Minute:0>2}{Second:0>2}'.format(Year, Month, Day, Hour, Minute, Second)
+                self.FastDateTime = f"{Year:04}{Month:02}{Day:02}{Hour:02}{Minute:02}{Second:02}"
 
         elif isinstance(Object, str):
             self.FastDateTime = Object
@@ -687,27 +690,15 @@ class cSked:
                     # Group 2 examples: 7.055   14.055
                     # Group 3 examples: 7055.5  14055.5
                     # Group 4 examples: 7055    14055
-                    Freq_RegEx = r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$"
-                    FreqMatches = re.search(Freq_RegEx, Status)
+                    Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
 
-                    FrequencyKHz: float | None = None
+                    if match := Freq_RegEx.search(Status):
+                        FrequencyStr = match.group(1) or match.group(2) or match.group(3) or match.group(4)
 
-                    if FreqMatches:
-                        if FreqMatches.group(1):
-                            FrequencyStr = FreqMatches.group(1)
-                            FrequencyStr = FrequencyStr.replace('.', '', 1)
-                            FrequencyKHz = float(FrequencyStr)
-                        elif FreqMatches.group(2):
-                            FrequencyStr = FreqMatches.group(2)
-                            FrequencyKHz = float(FrequencyStr) * 1000
-                        elif FreqMatches.group(3):
-                            FrequencyStr = FreqMatches.group(3)
-                            FrequencyKHz = float(FrequencyStr)
-                        elif FreqMatches.group(4):
-                            FrequencyStr = FreqMatches.group(4)
-                            FrequencyKHz = float(FrequencyStr)
+                        if FrequencyStr:
+                            return float(FrequencyStr.replace('.', '', 1)) if match.group(1) else float(FrequencyStr) * (1000 if match.group(2) else 1)
 
-                    return FrequencyKHz
+                    return None
 
                 def Combine(Type: str, Station: str):
                     if Type == 'SKM':
@@ -1208,7 +1199,6 @@ class cQSO:
 
         return Remaining, X_Factor
 
-
     def ReadQSOs(self) -> None:
         """ Reads QSOs from the ADIF log file and processes them efficiently. """
 
@@ -1341,7 +1331,7 @@ class cQSO:
         TheirS_Date       = cUtil.Effective(TheirMemberEntry['s_date'])
         TheirMemberNumber = TheirMemberEntry['plain_number']
 
-        List: list[str] = []
+        GoalHitList: list[str] = []
 
         if 'BRAG' in config.GOALS:
             if TheirMemberNumber not in self.Brag:
@@ -1355,57 +1345,57 @@ class cQSO:
                     BragOkay = not DuringSprint
 
                 if BragOkay:
-                    List.append('BRAG')
+                    GoalHitList.append('BRAG')
 
         if 'C' in config.GOALS and not self.MyC_Date:
             if TheirMemberNumber not in self.ContactsForC:
-                List.append('C')
+                GoalHitList.append('C')
 
         if 'CXN' in config.GOALS and self.MyC_Date:
             if TheirMemberNumber not in self.ContactsForC:
                 _, X_Factor = cQSO.CalculateNumerics('C', len(self.ContactsForC))
-                List.append(AbbreviateClass('C', X_Factor))
+                GoalHitList.append(AbbreviateClass('C', X_Factor))
 
         if 'T' in config.GOALS and self.MyC_Date and not self.MyT_Date:
             if TheirC_Date and TheirMemberNumber not in self.ContactsForT:
-                List.append('T')
+                GoalHitList.append('T')
 
         if 'TXN' in config.GOALS and self.MyT_Date:
             if TheirC_Date and TheirMemberNumber not in self.ContactsForT:
                 _Remaining, X_Factor = cQSO.CalculateNumerics('T', len(self.ContactsForT))
-                List.append(AbbreviateClass('T', X_Factor))
+                GoalHitList.append(AbbreviateClass('T', X_Factor))
 
         if 'S' in config.GOALS and self.MyTX8_Date and not self.MyS_Date:
             if TheirT_Date and TheirMemberNumber not in self.ContactsForS:
-                List.append('S')
+                GoalHitList.append('S')
 
         if 'SXN' in config.GOALS and self.MyS_Date:
             if TheirT_Date and TheirMemberNumber not in self.ContactsForS:
                 _Remaining, X_Factor = cQSO.CalculateNumerics('S', len(self.ContactsForS))
-                List.append(AbbreviateClass('S', X_Factor))
+                GoalHitList.append(AbbreviateClass('S', X_Factor))
 
         if 'WAS' in config.GOALS:
             SPC = TheirMemberEntry['spc']
             if SPC in US_STATES and SPC not in self.ContactsForWAS:
-                List.append('WAS')
+                GoalHitList.append('WAS')
 
         if 'WAS-C' in config.GOALS:
             if TheirC_Date:
                 SPC = TheirMemberEntry['spc']
                 if SPC in US_STATES and SPC not in self.ContactsForWAS_C:
-                    List.append('WAS-C')
+                    GoalHitList.append('WAS-C')
 
         if 'WAS-T' in config.GOALS:
             if TheirT_Date:
                 SPC = TheirMemberEntry['spc']
                 if SPC in US_STATES and SPC not in self.ContactsForWAS_T:
-                    List.append('WAS-T')
+                    GoalHitList.append('WAS-T')
 
         if 'WAS-S' in config.GOALS:
             if TheirS_Date:
                 SPC = TheirMemberEntry['spc']
                 if SPC in US_STATES and SPC not in self.ContactsForWAS_S:
-                    List.append('WAS-S')
+                    GoalHitList.append('WAS-S')
 
         if 'P' in config.GOALS:
             Match = cQSO.Prefix_RegEx.match(TheirCallSign)
@@ -1419,11 +1409,11 @@ class cQSO:
                     iCurrentMemberNumber = self.ContactsForP[Prefix][2]
 
                     if iTheirMemberNumber > iCurrentMemberNumber:
-                        List.append(f'{AbbreviateClass("P", X_Factor)}(+{iTheirMemberNumber - iCurrentMemberNumber})')
+                        GoalHitList.append(f'{AbbreviateClass("P", X_Factor)}(+{iTheirMemberNumber - iCurrentMemberNumber})')
                 else:
-                    List.append(f'{AbbreviateClass("P", X_Factor)}(new +{iTheirMemberNumber})')
+                    GoalHitList.append(f'{AbbreviateClass("P", X_Factor)}(new +{iTheirMemberNumber})')
 
-        return List
+        return GoalHitList
 
     def GetTargetHits(self, TheirCallSign: str) -> list[str]:
         if TheirCallSign not in SKCC.Members:
@@ -1440,7 +1430,7 @@ class cQSO:
         TheirS_Date       = cUtil.Effective(TheirMemberEntry['s_date'])
         TheirMemberNumber = TheirMemberEntry['plain_number']
 
-        List: list[str] = []
+        TargetHitList: list[str] = []
 
         if 'C' in config.TARGETS and not TheirC_Date:
             if TheirMemberNumber in self.QSOsByMemberNumber:
@@ -1448,9 +1438,9 @@ class cQSO:
                     if QsoDate > TheirJoin_Date and QsoDate > self.MyJoin_Date:
                         break
                 else:
-                    List.append('C')
+                    TargetHitList.append('C')
             else:
-                List.append('C')
+                TargetHitList.append('C')
 
         if 'CXN' in config.TARGETS and TheirC_Date:
             NextLevel = SKCC.CenturionLevel[TheirMemberNumber]+1
@@ -1461,9 +1451,9 @@ class cQSO:
                         if QsoDate > TheirJoin_Date and QsoDate > self.MyJoin_Date:
                             break
                     else:
-                        List.append(f'Cx{NextLevel}')
+                        TargetHitList.append(f'Cx{NextLevel}')
                 else:
-                    List.append(f'Cx{NextLevel}')
+                    TargetHitList.append(f'Cx{NextLevel}')
 
         if 'T' in config.TARGETS and TheirC_Date and not TheirT_Date and self.MyC_Date:
             if TheirMemberNumber in self.QSOsByMemberNumber:
@@ -1471,9 +1461,9 @@ class cQSO:
                     if QsoDate > TheirC_Date and QsoDate > self.MyC_Date:
                         break
                 else:
-                    List.append('T')
+                    TargetHitList.append('T')
             else:
-                List.append('T')
+                TargetHitList.append('T')
 
         if 'TXN' in config.TARGETS and TheirT_Date and self.MyC_Date:
             NextLevel = SKCC.TribuneLevel[TheirMemberNumber]+1
@@ -1484,9 +1474,9 @@ class cQSO:
                         if QsoDate > TheirC_Date and QsoDate > self.MyC_Date:
                             break
                     else:
-                        List.append(f'Tx{NextLevel}')
+                        TargetHitList.append(f'Tx{NextLevel}')
                 else:
-                    List.append(f'Tx{NextLevel}')
+                    TargetHitList.append(f'Tx{NextLevel}')
 
         if 'S' in config.TARGETS and TheirTX8_Date and not TheirS_Date and self.MyT_Date:
             if TheirMemberNumber in self.QSOsByMemberNumber:
@@ -1494,9 +1484,9 @@ class cQSO:
                     if QsoDate > TheirTX8_Date and QsoDate > self.MyT_Date:
                         break
                 else:
-                    List.append('S')
+                    TargetHitList.append('S')
             else:
-                List.append('S')
+                TargetHitList.append('S')
 
         if 'SXN' in config.TARGETS and TheirS_Date and self.MyT_Date:
             NextLevel = SKCC.SenatorLevel[TheirMemberNumber] + 1
@@ -1507,11 +1497,11 @@ class cQSO:
                         if QsoDate > TheirTX8_Date and QsoDate > self.MyT_Date:
                             break
                     else:
-                        List.append(f'Sx{NextLevel}')
+                        TargetHitList.append(f'Sx{NextLevel}')
                 else:
-                    List.append(f'Sx{NextLevel}')
+                    TargetHitList.append(f'Sx{NextLevel}')
 
-        return List
+        return TargetHitList
 
     def Refresh(self) -> None:
         self.ReadQSOs()
@@ -1946,137 +1936,68 @@ class cSpotters:
 
     @staticmethod
     def calculate_distance(locator1: str, locator2: str) -> float:
-        ''' From pyhamtools '''
+        """Calculates the great-circle distance between two Maidenhead locators in km."""
+        R: Final = 6371  # Earth radius in km
 
-        '''
-        The MIT License (MIT)
+        try:
+            lat1, lon1 = cSpotters.locator_to_latlong(locator1)
+            lat2, lon2 = cSpotters.locator_to_latlong(locator2)
+        except Exception as e:
+            raise ValueError(f"Invalid Maidenhead locator: {e}")
 
-        Copyright (c) 2014 Tobias Wellnitz
+        # Compute differences in latitude and longitude
+        lat_diff: Final[float] = lat2 - lat1
+        lon_diff: Final[float] = lon2 - lon1
 
-        Permission is hereby granted, free of charge, to any person obtaining a copy
-        of this software and associated documentation files (the "Software"), to deal
-        in the Software without restriction, including without limitation the rights
-        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-        copies of the Software, and to permit persons to whom the Software is
-        furnished to do so, subject to the following conditions:
+        # Convert differences to radians
+        d_lat: Final[float] = radians(lat_diff)
+        d_lon: Final[float] = radians(lon_diff)
 
-        The above copyright notice and this permission notice shall be included in all
-        copies or substantial portions of the Software.
+        # Convert individual latitudes to radians
+        r_lat1: Final[float] = radians(lat1)
+        r_lat2: Final[float] = radians(lat2)
 
-        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-        SOFTWARE.
-        '''
-
-        '''calculates the (shortpath) distance between two Maidenhead locators
-
-                Args:
-                        locator1 (string): Locator, either 4 or 6 characters
-                        locator2 (string): Locator, either 4 or 6 characters
-
-                Returns:
-                        float: Distance in km
-
-                Raises:
-                        ValueError: When called with wrong or invalid input arg
-                        AttributeError: When args are not a string
-
-                Example:
-                     The following calculates the distance between two Maidenhead locators in km
-
-                     >>> from pyhamtools.locator import calculate_distance
-                     >>> calculate_distance("JN48QM", "QF67bf")
-                     16466.413
-
-        '''
-
-        R = 6371 #earth radius
-        lat1, long1 = cSpotters.locator_to_latlong(locator1)
-        lat2, long2 = cSpotters.locator_to_latlong(locator2)
-
-        d_lat = radians(lat2) - radians(lat1)
-        d_long = radians(long2) - radians(long1)
-
-        r_lat1 = radians(lat1)
-        #r_long1 = radians(long1)
-        r_lat2 = radians(lat2)
-        #r_long2 = radians(long2)
-
-        a = sin(d_lat/2) * sin(d_lat/2) + cos(r_lat1) * cos(r_lat2) * sin(d_long/2) * sin(d_long/2)
-        c = 2 * atan2(sqrt(a), sqrt(1-a))
-        d = R * c #distance in km
-
-        return d
+        a: Final = sin(d_lat / 2) ** 2 + cos(r_lat1) * cos(r_lat2) * sin(d_lon / 2) ** 2
+        return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
     def GetSpotters(self) -> None:
-        def ParseBands(bandStringCsv: str):
-            # Each band ends with an 'm'.
-
-            BandList = [int(x[:-1]) for x in bandStringCsv.split(',') if x in '160m 80m 60m 40m 30m 20m 17m 15m 12m 10m 6m'.split()]
-            return BandList
+        def parse_bands(band_csv: str) -> list[int]:
+            valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
+            return [int(b[:-1]) for b in band_csv.split(',') if b in valid_bands]
 
         print(f"\nFinding RBN spotters within {config.SPOTTER_RADIUS} miles of '{config.MY_GRIDSQUARE}'...")
 
-        response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt')
-
-        if response.status_code != 200:
-            print('*** Fatal Error: Unable to retrieve spotters from RBN.  Is RBN down?')
+        try:
+            response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt', timeout=10)
+            response.raise_for_status()
+        except requests.RequestException:
+            print('*** Fatal Error: Unable to retrieve spotters from RBN. Is RBN down?')
             sys.exit()
 
-        HTML = response.text
+        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', response.text, re.S)
 
-        Rows: list[str] = []
+        columns_regex = re.compile(
+            r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
+            r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
+            re.S
+        )
 
-        while HTML.find('online24h online7d total">') != -1:
-            EndIndex  = HTML.find('</tr>')
-            FullIndex = EndIndex+len('</tr>')
-
-            Row = HTML[:FullIndex]
-            Rows.append(Row)
-            HTML = HTML[FullIndex:]
-
-        Columns_RegEx = re.compile(r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>', re.M|re.I|re.S)
-
-        for Row in Rows:
-            ColumnMatches = Columns_RegEx.findall(Row)
-
-            for Column in (x for _, x in enumerate(ColumnMatches)):
-                Spotter, csvBands, Grid = Column
-
-                if Grid == 'XX88LL':
+        for row in rows:
+            for spotter, csv_bands, grid in columns_regex.findall(row):
+                if grid == "XX88LL":
                     continue
 
                 try:
-                    fKilometers = cSpotters.calculate_distance(config.MY_GRIDSQUARE, Grid)
+                    miles = int(cSpotters.calculate_distance(config.MY_GRIDSQUARE, grid) * 0.62137)
+                    self.Spotters[spotter] = (miles, parse_bands(csv_bands))
                 except ValueError:
-                    #print('Bad GridSquare {} for Spotter {}'.format(Grid, Spotter))
                     continue
 
-                fMiles      = fKilometers * 0.62137
-                Miles       = int(fMiles)
-                BandList    = ParseBands(csvBands)
-                self.Spotters[Spotter] = (Miles, BandList)
 
     def GetNearbySpotters(self) -> list[tuple[str, int]]:
-        List: list[tuple[str, int, list[int]]] = []
-
-        for Spotter, Value in self.Spotters.items():
-            Miles, Bands = Value
-            List.append((Spotter, Miles, Bands))
-
-        List = sorted(List, key=lambda Tuple: Tuple[1])
-
-        NearbyList: list[tuple[str, int]] = []
-
-        for Spotter, Miles, Bands in List:
-            if Miles <= config.SPOTTER_RADIUS:
-                NearbyList.append((Spotter, Miles))
-
-        return NearbyList
+        spotters_sorted = sorted(self.Spotters.items(), key=lambda item: item[1][0])
+        nearbySpotters = [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= config.SPOTTER_RADIUS]
+        return nearbySpotters
 
     def GetDistance(self, Spotter: str) -> int:
         Miles, _ = self.Spotters[Spotter]
@@ -2603,7 +2524,7 @@ class cRBN:
             writer: asyncio.StreamWriter | None = None
 
             try:
-                reader, writer = await asyncio.open_connection('skimmer.skccgroup.com', 7000)
+                reader, writer = await asyncio.open_connection(RBN_SERVER, RBN_PORT)
 
                 await reader.readuntil(b"call: ")
                 writer.write(f"{callsign}\r\n".encode("ascii"))
@@ -2617,7 +2538,7 @@ class cRBN:
                 print(f"RBN feed connection error: {e}, reconnecting...")
                 await asyncio.sleep(5)
             except Exception as e:
-                print(f"Unexpected DX feed error: {e}")
+                print(f"Unexpected RBN feed error: {e}")
             finally:
                 if writer is not None:
                     writer.close()
