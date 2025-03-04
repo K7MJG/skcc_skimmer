@@ -96,21 +96,17 @@ import requests
 
 class cUtil:
     @staticmethod
-    def Split(spaceSeparatedString: str) -> list[str]:
-        return re.split('[, ][ ]*', spaceSeparatedString.strip())
+    def Split(text: str) -> list[str]:
+        return re.split(r'[,\s]+', text.strip())
 
     @staticmethod
-    def Effective(Date: str) -> str:
-        TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
-
-        if TodayGMT >= Date:
-            return Date
-
-        return ''
+    def Effective(date: str) -> str:
+        return date if time.strftime('%Y%m%d000000', time.gmtime()) >= date else ''
 
     @staticmethod
     def Miles2Km(Miles: int) -> int:
-        return int((Miles * 1.609344) + .5)
+        return round(Miles * 1.609344)
+
 
     @staticmethod
     def Stripped(text: str) -> str:
@@ -199,14 +195,10 @@ class cConfig:
 
         self.configFile = ReadSkccSkimmerCfg()
 
-        if 'MY_CALLSIGN' in self.configFile:
-            self.MY_CALLSIGN = self.configFile['MY_CALLSIGN']
 
-        if 'ADI_FILE' in self.configFile:
-            self.ADI_FILE = self.configFile['ADI_FILE']
-
-        if 'MY_GRIDSQUARE' in self.configFile:
-            self.MY_GRIDSQUARE = self.configFile['MY_GRIDSQUARE']
+        self.MY_CALLSIGN = self.configFile.get('MY_CALLSIGN', '')
+        self.ADI_FILE = self.configFile.get('ADI_FILE', '')
+        self.MY_GRIDSQUARE = self.configFile.get('MY_GRIDSQUARE', '')
 
         if 'SPOTTER_RADIUS' in self.configFile:
             self.SPOTTER_RADIUS = int(self.configFile['SPOTTER_RADIUS'])
@@ -241,15 +233,10 @@ class cConfig:
 
         if 'PROGRESS_DOTS' in self.configFile:
             progressDots = self.configFile['PROGRESS_DOTS']
+            self.PROGRESS_DOTS.ENABLED = bool(progressDots.get('ENABLED', False))
+            self.PROGRESS_DOTS.DISPLAY_SECONDS = progressDots.get('DISPLAY_SECONDS', 0)
+            self.PROGRESS_DOTS.DOTS_PER_LINE = progressDots.get('DOTS_PER_LINE', 0)
 
-            if 'ENABLED' in progressDots:
-                self.PROGRESS_DOTS.ENABLED = bool(progressDots['ENABLED'])
-
-            if 'DISPLAY_SECONDS' in progressDots:
-                self.PROGRESS_DOTS.DISPLAY_SECONDS = progressDots['DISPLAY_SECONDS']
-
-            if 'DOTS_PER_LINE' in progressDots:
-                self.PROGRESS_DOTS.DOTS_PER_LINE = progressDots['DOTS_PER_LINE']
 
         if 'SKED' in self.configFile:
             sked = self.configFile['SKED']
@@ -608,7 +595,6 @@ class cFastDateTime:
 
         return cFastDateTime(DateTime)
 
-
     def FirstWeekdayAfterDate(self, TargetWeekday: str) -> 'cFastDateTime':
         TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
         DateTime = self.ToDateTime()
@@ -653,8 +639,7 @@ class cDisplay:
     async def DotsLoop(cls):
         while True:
             await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
-            sys.stdout.write('.')
-            sys.stdout.flush()
+            print('.', end='', flush=True)
             cls.DotsOutput += 1
 
     @classmethod
@@ -1085,6 +1070,10 @@ class cSPOTS:
 
             cDisplay.Print(Out)
             Log(f'{ZuluDate} {Out}')
+
+    @staticmethod
+    def Start(eventLoop: asyncio.AbstractEventLoop):
+        eventLoop.create_task(cSPOTS.HandleSpots())
 
 class cQSO:
     MyMemberNumber: str
@@ -2805,7 +2794,6 @@ wrapped_spotter_lines = textwrap.wrap(', '.join(formatted_nearby_list_with_dista
 for spotter_line in wrapped_spotter_lines:
     print(f'    {spotter_line}')
 
-
 if config.LOG_FILE.DELETE_ON_STARTUP:
     Filename = config.LOG_FILE.FILE_NAME
 
@@ -2816,15 +2804,16 @@ print('')
 print('Running...')
 print('')
 
+
+
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
 
 cQSO.Start(eventLoop)
-
-eventLoop.create_task(cSPOTS.HandleSpots())
+cSPOTS.Start(eventLoop)
+cDisplay.Start(eventLoop)
 
 if config.SKED.ENABLED:
     cSked.Start(eventLoop)
 
-cDisplay.Start(eventLoop)
 eventLoop.run_forever()  # Keep the loop running until stopped
