@@ -2793,10 +2793,6 @@ if config.LOG_FILE.DELETE_ON_STARTUP:
     if os.path.exists(Filename):
         os.remove(Filename)
 
-print('')
-print('Running...')
-print('')
-
 
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
