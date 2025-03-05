@@ -91,9 +91,18 @@ import textwrap
 import calendar
 import json
 import requests
+import threading
+import platform
 
 RBN_SERVER = 'skimmer.skccgroup.com'
 RBN_PORT   = 7000
+
+shutdown_event = asyncio.Event()
+
+def handle_shutdown():
+    """Sets the shutdown event when Ctrl+C is detected."""
+    print("\nCtrl+C detected. Shutting down gracefully...")
+    shutdown_event.set()
 
 class cUtil:
     @staticmethod
@@ -607,10 +616,14 @@ class cDisplay:
 
     @classmethod
     async def DotsLoop(cls):
-        while True:
-            await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
-            print('.', end='', flush=True)
-            cls.DotsOutput += 1
+        try:
+            while not shutdown_event.is_set():
+                await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
+                print('.', end='', flush=True)
+                cls.DotsOutput += 1
+        except asyncio.CancelledError:
+            print("cDisplay.DotsLoop task cancelled.")
+            raise
 
     @classmethod
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
@@ -794,9 +807,14 @@ class cSked:
 
     @classmethod
     async def RunForever(cls):
-        while True:
-            await asyncio.sleep(config.SKED.CHECK_SECONDS)
-            cls.DisplayLogins()
+        try:
+            while not shutdown_event.is_set():
+                cls.DisplayLogins()
+                await asyncio.sleep(config.SKED.CHECK_SECONDS)
+        except asyncio.CancelledError:
+            await cRBN.feed_generator(config.MY_CALLSIGN).aclose()  # ✅ Properly close generator
+            print("cSked.RunForever task cancelled.")
+            raise
 
     @classmethod
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
@@ -810,9 +828,17 @@ class cSPOTS:
     dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
     @classmethod
-    async def HandleSpots(cls) -> None:
-        async for data in cRBN.feed_generator(config.MY_CALLSIGN):
-            cSPOTS.HandleSpot(data.rstrip().decode('ascii'))
+    async def HandleSpots(cls):
+        try:
+            async for data in cRBN.feed_generator(config.MY_CALLSIGN):
+                if shutdown_event.is_set():  # ✅ Gracefully exit if shutdown is requested
+                    break
+                cSPOTS.HandleSpot(data.rstrip().decode("ascii"))
+
+        except asyncio.CancelledError:
+            await cRBN.feed_generator(config.MY_CALLSIGN).aclose()  # ✅ Properly close generator
+            print("cSPOTS.HandleSpots task cancelled.")
+            raise
 
     @staticmethod
     def ParseSpot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
@@ -1083,23 +1109,27 @@ class cQSO:
 
     @classmethod
     async def WatchLogFile(cls):
-        while True:
-            if os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
-                cDisplay.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
+        try:
+            while not shutdown_event.is_set():
+                if os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
+                    cDisplay.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                # Once we detect the file has changed, we can't necessarily read it
-                # immediately because the logger may still be writing to it, so we wait
-                # until the write is complete.
-                while True:
-                    Size = os.path.getsize(config.ADI_FILE)
-                    await asyncio.sleep(1)
+                    # Once we detect the file has changed, we can't necessarily read it
+                    # immediately because the logger may still be writing to it, so we wait
+                    # until the write is complete.
+                    while True:
+                        Size = os.path.getsize(config.ADI_FILE)
+                        await asyncio.sleep(1)
 
-                    if os.path.getsize(config.ADI_FILE) == Size:
-                        break
+                        if os.path.getsize(config.ADI_FILE) == Size:
+                            break
 
-                QSOs.Refresh()
+                    QSOs.Refresh()
 
-            await asyncio.sleep(3)
+                await asyncio.sleep(3)
+        except asyncio.CancelledError:
+            print("cQSOs.WatchLogFile task cancelled.")
+            raise
 
     @classmethod
     def Start(cls, eventLoop: asyncio.AbstractEventLoop):
@@ -1184,7 +1214,7 @@ class cQSO:
     def CalculateNumerics(Class: str, Total: int) -> tuple[int, int]:
         increment = Levels[Class]
         return increment - (Total % increment), (Total + increment) // increment
-        
+
     def ReadQSOs(self) -> None:
         """ Reads QSOs from the ADIF log file and processes them efficiently. """
 
@@ -2389,8 +2419,6 @@ Levels: dict[str, int] = {
 if config.VERBOSE:
     config.PROGRESS_DOTS.ENABLED = False
 
-signal.signal(signal.SIGINT, signal_handler)
-
 FileCheck(config.ADI_FILE)
 
 SKCC = cSKCC()
@@ -2452,14 +2480,46 @@ if config.LOG_FILE.DELETE_ON_STARTUP:
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
 
-# Start workers
-cQSO.Start(eventLoop)
-cSPOTS.Start(eventLoop)
-cDisplay.Start(eventLoop)
-cSked.Start(eventLoop) if config.SKED.ENABLED else None
-
 print()
 print('Running...')
 print()
 
-eventLoop.run_forever()  # Keep the loop running until stopped
+def watch_for_ctrl_c():
+    """Runs in a separate thread to detect Ctrl+C on Windows."""
+    try:
+        while not shutdown_event.is_set():
+            pass #signal.pause()  # Blocks until a signal is received (Linux/macOS only)
+    except KeyboardInterrupt:
+        handle_shutdown()
+
+async def run():
+    """Starts all conditional tasks with proper Ctrl+C handling."""
+    # Handle Ctrl+C for Windows
+    if platform.system() == "win32":
+        thread = threading.Thread(target=watch_for_ctrl_c, daemon=True)
+        thread.start()
+    else:
+        signal.signal(signal.SIGINT, lambda sig, frame: handle_shutdown())
+
+    tasks: list[asyncio.Task[None]] = [
+        asyncio.create_task(cQSO.WatchLogFile()),
+        asyncio.create_task(cSPOTS.HandleSpots()),
+        asyncio.create_task(cDisplay.DotsLoop()),
+    ]
+
+    if config.SKED.ENABLED:
+        tasks.append(asyncio.create_task(cSked.RunForever()))
+
+    await shutdown_event.wait()
+    print(f"Shutdown event received. Cancelling {len(tasks)} tasks...")
+
+    # Cancel all tasks
+    for task in tasks:
+        task.cancel()
+
+    # Wait for them to finish
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    print("All tasks finished. Exiting cleanly.")
+
+asyncio.run(run())
