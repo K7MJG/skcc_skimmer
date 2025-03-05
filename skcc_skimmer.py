@@ -75,7 +75,7 @@ from datetime        import timedelta
 from datetime        import datetime
 
 from types           import FrameType
-from typing          import Any, NoReturn, Literal, get_args, Final
+from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
 
 from collections.abc import AsyncGenerator
@@ -625,7 +625,7 @@ class cDisplay:
         eventLoop.create_task(cls.DotsLoop())
 
 class cSked:
-    RegEx: Final = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
     SkedSite = None
 
     PreviousLogins = {}
@@ -1211,7 +1211,7 @@ class cQSO:
         with open(AdiFileAbsolute, 'rb') as file:
             Body = re.split(r'<eoh>', file.read().decode('utf-8', 'ignore'), flags=re.I | re.M)[-1].strip(' \t\r\n\x1a')
 
-        Adi_RegEx: Final = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
+        Adi_RegEx = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.M | re.S)
 
         for record_text in filter(None, map(str.strip, re.split(r'<eor>', Body, flags=re.I | re.M))):
             record = {k.upper(): v for k, v in Adi_RegEx.findall(record_text)}
@@ -1937,7 +1937,7 @@ class cSpotters:
     @staticmethod
     def calculate_distance(locator1: str, locator2: str) -> float:
         """Calculates the great-circle distance between two Maidenhead locators in km."""
-        R: Final = 6371  # Earth radius in km
+        R = 6371  # Earth radius in km
 
         try:
             lat1, lon1 = cSpotters.locator_to_latlong(locator1)
@@ -1946,18 +1946,18 @@ class cSpotters:
             raise ValueError(f"Invalid Maidenhead locator: {e}")
 
         # Compute differences in latitude and longitude
-        lat_diff: Final[float] = lat2 - lat1
-        lon_diff: Final[float] = lon2 - lon1
+        lat_diff: float = lat2 - lat1
+        lon_diff: float = lon2 - lon1
 
         # Convert differences to radians
-        d_lat: Final[float] = radians(lat_diff)
-        d_lon: Final[float] = radians(lon_diff)
+        d_lat: float = radians(lat_diff)
+        d_lon: float = radians(lon_diff)
 
         # Convert individual latitudes to radians
-        r_lat1: Final[float] = radians(lat1)
-        r_lat2: Final[float] = radians(lat2)
+        r_lat1: float = radians(lat1)
+        r_lat2: float = radians(lat2)
 
-        a: Final = sin(d_lat / 2) ** 2 + cos(r_lat1) * cos(r_lat2) * sin(d_lon / 2) ** 2
+        a = sin(d_lat / 2) ** 2 + cos(r_lat1) * cos(r_lat2) * sin(d_lon / 2) ** 2
         return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
     def GetSpotters(self) -> None:
@@ -2008,12 +2008,12 @@ class cSKCC:
     TribuneLevel: dict[str, int]
     SenatorLevel: dict[str, int]
 
-    MonthAbbreviations: Final[dict[str, int]] = {
+    MonthAbbreviations: dict[str, int] = {
         'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4,  'May':5,  'Jun':6,
         'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
     }
 
-    CallingFrequenciesKHz: Final[dict[int, list[float]]] = {
+    CallingFrequenciesKHz: dict[int, list[float]] = {
         160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
@@ -2333,7 +2333,7 @@ class cSKCC:
 
     @staticmethod
     def WhichArrlBand(FrequencyKHz: float) -> int | None:
-        band_ranges: Final[list[tuple[int, int, int]]] = [
+        band_ranges: list[tuple[int, int, int]] = [
             (160,  1800,  2000),
             ( 80,  3500,  3600),
             ( 40,  7000,  7125),
@@ -2424,7 +2424,7 @@ def IsInBANDS(FrequencyKHz: float) -> bool:
     def InRange(Band: int, FrequencyKHz_: float, Low: float, High: float) -> bool:
         return Band in config.BANDS and Low <= FrequencyKHz_ <= High
 
-    bands: Final[dict[int, tuple[float, float]]] = {
+    bands: dict[int, tuple[float, float]] = {
         160: (1800, 2000),
         80:  (3500, 4000),
         60:  (5330.5 - 1.5, 5403.5 + 1.5),
@@ -2568,7 +2568,7 @@ except ImportError:
 
 print(f'SKCC Skimmer version {VERSION}\n')
 
-US_STATES: Final[list[str]] = [
+US_STATES: list[str] = [
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
     'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
@@ -2582,7 +2582,7 @@ config = cConfig(ArgV)
 
 cSKCC.BlockDuringUpdateWindow()
 
-Levels: Final[dict[str, int]] = {
+Levels: dict[str, int] = {
     'C'  :    100,
     'T'  :     50,
     'S'  :    200,
