@@ -538,7 +538,6 @@ class cFastDateTime:
         return list(map(int, [self.FastDateTime[:4],   self.FastDateTime[4:6],   self.FastDateTime[6:8],
                               self.FastDateTime[8:10], self.FastDateTime[10:12], self.FastDateTime[12:14]]))
 
-
     def StartOfMonth(self) -> 'cFastDateTime':
         Year, Month, _Day, _Hour, _Minute, _Second = self.SplitDateTime()
         return cFastDateTime(f'{Year:0>4}{Month:0>2}{1:0>2}000000')
@@ -1183,15 +1182,9 @@ class cQSO:
 
     @staticmethod
     def CalculateNumerics(Class: str, Total: int) -> tuple[int, int]:
-        Increment = Levels[Class]
-        SinceLastAchievement = Total % Increment
-
-        Remaining = Increment - SinceLastAchievement
-
-        X_Factor = (Total + Increment) // Increment
-
-        return Remaining, X_Factor
-
+        increment = Levels[Class]
+        return increment - (Total % increment), (Total + increment) // increment
+        
     def ReadQSOs(self) -> None:
         """ Reads QSOs from the ADIF log file and processes them efficiently. """
 
@@ -1241,15 +1234,8 @@ class cQSO:
             if member_number:
                 self.QSOsByMemberNumber.setdefault(member_number, []).append(qso_date)
 
-
     def CalcPrefixPoints(self) -> int:
-        iPoints = 0
-
-        for _, Value in self.ContactsForP.items():
-            _, _, iMemberNumber, _FirstName = Value
-            iPoints += iMemberNumber
-
-        return iPoints
+        return sum(value[2] for value in self.ContactsForP.values())
 
     def PrintProgress(self) -> None:
         def PrintRemaining(Class: str, Total: int):
@@ -1828,99 +1814,27 @@ class cSpotters:
         self.Spotters: dict[str, tuple[int, list[int]]] = {}
 
     @staticmethod
-    def locator_to_latlong(locator: str) -> tuple[float, float | int]:
-        ''' From pyhamtools '''
-
-        '''
-        The MIT License (MIT)
-
-        Copyright (c) 2014 Tobias Wellnitz
-
-        Permission is hereby granted, free of charge, to any person obtaining a copy
-        of this software and associated documentation files (the "Software"), to deal
-        in the Software without restriction, including without limitation the rights
-        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-        copies of the Software, and to permit persons to whom the Software is
-        furnished to do so, subject to the following conditions:
-
-        The above copyright notice and this permission notice shall be included in all
-        copies or substantial portions of the Software.
-
-        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-        SOFTWARE.
-        '''
-
-        '''converts Maidenhead locator in the corresponding WGS84 coordinates
-
-                Args:
-                        locator (string): Locator, either 4 or 6 characters
-
-                Returns:
-                        tuple (float, float): Latitude, Longitude
-
-                Raises:
-                        ValueError: When called with wrong or invalid input arg
-                        TypeError: When arg is not a string
-
-                Example:
-                     The following example converts a Maidenhead locator into Latitude and Longitude
-
-                     >>> from pyhamtools.locator import locator_to_latlong
-                     >>> latitude, longitude = locator_to_latlong("JN48QM")
-                     >>> print latitude, longitude
-                     48.5208333333 9.375
-
-                Note:
-                         Latitude (negative = West, positive = East)
-                         Longitude (negative = South, positive = North)
-
-        '''
-
+    def locator_to_latlong(locator: str) -> tuple[float, float]:
+        """Converts a Maidenhead locator into corresponding WGS84 coordinates."""
         locator = locator.upper()
+        length = len(locator)
 
-        if len(locator) == 5 or len(locator) < 4:
-                raise ValueError
+        if length not in {4, 6} or any(
+            not ('A' <= locator[i] <= 'R') if i in {0, 1} else
+            not ('0' <= locator[i] <= '9') if i in {2, 3} else
+            not ('A' <= locator[i] <= 'X') for i in range(length)
+        ):
+            raise ValueError("Invalid Maidenhead locator.")
 
-        if ord(locator[0]) > ord('R') or ord(locator[0]) < ord('A'):
-                raise ValueError
+        longitude = (ord(locator[0]) - ord('A')) * 20 - 180 + (ord(locator[2]) - ord('0')) * 2
+        latitude = (ord(locator[1]) - ord('A')) * 10 - 90 + (ord(locator[3]) - ord('0'))
 
-        if ord(locator[1]) > ord('R') or ord(locator[1]) < ord('A'):
-                raise ValueError
-
-        if ord(locator[2]) > ord('9') or ord(locator[2]) < ord('0'):
-                raise ValueError
-
-        if ord(locator[3]) > ord('9') or ord(locator[3]) < ord('0'):
-                raise ValueError
-
-        if len(locator) == 6:
-            if ord(locator[4]) > ord('X') or ord(locator[4]) < ord('A'):
-                raise ValueError
-            if ord(locator[5]) > ord('X') or ord(locator[5]) < ord('A'):
-                raise ValueError
-
-        longitude  = (ord(locator[0]) - ord('A')) * 20 - 180
-        latitude   = (ord(locator[1]) - ord('A')) * 10 - 90
-        longitude += (ord(locator[2]) - ord('0')) * 2
-        latitude  += (ord(locator[3]) - ord('0'))
-
-        if len(locator) == 6:
-            longitude += ((ord(locator[4])) - ord('A')) * (2 / 24)
-            latitude  += ((ord(locator[5])) - ord('A')) * (1 / 24)
-
-            # move to center of subsquare
-            longitude += 1 / 24.0
-            latitude  += 0.5 / 24.0
-
+        if length == 6:
+            longitude += (ord(locator[4]) - ord('A')) * (2 / 24) + (1 / 24.0)
+            latitude += (ord(locator[5]) - ord('A')) * (1 / 24) + (0.5 / 24.0)
         else:
-            # move to center of square
             longitude += 1
-            latitude  += 0.5
+            latitude += 0.5
 
         return latitude, longitude
 
@@ -2034,83 +1948,37 @@ class cSKCC:
 
     @staticmethod
     def WES(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        FromDate       = cFastDateTime((Year, Month, 1))
-
-        FirstSaturday  = FromDate.FirstWeekdayFromDate('Sat')       # first Saturday
-        SecondSaturday = FirstSaturday.FirstWeekdayAfterDate('Sat') # second Saturday
-
-        StartDateTime  = SecondSaturday + timedelta(hours=12)
-        EndDateTime    = StartDateTime + timedelta(hours=35, minutes=59, seconds=59)
-
-        return StartDateTime, EndDateTime
+        start_time = cFastDateTime((Year, Month, 1)).FirstWeekdayFromDate('Sat').FirstWeekdayAfterDate('Sat') + timedelta(hours=12)
+        return start_time, start_time + timedelta(hours=35, minutes=59, seconds=59)
 
     @staticmethod
     def SKS(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        FromDate = cFastDateTime((Year, Month, 1))
+        start_date = cFastDateTime((Year, Month, 1))
 
-        StartDate = cFastDateTime(None)
+        for _ in range(4):  # Loop exactly 4 times
+            start_date = start_date.FirstWeekdayAfterDate('Wed')
 
-        for _ in range(1, 4 +1):
-            StartDate = FromDate.FirstWeekdayAfterDate('Wed')
-            FromDate = StartDate
-
-        StartDateTime = StartDate + timedelta(hours=0)
-        EndDateTime   = StartDateTime + timedelta(hours=2)
-
-        return StartDateTime, EndDateTime
+        return start_date, start_date + timedelta(hours=2)
 
     @staticmethod
     def SKSA(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        FromDate      = cFastDateTime((Year, Month, 1))
-
-        FirstFriday   = FromDate.FirstWeekdayFromDate('Fri')     # first Friday
-        SecondFriday  = FirstFriday.FirstWeekdayAfterDate('Fri') # second Friday
-
-        StartDateTime = SecondFriday + timedelta(hours=22)
-        EndDateTime   = StartDateTime + timedelta(hours=1, minutes=59, seconds=59)
-
-        return StartDateTime, EndDateTime
+        start_time = cFastDateTime((Year, Month, 1)).FirstWeekdayFromDate('Fri').FirstWeekdayAfterDate('Fri') + timedelta(hours=22)
+        return start_time, start_time + timedelta(hours=1, minutes=59, seconds=59)
 
     @staticmethod
     def SKSE(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        FromDate      = cFastDateTime((Year, Month, 1))
-        FirstThursday = FromDate.FirstWeekdayFromDate('Thu')
-
-        if Month in [1, 2, 3, 11, 12]:
-            StartDateTime = FirstThursday + timedelta(hours=20)
-        else:
-            StartDateTime = FirstThursday + timedelta(hours=19)
-
-        EndDateTime = StartDateTime + timedelta(hours=1, minutes=59, seconds=59)
-
-        return StartDateTime, EndDateTime
+        start_time = cFastDateTime((Year, Month, 1)).FirstWeekdayFromDate('Thu') + timedelta(hours=20 if Month in {1, 2, 3, 11, 12} else 19)
+        return start_time, start_time + timedelta(hours=1, minutes=59, seconds=59)
 
     @staticmethod
     def DuringSprint(fastDateTime: cFastDateTime) -> bool:
-        Year  = fastDateTime.Year()
-        Month = fastDateTime.Month()
+        year, month = fastDateTime.Year(), fastDateTime.Month()
 
-        fastWesDateTimeStart, fastWesDateTimeEnd = cSKCC.WES(Year, Month)
-
-        if fastWesDateTimeStart <= fastDateTime <= fastWesDateTimeEnd:
-            return True
-
-        fastSksDateTimeStart, fastSksDateTimeEnd = cSKCC.SKS(Year, Month)
-
-        if fastSksDateTimeStart <= fastDateTime <= fastSksDateTimeEnd:
-            return True
-
-        fastSkseDateTimeStart, fastSkseDateTimeEnd = cSKCC.SKSE(Year, Month)
-
-        if fastSkseDateTimeStart <= fastDateTime <= fastSkseDateTimeEnd:
-            return True
-
-        fastSksaDateTimeStart, fastSksaDateTimeEnd = cSKCC.SKSA(Year, Month)
-
-        if fastSksaDateTimeStart <= fastDateTime <= fastSksaDateTimeEnd:
-            return True
-
-        return False
+        return any(
+            start <= fastDateTime <= end
+            for start, end in (cSKCC.WES(year, month),  cSKCC.SKS(year, month),
+                               cSKCC.SKSE(year, month), cSKCC.SKSA(year, month))
+        )
 
     @staticmethod
     def BlockDuringUpdateWindow() -> None:
@@ -2136,124 +2004,79 @@ class cSKCC:
     @staticmethod
     def NormalizeSkccDate(Date: str) -> str:
         if not Date:
-            return ''
+            return ""
 
         sDay, sMonthAbbrev, sYear = Date.split()
-        iMonth = cSKCC.MonthAbbreviations[sMonthAbbrev]
-
-        return f'{sYear:0>4}{iMonth:0>2}{sDay:0>2}000000'
+        return f"{int(sYear):04}{cSKCC.MonthAbbreviations[sMonthAbbrev]:02}{int(sDay):02}000000"
 
     def ExtractCallSign(self, CallSign: str) -> str | None:
-        #
-        # Strip any punctuation other than '/'.
-        #
-        CallSign = CallSign.strip(string.punctuation.strip('/'))
+        # Strip punctuation except '/'
+        CallSign = CallSign.strip(string.punctuation.replace("/", ""))
 
-        if CallSign in self.Members or CallSign == 'K3Y':
+        if CallSign in self.Members or CallSign == "K3Y":
             return CallSign
 
-        if '/' in CallSign:
-            if CallSign in self.Members:
-                return CallSign
-
-            Parts = CallSign.split('/')
-
-            if len(Parts) == 2:
-                Prefix, Suffix = Parts
-            elif len(Parts) == 3:
-                Prefix, Suffix, _ = Parts
-            else:
-                return None
-
-            if Prefix in self.Members:
-                return Prefix
-
-            if Suffix in self.Members:
-                return Suffix
+        if "/" in CallSign:
+            parts = CallSign.split("/")
+            if len(parts) in {2, 3}:  # Valid cases
+                prefix, suffix = parts[:2]
+                return prefix if prefix in self.Members else suffix if suffix in self.Members else None
 
         return None
 
     @staticmethod
     def ReadLevelList(Type: str, URL: str) -> dict[str, int] | NoReturn:
-        print(f'Retrieving SKCC award info from {URL}...')
+        print(f"Retrieving SKCC award info from {URL}...")
 
         try:
-            response = requests.get(f'https://www.skccgroup.com/{URL}')
+            response = requests.get(f"https://www.skccgroup.com/{URL}", timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Error retrieving award info: {e}")
+            sys.exit(1)
 
-            if response.status_code != 200:
-                return {}
+        today_gmt = time.strftime("%Y%m%d000000", time.gmtime())
+        level: dict[str, int] = {}
 
-            LevelList = response.text
+        for line in response.text.splitlines()[1:]:
+            try:
+                cert_number, call_sign, member_number, *_rest, effective_date, endorsements = line.split("|")
+            except ValueError:
+                continue  # Skip malformed lines
 
-            Level: dict[str, int] = {}
-            TodayGMT = time.strftime('%Y%m%d000000', time.gmtime())
+            x_factor = int(cert_number.split()[1][1:]) if " " in cert_number else 1
+            level[member_number] = x_factor
 
-            for Line in LevelList.splitlines()[1:]:
-                CertNumber, CallSign, MemberNumber,_FirstName,_City,_SPC,EffectiveDate,Endorsements = Line.split('|')
+            skcc_effective_date = cSKCC.NormalizeSkccDate(effective_date)
 
-                if ' ' in CertNumber:
-                    CertNumber, X_Factor = CertNumber.split()
-                    X_Factor = int(X_Factor[1:])
-                else:
-                    X_Factor = 1
+            if today_gmt < skcc_effective_date:
+                print(f"  FYI: Brand new {Type}, {call_sign}, will be effective 00:00Z {effective_date}")
+            elif Type == "Tribune" and (match := re.search(r"\*Tx8: (.*?)$", endorsements)):
+                skcc_effective_tx8_date = cSKCC.NormalizeSkccDate(match.group(1))
+                if today_gmt < skcc_effective_tx8_date:
+                    print(f"  FYI: Brand new Tx8, {call_sign}, will be effective 00:00Z {match.group(1)}")
 
-                Level[MemberNumber] = X_Factor
-
-                SkccEffectiveDate = cSKCC.NormalizeSkccDate(EffectiveDate)
-
-                if TodayGMT < SkccEffectiveDate:
-                    print(f'  FYI: Brand new {Type}, {CallSign}, will be effective 00:00Z {EffectiveDate}')
-                elif Type == 'Tribune':
-                    Match = re.search(r'\*Tx8: (.*?)$', Endorsements)
-
-                    if Match:
-                        Tx8_Date = Match.group(1)
-                        SkccEffectiveTx8_Date = cSKCC.NormalizeSkccDate(Tx8_Date)
-
-                        if TodayGMT < SkccEffectiveTx8_Date:
-                            print(f'  FYI: Brand new Tx8, {CallSign}, will be effective 00:00Z {Tx8_Date}')
-
-            return Level
-        except:
-            print(f"Unable to retrieve award info from main SKCC website.  Unable to continue.")
-            sys.exit()
+        return level
 
     @staticmethod
     def ReadRoster(Name: str, URL: str) -> dict[str, int] | NoReturn:
-        print(f'Retrieving SKCC {Name} roster...')
+        print(f"Retrieving SKCC {Name} roster...")
 
         try:
-            response = requests.get(f'https://www.skccgroup.com/{URL}')
+            response = requests.get(f"https://www.skccgroup.com/{URL}", timeout=10)
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Error retrieving {Name} roster: {e}")
+            sys.exit(1)
 
-            if response.status_code != 200:
-                return {}
+        rows = re.findall(r"<tr.*?>(.*?)</tr>", response.text, re.I | re.S)
+        columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
 
-            HTML = response.text
-
-            Rows_RegEx    = re.compile(r'<tr.*?>(.*?)</tr>', re.M|re.I|re.S)
-            Columns_RegEx = re.compile(r'<td.*?>(.*?)</td>', re.M|re.I|re.S)
-
-            RowMatches    = Rows_RegEx.findall(HTML)
-
-            Roster: dict[str, int] = {}
-
-            for Row in RowMatches[1:]:
-                ColumnMatches = Columns_RegEx.findall(Row)
-                CertNumber    = ColumnMatches[0]
-                CallSign      = ColumnMatches[1]
-
-                if ' ' in CertNumber:
-                    CertNumber, X_Factor = CertNumber.split()
-                    X_Factor = int(X_Factor[1:])
-                else:
-                    X_Factor = 1
-
-                Roster[CallSign] = X_Factor
-
-            return Roster
-        except:
-            print("Unable to retrieve an award roster from the main SKCC site.  Unable to continue.")
-            sys.exit()
+        return {
+            (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
+            for row in rows[1:]
+            if (cols := columns_regex.findall(row))  # Ensure valid row data
+        }
 
     def ReadSkccData(self) -> None | NoReturn:
         print('Retrieving SKCC award dates...')
@@ -2270,73 +2093,68 @@ class cSKCC:
         SkccList = response.text
         Lines = SkccList.splitlines()
 
-        try:
-            for Line in Lines[1:]:
-                _Number,CurrentCall,Name,_City,SPC,OtherCalls,PlainNumber,_,Join_Date,C_Date,T_Date,TX8_Date,S_Date,_Country = Line.split('|')
+        for line in Lines[1:]:
+            try:
+                fields = line.split("|")
+                (
+                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country
+                ) = fields
+            except ValueError:
+                print("Error parsing SKCC data. Exiting.")
+                sys.exit(1)
 
-                if OtherCalls:
-                    OtherCallList = [x.strip() for x in OtherCalls.split(',')]
-                else:
-                    OtherCallList = []
+            all_calls = [current_call] + [x.strip() for x in other_calls.split(",")] if other_calls else [current_call]
 
-                AllCalls = [CurrentCall] + OtherCallList
 
-                for Call in AllCalls:
-                    self.Members[Call] = {
-
-                    'name'         : Name,
-                    'plain_number' : PlainNumber,
-                    'spc'          : SPC,
-                    'join_date'    : cSKCC.NormalizeSkccDate(Join_Date),
-                    'c_date'       : cSKCC.NormalizeSkccDate(C_Date),
-                    't_date'       : cSKCC.NormalizeSkccDate(T_Date),
-                    'tx8_date'     : cSKCC.NormalizeSkccDate(TX8_Date),
-                    's_date'       : cSKCC.NormalizeSkccDate(S_Date),
-                    'main_call'    : CurrentCall,
+            for call in all_calls:
+                self.Members[call] = {
+                    'name'         : name,
+                    'plain_number' : plain_number,
+                    'spc'          : spc,
+                    'join_date'    : cSKCC.NormalizeSkccDate(join_date),
+                    'c_date'       : cSKCC.NormalizeSkccDate(c_date),
+                    't_date'       : cSKCC.NormalizeSkccDate(t_date),
+                    'tx8_date'     : cSKCC.NormalizeSkccDate(tx8_date),
+                    's_date'       : cSKCC.NormalizeSkccDate(s_date),
+                    'main_call'    : current_call,
                 }
-        except (ValueError, IndexError):
-            print("Unable to process the retrieved data. Exiting.")
-            sys.exit()
 
     @staticmethod
     def IsOnSkccFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
-        for Band, Value in cSKCC.CallingFrequenciesKHz.items():
-            if Band == 60 and FrequencyKHz >= 5332-1.5 and FrequencyKHz <= 5405+1.5:
-                return True
-
-            MidPoints = Value
-
-            for MidPoint in MidPoints:
-                if FrequencyKHz >= MidPoint-ToleranceKHz and FrequencyKHz <= MidPoint+ToleranceKHz:
-                    return True
-
-        return False
+        return (
+            5332 - 1.5 <= FrequencyKHz <= 5405 + 1.5
+            if 60 in cSKCC.CallingFrequenciesKHz
+            else any(
+                (MidPoint - ToleranceKHz) <= FrequencyKHz <= (MidPoint + ToleranceKHz)
+                for Band, MidPoints in cSKCC.CallingFrequenciesKHz.items()
+                if Band != 60
+                for MidPoint in MidPoints
+            )
+        )
 
     @staticmethod
-    def WhichBand(FrequencyKHz: float, ToleranceKHz: float = 10) -> None | int:
-        for Band, MidPointsKHz in cSKCC.CallingFrequenciesKHz.items():
-            for MidPointKHz in MidPointsKHz:
-                if FrequencyKHz >= MidPointKHz-ToleranceKHz and FrequencyKHz <= MidPointKHz+ToleranceKHz:
-                    return Band
-
-        return None
+    def WhichBand(FrequencyKHz: float, ToleranceKHz: float = 10) -> int | None:
+        return next(
+            (Band for Band, MidPointsKHz in cSKCC.CallingFrequenciesKHz.items()
+            for MidPointKHz in MidPointsKHz
+            if (MidPointKHz - ToleranceKHz) <= FrequencyKHz <= (MidPointKHz + ToleranceKHz)),
+            None
+        )
 
     @staticmethod
     def WhichArrlBand(FrequencyKHz: float) -> int | None:
-        band_ranges: list[tuple[int, int, int]] = [
+        for band, lower, upper in [
             (160,  1800,  2000),
-            ( 80,  3500,  3600),
-            ( 40,  7000,  7125),
-            ( 30, 10100, 10150),
-            ( 20, 14000, 14150),
-            ( 17, 18068, 18168),
-            ( 15, 21000, 21450),
-            ( 12, 24890, 24990),
-            ( 10, 28000, 29700),
-            (  6, 50000, 54000),
-        ]
-
-        for band, lower, upper in band_ranges:
+            (80,   3500,  3600),
+            (40,   7000,  7125),
+            (30,  10100, 10150),
+            (20,  14000, 14150),
+            (17,  18068, 18168),
+            (15,  21000, 21450),
+            (12,  24890, 24990),
+            (10,  28000, 29700),
+            (6,   50000, 54000),
+        ]:
             if lower < FrequencyKHz < upper:
                 return band
 
@@ -2344,16 +2162,12 @@ class cSKCC:
 
     @staticmethod
     def IsOnWarcFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
-        WarcBands = [30, 17, 12]
+        return any(
+            (CallingFrequencyKHz - ToleranceKHz) <= FrequencyKHz <= (CallingFrequencyKHz + ToleranceKHz)
+            for Band in (30, 17, 12)
+            for CallingFrequencyKHz in cSKCC.CallingFrequenciesKHz[Band]
+        )
 
-        for Band in WarcBands:
-            CallingFreqenciesKHz = cSKCC.CallingFrequenciesKHz[Band]
-
-            for CallingFrequencyKHz in CallingFreqenciesKHz:
-                if FrequencyKHz >= (CallingFrequencyKHz - ToleranceKHz) and FrequencyKHz <= (CallingFrequencyKHz + ToleranceKHz):
-                    return True
-
-        return False
 
     def GetFullMemberNumber(self, CallSign: str) -> tuple[str, str]:
         Entry = self.Members[CallSign]
@@ -2401,38 +2215,31 @@ def AbbreviateClass(Class: str, X_Factor: int) -> str:
     return Class
 
 def BuildMemberInfo(CallSign: str) -> str:
-    Entry = SKCC.Members[CallSign]
+    entry = SKCC.Members[CallSign]
+    number, suffix = SKCC.GetFullMemberNumber(CallSign)
 
-    Number, Suffix = SKCC.GetFullMemberNumber(CallSign)
-
-    Name = Entry['name']
-    SPC  = Entry['spc']
-
-    return f'({Number:>5} {Suffix:<4} {Name:<9.9} {SPC:>3})'
+    return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
 def IsInBANDS(FrequencyKHz: float) -> bool:
-    def InRange(Band: int, FrequencyKHz_: float, Low: float, High: float) -> bool:
-        return Band in config.BANDS and Low <= FrequencyKHz_ <= High
-
     bands: dict[int, tuple[float, float]] = {
-        160: (1800, 2000),
-        80:  (3500, 4000),
-        60:  (5330.5 - 1.5, 5403.5 + 1.5),
-        40:  (7000, 7300),
-        30:  (10100, 10150),
-        20:  (14000, 14350),
-        17:  (18068, 18168),
-        15:  (21000, 21450),
-        12:  (24890, 24990),
-        10:  (28000, 29700),
-        6:   (50000, 50100),
+        160: (1800.0, 2000.0),
+        80:  (3500.0, 4000.0),
+        60:  (5330.5 - 1.5, 5403.5 + 1.5),  # Small buffer for band edges
+        40:  (7000.0, 7300.0),
+        30:  (10100.0, 10150.0),
+        20:  (14000.0, 14350.0),
+        17:  (18068.0, 18168.0),
+        15:  (21000.0, 21450.0),
+        12:  (24890.0, 24990.0),
+        10:  (28000.0, 29700.0),
+        6:   (50000.0, 50100.0),
     }
 
-    for band, (lowKHz, highKHz) in bands.items():
-        if InRange(band, FrequencyKHz, lowKHz, highKHz):
-            return True
+    return any(
+        band in config.BANDS and lowKHz <= FrequencyKHz <= highKHz
+        for band, (lowKHz, highKHz) in bands.items()
+    )
 
-    return False
 
 def Lookups(LookupString: str) -> None:
     def PrintCallSign(CallSign: str):
@@ -2641,7 +2448,6 @@ if config.LOG_FILE.DELETE_ON_STARTUP:
 
     if Filename is not None and os.path.exists(Filename):
         os.remove(Filename)
-
 
 eventLoop = asyncio.new_event_loop()
 asyncio.set_event_loop(eventLoop)
