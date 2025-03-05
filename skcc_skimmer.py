@@ -71,9 +71,7 @@
 #   which may require a pip install.
 #
 
-from datetime        import timedelta
-from datetime        import datetime
-
+from datetime        import timedelta, datetime
 from types           import FrameType
 from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
@@ -537,14 +535,9 @@ class cFastDateTime:
             self.FastDateTime = ''
 
     def SplitDateTime(self) -> list[int]:
-        List: list[int] = []
-        String = self.FastDateTime
+        return list(map(int, [self.FastDateTime[:4],   self.FastDateTime[4:6],   self.FastDateTime[6:8],
+                              self.FastDateTime[8:10], self.FastDateTime[10:12], self.FastDateTime[12:14]]))
 
-        for Width in (4, 2, 2, 2, 2, 2):
-            List.append(int(String[:Width]))
-            String = String[Width:]
-
-        return List
 
     def StartOfMonth(self) -> 'cFastDateTime':
         Year, Month, _Day, _Hour, _Minute, _Second = self.SplitDateTime()
@@ -1319,10 +1312,7 @@ class cQSO:
             print(f'Total worked towards {MonthName} Brag: {len(self.Brag)}')
 
     def GetGoalHits(self, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
-        if TheirCallSign not in SKCC.Members:
-            return []
-
-        if TheirCallSign == config.MY_CALLSIGN:
+        if TheirCallSign not in SKCC.Members or TheirCallSign == config.MY_CALLSIGN:
             return []
 
         TheirMemberEntry  = SKCC.Members[TheirCallSign]
