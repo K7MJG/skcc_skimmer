@@ -277,20 +277,13 @@ class cConfig:
         self.init_off_frequency()
         self.init_high_wpm()
 
-        if 'VERBOSE' in self.configFile:
-            self.VERBOSE = bool(self.configFile['VERBOSE'])
-        else:
-            self.VERBOSE = False
+        self.VERBOSE = bool(self.configFile.get('VERBOSE', False))
+        self.LOG_BAD_SPOTS = bool(self.configFile.get('LOG_BAD_SPOTS', False))
 
-        if 'LOG_BAD_SPOTS' in self.configFile:
-            self.LOG_BAD_SPOTS = bool(self.configFile['LOG_BAD_SPOTS'])
-        else:
-            self.LOG_BAD_SPOTS = False
-
-        if 'DISTANCE_UNITS' in self.configFile and self.configFile['DISTANCE_UNITS'] in ('mi', 'km'):
-            self.DISTANCE_UNITS = self.configFile['DISTANCE_UNITS']
-        else:
+        self.DISTANCE_UNITS = self.configFile.get('DISTANCE_UNITS', 'mi')
+        if self.DISTANCE_UNITS not in ('mi', 'km'):
             self.DISTANCE_UNITS = 'mi'
+
 
         if 'K3Y_YEAR' in self.configFile:
             self.K3Y_YEAR = self.configFile['K3Y_YEAR']
@@ -625,10 +618,6 @@ class cDisplay:
             print("cDisplay.DotsLoop task cancelled.")
             raise
 
-    @classmethod
-    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
-        eventLoop.create_task(cls.DotsLoop())
-
 class cSked:
     RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
     SkedSite = None
@@ -815,10 +804,6 @@ class cSked:
             await cRBN.feed_generator(config.MY_CALLSIGN).aclose()  # ✅ Properly close generator
             print("cSked.RunForever task cancelled.")
             raise
-
-    @classmethod
-    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
-        eventLoop.create_task(cls.RunForever())
 
 class cSPOTS:
     LastSpotted: dict[str, tuple[float, float]] = {}
@@ -1055,10 +1040,6 @@ class cSPOTS:
             cDisplay.Print(Out)
             Log(f'{ZuluDate} {Out}')
 
-    @staticmethod
-    def Start(eventLoop: asyncio.AbstractEventLoop):
-        eventLoop.create_task(cSPOTS.HandleSpots())
-
 class cQSO:
     MyMemberNumber: str
 
@@ -1130,10 +1111,6 @@ class cQSO:
         except asyncio.CancelledError:
             print("cQSOs.WatchLogFile task cancelled.")
             raise
-
-    @classmethod
-    def Start(cls, eventLoop: asyncio.AbstractEventLoop):
-        eventLoop.create_task(cls.WatchLogFile())
 
     def AwardsCheck(self) -> None:
         C_Level = len(self.ContactsForC)  // Levels['C']
