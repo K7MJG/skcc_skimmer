@@ -80,6 +80,7 @@ from collections.abc import AsyncGenerator
 from dataclasses     import dataclass, field
 
 import asyncio
+
 import argparse
 import signal
 import time
@@ -98,7 +99,6 @@ RBN_SERVER = 'skimmer.skccgroup.com'
 RBN_PORT   = 7000
 
 shutdown_event = asyncio.Event()
-
 def handle_shutdown():
     """Sets the shutdown event when Ctrl+C is detected."""
     print("\nCtrl+C detected. Shutting down gracefully...")
@@ -2066,15 +2066,10 @@ class cSKCC:
 
     @staticmethod
     def IsOnSkccFrequency(FrequencyKHz: float, ToleranceKHz: int = 10) -> bool:
-        return (
-            5332 - 1.5 <= FrequencyKHz <= 5405 + 1.5
-            if 60 in cSKCC.CallingFrequenciesKHz
-            else any(
-                (MidPoint - ToleranceKHz) <= FrequencyKHz <= (MidPoint + ToleranceKHz)
-                for Band, MidPoints in cSKCC.CallingFrequenciesKHz.items()
-                if Band != 60
-                for MidPoint in MidPoints
-            )
+        return any(
+            ((Band == 60) and ((5332 - 1.5) <= FrequencyKHz <= (5405 + 1.5))) or
+            any((((MidPoint - ToleranceKHz) <= FrequencyKHz) and (FrequencyKHz <= (MidPoint + ToleranceKHz))) for MidPoint in MidPoints)
+            for Band, MidPoints in cSKCC.CallingFrequenciesKHz.items()
         )
 
     @staticmethod
@@ -2410,10 +2405,12 @@ def watch_for_ctrl_c():
 async def run():
     """Starts all conditional tasks with proper Ctrl+C handling."""
     # Handle Ctrl+C for Windows
-    if platform.system() == "win32":
+
+    if platform.system() == "Windows":
         thread = threading.Thread(target=watch_for_ctrl_c, daemon=True)
         thread.start()
     else:
+        # Unix-like systems: Use proper signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: handle_shutdown())
 
     tasks: list[asyncio.Task[None]] = [
@@ -2427,14 +2424,10 @@ async def run():
 
     await shutdown_event.wait()
     print(f"Shutdown event received. Cancelling {len(tasks)} tasks...")
-
-    # Cancel all tasks
     for task in tasks:
         task.cancel()
 
-    # Wait for them to finish
     await asyncio.gather(*tasks, return_exceptions=True)
-
     print("All tasks finished. Exiting cleanly.")
 
 asyncio.run(run())
