@@ -98,6 +98,21 @@ import platform
 RBN_SERVER = 'skimmer.skccgroup.com'
 RBN_PORT   = 7000
 
+US_STATES: list[str] = [
+    'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+    'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
+    'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
+    'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
+    'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
+]
+
+Levels: dict[str, int] = {
+    'C'  :    100,
+    'T'  :     50,
+    'S'  :    200,
+    'P'  : 500000,
+}
+
 shutdown_event = asyncio.Event()
 def handle_shutdown():
     """Sets the shutdown event when Ctrl+C is detected."""
@@ -2303,94 +2318,6 @@ try:
 except ImportError:
     VERSION = '<dev>'
 
-print(f'SKCC Skimmer version {VERSION}\n')
-
-US_STATES: list[str] = [
-    'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-    'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
-    'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
-    'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-    'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
-]
-
-ArgV = sys.argv[1:]
-
-config = cConfig(ArgV)
-
-cSKCC.BlockDuringUpdateWindow()
-
-Levels: dict[str, int] = {
-    'C'  :    100,
-    'T'  :     50,
-    'S'  :    200,
-    'P'  : 500000,
-}
-
-if config.VERBOSE:
-    config.PROGRESS_DOTS.ENABLED = False
-
-FileCheck(config.ADI_FILE)
-
-SKCC = cSKCC()
-
-if config.MY_CALLSIGN not in SKCC.Members:
-    print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
-    sys.exit()
-
-QSOs = cQSO()
-
-QSOs.GetGoalQSOs()
-QSOs.PrintProgress()
-
-print('')
-QSOs.AwardsCheck()
-
-if config.INTERACTIVE:
-    print('')
-    print('Interactive mode. Enter one or more comma or space separated callsigns.')
-    print('')
-    print("(Enter 'q' to quit, 'r' to refresh)")
-    print('')
-
-    while True:
-        print('> ', end='', flush=True)
-
-        Line = sys.stdin.readline().strip().lower()
-
-        if Line in ('q', 'quit'):
-            sys.exit()
-        elif Line in ('r', 'refresh'):
-            QSOs.Refresh()
-        elif Line == '':
-            continue
-        else:
-            print('')
-            Lookups(Line)
-
-Spotters = cSpotters()
-Spotters.GetSpotters()
-
-nearby_list_with_distance = Spotters.GetNearbySpotters()
-formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.FormatDistance(Miles)})'  for Spotter, Miles in nearby_list_with_distance]
-SPOTTERS_NEARBY = [Spotter  for Spotter, _ in nearby_list_with_distance]
-
-print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
-
-wrapped_spotter_lines = textwrap.wrap(', '.join(formatted_nearby_list_with_distance), width=80)
-
-for spotter_line in wrapped_spotter_lines:
-    print(f'    {spotter_line}')
-
-if config.LOG_FILE.DELETE_ON_STARTUP:
-    Filename = config.LOG_FILE.FILE_NAME
-
-    if Filename is not None and os.path.exists(Filename):
-        os.remove(Filename)
-
-print()
-print('Running...')
-print()
-
 def watch_for_ctrl_c():
     """Runs in a separate thread to detect Ctrl+C on Windows."""
     try:
@@ -2400,7 +2327,7 @@ def watch_for_ctrl_c():
         handle_shutdown()
 
 async def run():
-    """Starts all conditional tasks with proper Ctrl+C handling."""
+    global config, SKCC, QSOs, SPOTTERS_NEARBY, Spotters
 
     # Handle Ctrl+C for Windows
     if platform.system() == "Windows":
@@ -2409,6 +2336,79 @@ async def run():
     else:
         # Unix-like systems: Use proper signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: handle_shutdown())
+
+    print(f'SKCC Skimmer version {VERSION}\n')
+
+    ArgV = sys.argv[1:]
+
+    config = cConfig(ArgV)
+
+    cSKCC.BlockDuringUpdateWindow()
+
+    if config.VERBOSE:
+        config.PROGRESS_DOTS.ENABLED = False
+
+    FileCheck(config.ADI_FILE)
+
+    SKCC = cSKCC()
+
+    if config.MY_CALLSIGN not in SKCC.Members:
+        print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
+        sys.exit()
+
+    QSOs = cQSO()
+
+    QSOs.GetGoalQSOs()
+    QSOs.PrintProgress()
+
+    print('')
+    QSOs.AwardsCheck()
+
+    if config.INTERACTIVE:
+        print('')
+        print('Interactive mode. Enter one or more comma or space separated callsigns.')
+        print('')
+        print("(Enter 'q' to quit, 'r' to refresh)")
+        print('')
+
+        while True:
+            print('> ', end='', flush=True)
+
+            Line = sys.stdin.readline().strip().lower()
+
+            if Line in ('q', 'quit'):
+                sys.exit()
+            elif Line in ('r', 'refresh'):
+                QSOs.Refresh()
+            elif Line == '':
+                continue
+            else:
+                print('')
+                Lookups(Line)
+
+    Spotters = cSpotters()
+    Spotters.GetSpotters()
+
+    nearby_list_with_distance = Spotters.GetNearbySpotters()
+    formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.FormatDistance(Miles)})'  for Spotter, Miles in nearby_list_with_distance]
+    SPOTTERS_NEARBY = [Spotter  for Spotter, _ in nearby_list_with_distance]
+
+    print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
+
+    wrapped_spotter_lines = textwrap.wrap(', '.join(formatted_nearby_list_with_distance), width=80)
+
+    for spotter_line in wrapped_spotter_lines:
+        print(f'    {spotter_line}')
+
+    if config.LOG_FILE.DELETE_ON_STARTUP:
+        Filename = config.LOG_FILE.FILE_NAME
+
+        if Filename is not None and os.path.exists(Filename):
+            os.remove(Filename)
+
+    print()
+    print('Running...')
+    print()
 
     try:
         async with asyncio.TaskGroup() as tg:
