@@ -2387,9 +2387,6 @@ if config.LOG_FILE.DELETE_ON_STARTUP:
     if Filename is not None and os.path.exists(Filename):
         os.remove(Filename)
 
-eventLoop = asyncio.new_event_loop()
-asyncio.set_event_loop(eventLoop)
-
 print()
 print('Running...')
 print()
@@ -2404,8 +2401,8 @@ def watch_for_ctrl_c():
 
 async def run():
     """Starts all conditional tasks with proper Ctrl+C handling."""
-    # Handle Ctrl+C for Windows
 
+    # Handle Ctrl+C for Windows
     if platform.system() == "Windows":
         thread = threading.Thread(target=watch_for_ctrl_c, daemon=True)
         thread.start()
@@ -2413,21 +2410,21 @@ async def run():
         # Unix-like systems: Use proper signal handling
         signal.signal(signal.SIGINT, lambda sig, frame: handle_shutdown())
 
-    tasks: list[asyncio.Task[None]] = [
-        asyncio.create_task(cQSO.WatchLogFile()),
-        asyncio.create_task(cSPOTS.HandleSpots()),
-        asyncio.create_task(cDisplay.DotsLoop()),
-    ]
+    try:
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(cQSO.WatchLogFile())
+            tg.create_task(cSPOTS.HandleSpots())
+            tg.create_task(cDisplay.DotsLoop())
 
-    if config.SKED.ENABLED:
-        tasks.append(asyncio.create_task(cSked.RunForever()))
+            if config.SKED.ENABLED:
+                tg.create_task(cSked.RunForever())
 
-    await shutdown_event.wait()
-    print(f"Shutdown event received. Cancelling {len(tasks)} tasks...")
-    for task in tasks:
-        task.cancel()
+            await shutdown_event.wait()
+            print("Shutdown event received. Cancelling all tasks...")
 
-    await asyncio.gather(*tasks, return_exceptions=True)
+    except* asyncio.CancelledError:
+        pass  # Suppress cancellation errors for clean shutdown
+
     print("All tasks finished. Exiting cleanly.")
 
 asyncio.run(run())
