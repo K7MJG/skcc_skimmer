@@ -72,7 +72,6 @@
 #
 
 from datetime        import timedelta, datetime
-from types           import FrameType
 from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
 
@@ -95,7 +94,7 @@ import requests
 import threading
 import platform
 
-RBN_SERVER = 'skimmer.skccgroup.com'
+RBN_SERVER = 'telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
 US_STATES: list[str] = [
@@ -113,11 +112,6 @@ Levels: dict[str, int] = {
     'P'  : 500000,
 }
 
-shutdown_event = asyncio.Event()
-def handle_shutdown():
-    """Sets the shutdown event when Ctrl+C is detected."""
-    print("\nCtrl+C detected. Shutting down gracefully...")
-    shutdown_event.set()
 
 class cUtil:
     @staticmethod
@@ -146,6 +140,79 @@ class cUtil:
             return f'{Miles}mi'
 
         return f'{cUtil.Miles2Km(Miles)}km'
+    @staticmethod
+
+    def Log(Line: str) -> None:
+        if config.LOG_FILE.ENABLED and config.LOG_FILE.FILE_NAME is not None:
+            with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
+                File.write(Line + '\n')
+    @staticmethod
+
+    def LogError(Line: str) -> None:
+        if config.LOG_BAD_SPOTS:
+            with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
+                File.write(Line + '\n')
+    @staticmethod
+
+    def AbbreviateClass(Class: str, X_Factor: int) -> str:
+        if X_Factor > 1:
+            return f'{Class}x{X_Factor}'
+
+        return Class
+
+    @staticmethod
+    def BuildMemberInfo(CallSign: str) -> str:
+        entry = SKCC.Members[CallSign]
+        number, suffix = SKCC.GetFullMemberNumber(CallSign)
+
+        return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
+
+    @staticmethod
+    def FileCheck(Filename: str) -> None | NoReturn:
+        if os.path.exists(Filename):
+            return
+
+        print('')
+        print(f"File '{Filename}' does not exist.")
+        print('')
+        sys.exit()
+
+    @staticmethod
+    def IsInBANDS(FrequencyKHz: float) -> bool:
+        bands: dict[int, tuple[float, float]] = {
+            160: (1800.0, 2000.0),
+            80:  (3500.0, 4000.0),
+            60:  (5330.5 - 1.5, 5403.5 + 1.5),  # Small buffer for band edges
+            40:  (7000.0, 7300.0),
+            30:  (10100.0, 10150.0),
+            20:  (14000.0, 14350.0),
+            17:  (18068.0, 18168.0),
+            15:  (21000.0, 21450.0),
+            12:  (24890.0, 24990.0),
+            10:  (28000.0, 29700.0),
+            6:   (50000.0, 50100.0),
+        }
+
+        return any(
+            band in config.BANDS and lowKHz <= FrequencyKHz <= highKHz
+            for band, (lowKHz, highKHz) in bands.items()
+        )
+
+    @staticmethod
+    def handle_shutdown(signum: int, frame: object | None = None) -> None:
+        """Sets the shutdown event when Ctrl+C is detected."""
+        print("\nCtrl+C detected. Shutting down gracefully...")
+        shutdown_event.set()
+
+    @staticmethod
+    def watch_for_ctrl_c():
+        """Runs in a separate thread to detect Ctrl+C on Windows."""
+        try:
+            # Just wait for KeyboardInterrupt
+            while True:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            cUtil.handle_shutdown(signal.SIGINT, None)
 
 class cConfig:
     @dataclass
@@ -216,13 +283,13 @@ class cConfig:
 
     @dataclass
     class cNotification:
-        DEFAULT_CONDITION = ['goals', 'targets', 'friends']  # ✅ Class-level default
+        DEFAULT_CONDITION = ['goals', 'targets', 'friends']  # Class-level default
         ENABLED: bool = True
         CONDITION: list[str] = field(default_factory=lambda: cConfig.cNotification.DEFAULT_CONDITION)
         RENOTIFICATION_DELAY_SECONDS: int = 30
     def init_notifications(self):
         notification_config = self.configFile.get("NOTIFICATION", {})
-        conditions = cUtil.Split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # ✅ Use DEFAULT_CONDITION
+        conditions = cUtil.Split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # Use DEFAULT_CONDITION
         invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
         if invalid_conditions:
             print(f"Invalid NOTIFICATION CONDITION(s): {invalid_conditions}. Must be 'goals', 'targets', or 'friends'.")
@@ -622,15 +689,25 @@ class cDisplay:
         cls.DotsOutput = 0
 
     @classmethod
-    async def DotsLoop(cls):
+    async def DotsLoop_Task(cls):
         try:
             while not shutdown_event.is_set():
-                await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
-                print('.', end='', flush=True)
-                cls.DotsOutput += 1
+                # Use shorter sleep intervals to check shutdown flag more frequently
+                for _ in range(max(1, config.PROGRESS_DOTS.DISPLAY_SECONDS * 2)):
+                    if shutdown_event.is_set():
+                        return
+                    await asyncio.sleep(0.5)
+
+                # Only print the dot if we're not shutting down
+                if not shutdown_event.is_set():
+                    print('.', end='', flush=True)
+                    cls.DotsOutput += 1
+
         except asyncio.CancelledError:
-            print("cDisplay.DotsLoop task cancelled.")
+            print("\ncDisplay.DotsLoop_Task cancelled.")
             raise
+        except Exception as e:
+            print(f"\nUnexpected error in DotsLoop: {e}")
 
 class cSked:
     RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
@@ -657,7 +734,7 @@ class cSked:
             if CallSign in config.EXCLUSIONS:
                 continue
 
-            Report: list[str] = [BuildMemberInfo(CallSign)]
+            Report: list[str] = [cUtil.BuildMemberInfo(CallSign)]
 
             if CallSign in cSPOTS.LastSpotted:
                 FrequencyKHz, StartTime = cSPOTS.LastSpotted[CallSign]
@@ -775,7 +852,7 @@ class cSked:
 
                 Out = f'{ZuluTime}{NewIndicator}{CallSign:<6} {"; ".join(SkedHit[CallSign])}'
                 cDisplay.Print(Out)
-                Log(f'{ZuluDate} {Out}')
+                cUtil.Log(f'{ZuluDate} {Out}')
 
         return SkedHit
 
@@ -809,15 +886,43 @@ class cSked:
             print(f"\nProblem retrieving information from the Sked Page.  Skipping...")
 
     @classmethod
-    async def RunForever(cls):
+    async def RunForever_Task(cls):
         try:
             while not shutdown_event.is_set():
-                cls.DisplayLogins()
-                await asyncio.sleep(config.SKED.CHECK_SECONDS)
+                try:
+                    cls.DisplayLogins()
+                except Exception as e:
+                    print(f"Error in DisplayLogins: {e}")
+
+                # Use wait_for with short timeout to check shutdown_event more frequently
+                try:
+                    await asyncio.wait_for(
+                        shutdown_event.wait(),
+                        timeout=min(config.SKED.CHECK_SECONDS, 5)
+                    )
+                    # If we get here, shutdown_event was set
+                    break
+                except asyncio.TimeoutError:
+                    # Just a timeout, continue if we need to wait longer
+                    if config.SKED.CHECK_SECONDS <= 5:
+                        # We've waited enough
+                        continue
+                    else:
+                        # Wait the remaining time
+                        remaining = config.SKED.CHECK_SECONDS - 5
+                        try:
+                            await asyncio.wait_for(shutdown_event.wait(), timeout=remaining)
+                            # If we get here, shutdown_event was set
+                            break
+                        except asyncio.TimeoutError:
+                            # Full time elapsed, loop again
+                            pass
+
         except asyncio.CancelledError:
-            await cRBN.feed_generator(config.MY_CALLSIGN).aclose()  # ✅ Properly close generator
-            print("cSked.RunForever task cancelled.")
+            print("cSked.RunForever_Task cancelled.")
             raise
+        except Exception as e:
+            print(f"Unexpected error in RunForever: {e}")
 
 class cSPOTS:
     LastSpotted: dict[str, tuple[float, float]] = {}
@@ -827,27 +932,51 @@ class cSPOTS:
     dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
     @classmethod
-    async def HandleSpots(cls):
+    async def HandleSpots_Task(cls):
+        generator = None
         try:
-            async for data in cRBN.feed_generator(config.MY_CALLSIGN):
-                if shutdown_event.is_set():  # ✅ Gracefully exit if shutdown is requested
+            generator = cRBN.feed_generator(config.MY_CALLSIGN)
+
+            async for data in generator:
+                if shutdown_event.is_set():
+                    # Gracefully exit if shutdown is requested
                     break
-                cSPOTS.HandleSpot(data.rstrip().decode("ascii"))
+
+                try:
+                    line = data.rstrip().decode("ascii", errors="replace")
+                    cSPOTS.HandleSpot(line)
+                except Exception as e:
+                    # Don't let processing errors crash the whole task
+                    print(f"Error processing spot: {e}")
+                    continue
 
         except asyncio.CancelledError:
-            await cRBN.feed_generator(config.MY_CALLSIGN).aclose()  # ✅ Properly close generator
-            print("cSPOTS.HandleSpots task cancelled.")
+            print("cSPOTS.HandleSpots_Task cancelled.")
+            # Make sure to close the generator to release resources
+            if generator is not None:
+                await generator.aclose()
             raise
+
+        except Exception as e:
+            print(f"Unexpected error in HandleSpots: {e}")
+
+        finally:
+            # Ensure the generator is closed properly
+            if generator is not None:
+                try:
+                    await generator.aclose()
+                except Exception:
+                    pass
 
     @staticmethod
     def ParseSpot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
         # If the line isn't exactly 75 characters, something is wrong.
         if len(Line) != 75:
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         if not Line.startswith('DX de '):
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         Spotter, FrequencyKHzStr = Line[6:24].split('-#:')
@@ -866,23 +995,23 @@ class cSPOTS:
             return None
 
         if not cSPOTS.Zulu_RegEx.match(Zulu):
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         if not cSPOTS.dB_RegEx.match(Line[47:52]):
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         try:
             WPM = int(Line[53:56])
         except ValueError:
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         try:
             FrequencyKHz = float(FrequencyKHzStr)
         except ValueError:
-            LogError(Line)
+            cUtil.LogError(Line)
             return None
 
         CallSignSuffix = ''
@@ -940,7 +1069,7 @@ class cSPOTS:
 
         #-------------
 
-        if not IsInBANDS(FrequencyKHz):
+        if not cUtil.IsInBANDS(FrequencyKHz):
             return
 
         #-------------
@@ -1047,12 +1176,12 @@ class cSPOTS:
                 NotificationFlag = cls.HandleNotification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
-                MemberInfo = BuildMemberInfo(CallSign)
+                MemberInfo = cUtil.BuildMemberInfo(CallSign)
                 NotificationFlag = cls.HandleNotification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
             cDisplay.Print(Out)
-            Log(f'{ZuluDate} {Out}')
+            cUtil.Log(f'{ZuluDate} {Out}')
 
 class cQSO:
     MyMemberNumber: str
@@ -1104,28 +1233,48 @@ class cQSO:
         self.MyMemberNumber = MyMemberEntry['plain_number']
 
     @classmethod
-    async def WatchLogFile(cls):
+    async def WatchLogFile_Task(cls):
         try:
             while not shutdown_event.is_set():
-                if os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
-                    cDisplay.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
+                try:
+                    if os.path.exists(config.ADI_FILE) and os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
+                        cDisplay.Print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                    # Once we detect the file has changed, we can't necessarily read it
-                    # immediately because the logger may still be writing to it, so we wait
-                    # until the write is complete.
-                    while True:
-                        Size = os.path.getsize(config.ADI_FILE)
-                        await asyncio.sleep(1)
+                        # Once we detect the file has changed, we can't necessarily read it
+                        # immediately because the logger may still be writing to it, so we wait
+                        # until the write is complete.
+                        while not shutdown_event.is_set():
+                            Size = os.path.getsize(config.ADI_FILE)
 
-                        if os.path.getsize(config.ADI_FILE) == Size:
-                            break
+                            # Use a shorter sleep and check shutdown flag
+                            for _ in range(3):  # 3 x 0.3 seconds = ~1 second
+                                if shutdown_event.is_set():
+                                    return
+                                await asyncio.sleep(0.3)
 
-                    QSOs.Refresh()
+                            if os.path.getsize(config.ADI_FILE) == Size:
+                                break
 
-                await asyncio.sleep(3)
+                        # Check again before potentially expensive refresh
+                        if not shutdown_event.is_set():
+                            QSOs.Refresh()
+
+                except FileNotFoundError:
+                    print(f"Warning: ADI file '{config.ADI_FILE}' not found or inaccessible")
+                except Exception as e:
+                    print(f"Error watching log file: {e}")
+
+                # Use shorter sleep intervals to check shutdown flag more frequently
+                for _ in range(6):  # 6 x 0.5 seconds = 3 seconds
+                    if shutdown_event.is_set():
+                        return
+                    await asyncio.sleep(0.5)
+
         except asyncio.CancelledError:
-            print("cQSOs.WatchLogFile task cancelled.")
+            print("cQSO.WatchLogFile_Task cancelled.")
             raise
+        except Exception as e:
+            print(f"Unexpected error in WatchLogFile: {e}")
 
     def AwardsCheck(self) -> None:
         C_Level = len(self.ContactsForC)  // Levels['C']
@@ -1264,7 +1413,7 @@ class cQSO:
             Remaining, X_Factor = cQSO.CalculateNumerics(Class, Total)
 
             if Class in config.GOALS:
-                Abbrev = AbbreviateClass(Class, X_Factor)
+                Abbrev = cUtil.AbbreviateClass(Class, X_Factor)
                 print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
 
         print('')
@@ -1340,21 +1489,21 @@ class cQSO:
 
         if 'CXN' in config.GOALS and self.MyC_Date and TheirMemberNumber not in self.ContactsForC:
             _, x_factor = cQSO.CalculateNumerics('C', len(self.ContactsForC))
-            GoalHitList.append(AbbreviateClass('C', x_factor))
+            GoalHitList.append(cUtil.AbbreviateClass('C', x_factor))
 
         if 'T' in config.GOALS and self.MyC_Date and not self.MyT_Date and TheirC_Date and TheirMemberNumber not in self.ContactsForT:
             GoalHitList.append('T')
 
         if 'TXN' in config.GOALS and self.MyT_Date and TheirC_Date and TheirMemberNumber not in self.ContactsForT:
             _, x_factor = cQSO.CalculateNumerics('T', len(self.ContactsForT))
-            GoalHitList.append(AbbreviateClass('T', x_factor))
+            GoalHitList.append(cUtil.AbbreviateClass('T', x_factor))
 
         if 'S' in config.GOALS and self.MyTX8_Date and not self.MyS_Date and TheirT_Date and TheirMemberNumber not in self.ContactsForS:
             GoalHitList.append('S')
 
         if 'SXN' in config.GOALS and self.MyS_Date and TheirT_Date and TheirMemberNumber not in self.ContactsForS:
             _, x_factor = cQSO.CalculateNumerics('S', len(self.ContactsForS))
-            GoalHitList.append(AbbreviateClass('S', x_factor))
+            GoalHitList.append(cUtil.AbbreviateClass('S', x_factor))
 
         if 'WAS' in config.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in self.ContactsForWAS:
             GoalHitList.append('WAS')
@@ -1375,9 +1524,9 @@ class cQSO:
 
             if (contact := self.ContactsForP.get(prefix)):
                 if i_their_member_number > contact[2]:
-                    GoalHitList.append(f'{AbbreviateClass("P", x_factor)}(+{i_their_member_number - contact[2]})')
+                    GoalHitList.append(f'{cUtil.AbbreviateClass("P", x_factor)}(+{i_their_member_number - contact[2]})')
             else:
-                GoalHitList.append(f'{AbbreviateClass("P", x_factor)}(new +{i_their_member_number})')
+                GoalHitList.append(f'{cUtil.AbbreviateClass("P", x_factor)}(new +{i_their_member_number})')
 
         return GoalHitList
 
@@ -2150,154 +2299,123 @@ class cSKCC:
 
         return (MemberNumber, Suffix)
 
-def Log(Line: str) -> None:
-    if config.LOG_FILE.ENABLED and config.LOG_FILE.FILE_NAME is not None:
-        with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
-            File.write(Line + '\n')
+    def Lookups(self, LookupString: str) -> None:
+        def PrintCallSign(CallSign: str):
+            Entry = SKCC.Members[CallSign]
 
-def LogError(Line: str) -> None:
-    if config.LOG_BAD_SPOTS:
-        with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
-            File.write(Line + '\n')
+            MyNumber = SKCC.Members[config.MY_CALLSIGN]['plain_number']
 
-def signal_handler(_signal: int, _frame: FrameType | None) -> NoReturn:
-    sys.exit()
+            Report = [cUtil.BuildMemberInfo(CallSign)]
 
-def AbbreviateClass(Class: str, X_Factor: int) -> str:
-    if X_Factor > 1:
-        return f'{Class}x{X_Factor}'
-
-    return Class
-
-def BuildMemberInfo(CallSign: str) -> str:
-    entry = SKCC.Members[CallSign]
-    number, suffix = SKCC.GetFullMemberNumber(CallSign)
-
-    return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
-
-def IsInBANDS(FrequencyKHz: float) -> bool:
-    bands: dict[int, tuple[float, float]] = {
-        160: (1800.0, 2000.0),
-        80:  (3500.0, 4000.0),
-        60:  (5330.5 - 1.5, 5403.5 + 1.5),  # Small buffer for band edges
-        40:  (7000.0, 7300.0),
-        30:  (10100.0, 10150.0),
-        20:  (14000.0, 14350.0),
-        17:  (18068.0, 18168.0),
-        15:  (21000.0, 21450.0),
-        12:  (24890.0, 24990.0),
-        10:  (28000.0, 29700.0),
-        6:   (50000.0, 50100.0),
-    }
-
-    return any(
-        band in config.BANDS and lowKHz <= FrequencyKHz <= highKHz
-        for band, (lowKHz, highKHz) in bands.items()
-    )
-
-
-def Lookups(LookupString: str) -> None:
-    def PrintCallSign(CallSign: str):
-        Entry = SKCC.Members[CallSign]
-
-        MyNumber = SKCC.Members[config.MY_CALLSIGN]['plain_number']
-
-        Report = [BuildMemberInfo(CallSign)]
-
-        if Entry['plain_number'] == MyNumber:
-            Report.append('(you)')
-        else:
-            GoalList = QSOs.GetGoalHits(CallSign)
-
-            if GoalList:
-                Report.append(f'YOU need them for {",".join(GoalList)}')
-
-            TargetList = QSOs.GetTargetHits(CallSign)
-
-            if TargetList:
-                Report.append(f'THEY need you for {",".join(TargetList)}')
-
-            # NX1K 12-Nov-2017 Put in check for friend.
-            IsFriend = CallSign in config.FRIENDS
-
-            if IsFriend:
-                Report.append('friend')
-
-            if not GoalList and not TargetList:
-                Report.append("You don't need to work each other.")
-
-        print(f'  {CallSign} - {"; ".join(Report)}')
-
-    LookupList = cUtil.Split(LookupString.upper())
-
-    for Item in LookupList:
-        Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
-
-        if Match:
-            Number = Match.group(1)
-
-            for CallSign, Value in SKCC.Members.items():
-                Entry = Value
-
-                if Entry['plain_number'] == Number:
-                    if CallSign == Entry['main_call'] == CallSign:
-                        break
+            if Entry['plain_number'] == MyNumber:
+                Report.append('(you)')
             else:
-                print(f'  No member with the number {Number}.')
-                continue
+                GoalList = QSOs.GetGoalHits(CallSign)
 
-            PrintCallSign(CallSign)
-        else:
-            CallSign = SKCC.ExtractCallSign(Item)
+                if GoalList:
+                    Report.append(f'YOU need them for {",".join(GoalList)}')
 
-            if not CallSign:
-                print(f'  {Item} - not an SKCC member.')
-                continue
+                TargetList = QSOs.GetTargetHits(CallSign)
 
-            PrintCallSign(CallSign)
+                if TargetList:
+                    Report.append(f'THEY need you for {",".join(TargetList)}')
 
-    print('')
+                # NX1K 12-Nov-2017 Put in check for friend.
+                IsFriend = CallSign in config.FRIENDS
 
-def FileCheck(Filename: str) -> None | NoReturn:
-    if os.path.exists(Filename):
-        return
+                if IsFriend:
+                    Report.append('friend')
 
-    print('')
-    print(f"File '{Filename}' does not exist.")
-    print('')
-    sys.exit()
+                if not GoalList and not TargetList:
+                    Report.append("You don't need to work each other.")
 
+            print(f'  {CallSign} - {"; ".join(Report)}')
+
+        LookupList = cUtil.Split(LookupString.upper())
+
+        for Item in LookupList:
+            Match = re.match(r'^([0-9]+)[CTS]{0,1}$', Item)
+
+            if Match:
+                Number = Match.group(1)
+
+                for CallSign, Value in SKCC.Members.items():
+                    Entry = Value
+
+                    if Entry['plain_number'] == Number:
+                        if CallSign == Entry['main_call'] == CallSign:
+                            break
+                else:
+                    print(f'  No member with the number {Number}.')
+                    continue
+
+                PrintCallSign(CallSign)
+            else:
+                CallSign = SKCC.ExtractCallSign(Item)
+
+                if not CallSign:
+                    print(f'  {Item} - not an SKCC member.')
+                    continue
+
+                PrintCallSign(CallSign)
+
+        print('')
 
 class cRBN:
     @staticmethod
     async def feed_generator(callsign: str) -> AsyncGenerator[bytes, None]:
-        while True:
-            reader: asyncio.StreamReader | None = None
-            writer: asyncio.StreamWriter | None = None
+        reader: asyncio.StreamReader | None = None
+        writer: asyncio.StreamWriter | None = None
 
-            try:
-                reader, writer = await asyncio.open_connection(RBN_SERVER, RBN_PORT)
+        try:
+            while not shutdown_event.is_set():
+                reader = None
+                writer = None
 
-                await reader.readuntil(b"call: ")
-                writer.write(f"{callsign}\r\n".encode("ascii"))
-                await writer.drain()
-                await reader.readuntil(b">\r\n\r\n")
+                try:
+                    reader, writer = await asyncio.open_connection(RBN_SERVER, RBN_PORT)
 
-                while True:
-                    yield await reader.readuntil(b'\n')
+                    await reader.readuntil(b"call: ")
+                    writer.write(f"{callsign}\r\n".encode("ascii"))
+                    await writer.drain()
+                    await reader.readuntil(b">\r\n\r\n")
 
-            except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
-                print(f"RBN feed connection error: {e}, reconnecting...")
-                await asyncio.sleep(5)
-            except Exception as e:
-                print(f"Unexpected RBN feed error: {e}")
-            finally:
-                if writer is not None:
-                    writer.close()
-                    try:
-                        await writer.wait_closed()
-                    except Exception:
-                        pass
+                    while not shutdown_event.is_set():
+                        try:
+                            data = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=1.0)
+                            yield data
+                        except asyncio.TimeoutError:
+                            # Just a timeout, check shutdown flag and continue
+                            continue
+
+                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
+                    print(f"RBN feed connection error: {e}, reconnecting...")
+                    await asyncio.sleep(5)
+                except asyncio.CancelledError:
+                    # Handle cancellation specially
+                    print("RBN feed generator cancelled")
+                    raise
+                except Exception as e:
+                    print(f"Unexpected RBN feed error: {e}")
+                    await asyncio.sleep(5)
+                finally:
+                    # Clean up the connection if it exists
+                    if writer is not None:
+                        writer.close()
+                        try:
+                            await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
+                        except (asyncio.TimeoutError, Exception):
+                            pass
+
+        except asyncio.CancelledError:
+            # Final cleanup when the generator is cancelled
+            if writer is not None and not writer.is_closing():
+                writer.close()
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+                except (asyncio.TimeoutError, Exception):
+                    pass
+            raise  # Re-raise to properly terminate the generator
 
 
 #
@@ -2318,26 +2436,22 @@ try:
 except ImportError:
     VERSION = '<dev>'
 
-def watch_for_ctrl_c():
-    """Runs in a separate thread to detect Ctrl+C on Windows."""
-    try:
-        while not shutdown_event.is_set():
-            pass #signal.pause()  # Blocks until a signal is received (Linux/macOS only)
-    except KeyboardInterrupt:
-        handle_shutdown()
+shutdown_event = asyncio.Event()
 
 async def run():
     global config, SKCC, QSOs, SPOTTERS_NEARBY, Spotters
 
-    # Handle Ctrl+C for Windows
-    if platform.system() == "Windows":
-        thread = threading.Thread(target=watch_for_ctrl_c, daemon=True)
-        thread.start()
-    else:
-        # Unix-like systems: Use proper signal handling
-        signal.signal(signal.SIGINT, lambda sig, frame: handle_shutdown())
-
     print(f'SKCC Skimmer version {VERSION}\n')
+
+    # Set up shutdown handlers early
+    if platform.system() == "Windows":
+        # Windows needs a separate thread to handle KeyboardInterrupt
+        ctrl_c_thread = threading.Thread(target=cUtil.watch_for_ctrl_c, daemon=True)
+        ctrl_c_thread.start()
+    else:
+        # Unix-like systems can use signal handlers
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            signal.signal(sig, cUtil.handle_shutdown)
 
     ArgV = sys.argv[1:]
 
@@ -2348,7 +2462,7 @@ async def run():
     if config.VERBOSE:
         config.PROGRESS_DOTS.ENABLED = False
 
-    FileCheck(config.ADI_FILE)
+    cUtil.FileCheck(config.ADI_FILE)
 
     SKCC = cSKCC()
 
@@ -2374,17 +2488,22 @@ async def run():
         while True:
             print('> ', end='', flush=True)
 
-            Line = sys.stdin.readline().strip().lower()
+            try:
+                Line = sys.stdin.readline().strip().lower()
 
-            if Line in ('q', 'quit'):
-                sys.exit()
-            elif Line in ('r', 'refresh'):
-                QSOs.Refresh()
-            elif Line == '':
-                continue
-            else:
-                print('')
-                Lookups(Line)
+                if Line in ('q', 'quit'):
+                    print("\nExiting by user request...")
+                    return
+                elif Line in ('r', 'refresh'):
+                    QSOs.Refresh()
+                elif Line == '':
+                    continue
+                else:
+                    print('')
+                    SKCC.Lookups(Line)
+            except KeyboardInterrupt:
+                print("\nExiting by user request...")
+                return
 
     Spotters = cSpotters()
     Spotters.GetSpotters()
@@ -2410,21 +2529,36 @@ async def run():
     print('Running...')
     print()
 
+    # Create all tasks but keep references to them
+    tasks: list[asyncio.Task[None]] = []
+
     try:
+        # Create a task group to manage all tasks
         async with asyncio.TaskGroup() as tg:
-            tg.create_task(cQSO.WatchLogFile())
-            tg.create_task(cSPOTS.HandleSpots())
-            tg.create_task(cDisplay.DotsLoop())
+            tasks.append(tg.create_task(cQSO.WatchLogFile_Task()))
+            tasks.append(tg.create_task(cSPOTS.HandleSpots_Task()))
+            tasks.append(tg.create_task(cDisplay.DotsLoop_Task()))
 
             if config.SKED.ENABLED:
-                tg.create_task(cSked.RunForever())
+                tasks.append(tg.create_task(cSked.RunForever_Task()))
 
+            # Wait for shutdown event
             await shutdown_event.wait()
             print("Shutdown event received. Cancelling all tasks...")
 
     except* asyncio.CancelledError:
-        pass  # Suppress cancellation errors for clean shutdown
+        # This should catch any cancellation errors from the tasks
+        pass
+    finally:
+        # Make sure all resources are cleaned up
+        # Explicitly cancel all tasks to ensure they finish
+        for task in tasks:
+            if not task.done():
+                task.cancel()
 
-    print("All tasks finished. Exiting cleanly.")
+        # Wait a moment for tasks to finish cleanup
+        await asyncio.sleep(0.5)
+
+        print("All tasks finished. Exiting cleanly.")
 
 asyncio.run(run())
