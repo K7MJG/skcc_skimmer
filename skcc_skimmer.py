@@ -95,7 +95,7 @@ import requests
 import threading
 import platform
 
-RBN_SERVER = 'telnet.reversebeacon.net'
+RBN_SERVER = '::1' #'sjc1.telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
 US_STATES: list[str] = [
@@ -2367,14 +2367,14 @@ class cRBN:
     async def resolve_host(host: str, port: int) -> list[tuple[socket.AddressFamily, str]]:
         """Resolve the host and return a list of (family, address) tuples, preferring IPv6."""
         try:
-            addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            addr_info = await asyncio.get_event_loop().getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            # Sort addresses to prioritize IPv6 (AF_INET6 before AF_INET)
             return sorted(
-                [(ai[0], ai[4][0]) for ai in addr_info if isinstance(ai[4][0], str)],  # Ensure IP is a string
+                [(ai[0], ai[4][0]) for ai in addr_info],
                 key=lambda x: x[0] != socket.AF_INET6  # Prioritize IPv6
             )
-        except socket.gaierror as e:
-            print(f"DNS resolution failed for {host}: {e}")
-            return []
+        except socket.gaierror:
+            return []  # Silently fail if DNS resolution fails
 
     @staticmethod
     async def feed_generator(callsign: str) -> AsyncGenerator[bytes, None]:
@@ -2387,17 +2387,20 @@ class cRBN:
             # Resolve the hostname dynamically
             addresses: list[tuple[socket.AddressFamily, str]] = await cRBN.resolve_host(RBN_SERVER, RBN_PORT)
             if not addresses:
-                print("No valid IP addresses found. Retrying in 5 seconds...")
+                print(f"Error: No valid IP addresses found for {RBN_SERVER}. Retrying in 5 seconds...")
                 await asyncio.sleep(5)
                 continue
+
+            connection_failed = True  # Track if both IPv6 & IPv4 fail
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
                 try:
-                    print(f"Trying {protocol} connection to {ip}:{RBN_PORT}...")
                     reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
-                    print(f"Connected using {protocol}.")
+                    print(f"Connected to '{RBN_SERVER}' using {protocol}.")  # Only print success
+                    connection_failed = False  # Mark success
 
+                    # Authenticate with the RBN server
                     await reader.readuntil(b"call: ")
                     writer.write(f"{callsign}\r\n".encode("ascii"))
                     await writer.drain()
@@ -2406,20 +2409,18 @@ class cRBN:
                     while not shutdown_event.is_set():
                         try:
                             data: bytes = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=1.0)
-                            yield data
+                            yield data  # Send data to caller
                         except asyncio.TimeoutError:
-                            continue  # Just a timeout, check shutdown flag and continue
+                            continue  # Timeout is fine, just continue
 
-                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
-                    print(f"RBN feed connection error ({protocol}): {e}, reconnecting...")
-                    await asyncio.sleep(5)
+                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
+                    pass  # Silently ignore & retry
                 except asyncio.CancelledError:
-                    print("RBN feed generator cancelled")
-                    raise
-                except Exception as e:
-                    print(f"Unexpected RBN feed error ({protocol}): {e}")
-                    await asyncio.sleep(5)
+                    raise  # Ensure proper cancellation handling
+                except Exception:
+                    pass  # Silently ignore unexpected errors
                 finally:
+                    # Cleanup connections properly
                     if writer is not None:
                         writer.close()
                         try:
@@ -2427,9 +2428,12 @@ class cRBN:
                         except (asyncio.TimeoutError, Exception):
                             pass
 
-                # If connection succeeds, break out of the loop
-                if reader and writer:
+                if reader and writer:  # If connection succeeds, stop trying
                     break
+
+            if connection_failed:
+                print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
+            await asyncio.sleep(5)
 
         # Final cleanup if cancelled
         if writer is not None and not writer.is_closing():
@@ -2439,6 +2443,7 @@ class cRBN:
             except (asyncio.TimeoutError, Exception):
                 pass
         raise  # Re-raise cancellation
+
 
 
 #
