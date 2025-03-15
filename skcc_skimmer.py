@@ -95,7 +95,7 @@ import requests
 import threading
 import platform
 
-RBN_SERVER = '::1' #'sjc1.telnet.reversebeacon.net'
+RBN_SERVER = 'telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
 US_STATES: list[str] = [
@@ -679,36 +679,13 @@ class cFastDateTime:
         return cFastDateTime(time.gmtime())
 
 class cDisplay:
-    DotsOutput = 0
-
     @classmethod
     def print(cls, text: str):
-        if cls.DotsOutput > 0:
+        if cRBN.dot_count > 0:
             print()
 
         print(text)
-        cls.DotsOutput = 0
-
-    @classmethod
-    async def write_dots_task(cls):
-        try:
-            while not shutdown_event.is_set():
-                # Use shorter sleep intervals to check shutdown flag more frequently
-                for _ in range(max(1, config.PROGRESS_DOTS.DISPLAY_SECONDS * 2)):
-                    if shutdown_event.is_set():
-                        return
-                    await asyncio.sleep(0.5)
-
-                # Only print the dot if we're not shutting down
-                if not shutdown_event.is_set():
-                    print('.', end='', flush=True)
-                    cls.DotsOutput += 1
-
-        except asyncio.CancelledError:
-            print("\ncDisplay.DotsLoop_Task cancelled.")
-            raise
-        except Exception as e:
-            print(f"\nUnexpected error in DotsLoop: {e}")
+        cRBN.dot_count_reset()
 
 class cSked:
     RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
@@ -1355,7 +1332,20 @@ class cQSO:
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
         increment = Levels[Class]
-        return increment - (Total % increment), (Total + increment) // increment
+        raw_factor = (Total + increment) // increment
+
+        # Apply the special X-factor rule: individual steps for 1-10, then increments of 5
+        if raw_factor <= 10:
+            x_factor = raw_factor
+        else:
+            # For values > 10, round down to nearest multiple of 5
+            x_factor = 5 * ((raw_factor + 2) // 5)  # +2 to round properly (e.g. 13 -> 15)
+
+        # Calculate how many more contacts needed for next level
+        next_level = x_factor + 1 if x_factor < 10 else x_factor + 5
+        remaining = (next_level * increment) - Total
+
+        return remaining, x_factor
 
     def read_qsos(self) -> None:
         """ Reads QSOs from the ADIF log file and processes them efficiently. """
@@ -2273,7 +2263,6 @@ class cSKCC:
             for CallingFrequencyKHz in cSKCC.CallingFrequenciesKHz[Band]
         )
 
-
     def get_full_member_number(self, CallSign: str) -> tuple[str, str]:
         Entry = self.Members[CallSign]
 
@@ -2363,6 +2352,9 @@ class cSKCC:
         print('')
 
 class cRBN:
+    connected: bool = False
+    dot_count: int = 0
+
     @staticmethod
     async def resolve_host(host: str, port: int) -> list[tuple[socket.AddressFamily, str]]:
         """Resolve the host and return a list of (family, address) tuples, preferring IPv6."""
@@ -2376,8 +2368,8 @@ class cRBN:
         except socket.gaierror:
             return []  # Silently fail if DNS resolution fails
 
-    @staticmethod
-    async def feed_generator(callsign: str) -> AsyncGenerator[bytes, None]:
+    @classmethod
+    async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
         """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4."""
 
         reader: asyncio.StreamReader | None = None
@@ -2391,14 +2383,14 @@ class cRBN:
                 await asyncio.sleep(5)
                 continue
 
-            connection_failed = True  # Track if both IPv6 & IPv4 fail
+            cls.connected = False
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
                 try:
                     reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")  # Only print success
-                    connection_failed = False  # Mark success
+                    cls.connected = True
 
                     # Authenticate with the RBN server
                     await reader.readuntil(b"call: ")
@@ -2431,7 +2423,7 @@ class cRBN:
                 if reader and writer:  # If connection succeeds, stop trying
                     break
 
-            if connection_failed:
+            if not cls.connected:
                 print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
             await asyncio.sleep(5)
 
@@ -2444,7 +2436,21 @@ class cRBN:
                 pass
         raise  # Re-raise cancellation
 
+    @classmethod
+    async def write_dots_task(cls):
+        while True:
+            await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
 
+            if cls.connected:
+                print('.', end='', flush=True)
+                cls.dot_count += 1
+
+                if cls.dot_count % config.PROGRESS_DOTS.DOTS_PER_LINE == 0:
+                    print('', flush=True)
+
+    @classmethod
+    def dot_count_reset(cls):
+        cls.dot_count = 0
 
 #
 # Main
@@ -2565,7 +2571,9 @@ async def main_loop():
         async with asyncio.TaskGroup() as tg:
             tasks.append(tg.create_task(cQSO.watch_logfile_task()))
             tasks.append(tg.create_task(cSPOTS.handle_spots_task()))
-            tasks.append(tg.create_task(cDisplay.write_dots_task()))
+
+            if config.PROGRESS_DOTS.ENABLED:
+                tasks.append(tg.create_task(cRBN.write_dots_task()))
 
             if config.SKED.ENABLED:
                 tasks.append(tg.create_task(cSked.sked_page_scraper_task()))
