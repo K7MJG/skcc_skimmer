@@ -322,7 +322,9 @@ class cConfig:
         def read_skcc_skimmer_cfg() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
-            with open('skcc_skimmer.cfg', 'r', encoding='utf-8') as configFile:
+            ConfigFileAbsolute = os.path.abspath('skcc_skimmer.cfg')
+            cDisplay.print(f"\nReading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
+            with open(ConfigFileAbsolute, 'r', encoding='utf-8') as configFile:
                 ConfigFileString = configFile.read()
                 exec(ConfigFileString, {}, config_vars)
 
@@ -1201,7 +1203,7 @@ class cQSO:
 
         cls.read_qsos()
 
-        MyMemberEntry       = cSKCC.Members[config.MY_CALLSIGN]
+        MyMemberEntry      = cSKCC.Members[config.MY_CALLSIGN]
         cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
         cls.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
         cls.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
@@ -1333,20 +1335,7 @@ class cQSO:
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
         increment = Levels[Class]
-        raw_factor = (Total + increment) // increment
-
-        # Apply the special X-factor rule: individual steps for 1-10, then increments of 5
-        if raw_factor <= 10:
-            x_factor = raw_factor
-        else:
-            # For values > 10, round down to nearest multiple of 5
-            x_factor = 5 * ((raw_factor + 2) // 5)  # +2 to round properly (e.g. 13 -> 15)
-
-        # Calculate how many more contacts needed for next level
-        next_level = x_factor + 1 if x_factor < 10 else x_factor + 5
-        remaining = (next_level * increment) - Total
-
-        return remaining, x_factor
+        return increment - (Total % increment), (Total + increment) // increment
 
     @classmethod
     def read_qsos(cls) -> None:
@@ -1810,11 +1799,14 @@ class cQSO:
                     file.write(f"{index:>4} {member_number:>8} {first_name:<10.10} {prefix:<6} {iPoints:>12,}\n")
 
         def award_cts(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
-            with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
-                for count, (qso_date, their_member_number, main_call_sign) in enumerate(
-                    sorted(QSOs_dict.values(), key=lambda q: (q[0], q[2])), start=1
-                ):
-                    file.write(f"{count:<4}  {qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}   {main_call_sign:<9}   {their_member_number:<7}\n")
+            QSOs = QSOs_dict.values()
+            QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
+
+            with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+                for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
+                    Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
+                    File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
+
 
         def award_was(Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
             QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
