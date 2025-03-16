@@ -76,7 +76,7 @@ from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
 
 from dataclasses     import dataclass, field
-from typing          import AsyncGenerator, NoReturn, TypeVar, Any
+from typing          import AsyncGenerator, NoReturn, Any, Final
 
 import asyncio
 
@@ -595,7 +595,7 @@ class cConfig:
 class cFastDateTime:
     FastDateTime: str
 
-    MonthNames = 'January February March April May June July August September October November December'.split()
+    MonthNames: Final = 'January February March April May June July August September October November December'.split()
 
     def __init__(self, Object: datetime | time.struct_time | tuple[int, int, int] | tuple[int, int, int, int, int, int] | str | None) -> None:
         if isinstance(Object, datetime):
@@ -780,17 +780,17 @@ class cSked:
                             Band = cSKCC.which_band(FrequencyKHz)
 
                             if Band:
-                                if (not Station in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[Station]):
+                                if (not Station in cQSO.ContactsForK3Y) or (not Band in cQSO.ContactsForK3Y[Station]):
                                     GoalList.append(f'{combine(Type, Station)} ({Band}m)')
                         else:
                             GoalList.append(f'{combine(Type, Station)}')
 
-            GoalList = GoalList + QSOs.get_goal_hits(CallSign)
+            GoalList = GoalList + cQSO.get_goal_hits(CallSign)
 
             if GoalList:
                 Report.append(f'YOU need them for {",".join(GoalList)}')
 
-            TargetList = QSOs.get_target_hits(CallSign)
+            TargetList = cQSO.get_target_hits(CallSign)
 
             if TargetList:
                 Report.append(f'THEY need you for {",".join(TargetList)}')
@@ -1110,17 +1110,17 @@ class cSPOTS:
             if (CallSignSuffix != ''):
                 Band = cSKCC.which_arrl_band(FrequencyKHz)
 
-                if (not CallSignSuffix in QSOs.ContactsForK3Y) or (not Band in QSOs.ContactsForK3Y[CallSignSuffix]):
+                if (not CallSignSuffix in cQSO.ContactsForK3Y) or (not Band in cQSO.ContactsForK3Y[CallSignSuffix]):
                     GoalList = [f'K3Y/{CallSignSuffix} ({Band}m)']
 
-        GoalList = GoalList + QSOs.get_goal_hits(CallSign, FrequencyKHz)
+        GoalList = GoalList + cQSO.get_goal_hits(CallSign, FrequencyKHz)
 
         if GoalList:
             Report.append(f'YOU need them for {",".join(GoalList)}')
 
         #-------------
 
-        TargetList = QSOs.get_target_hits(CallSign)
+        TargetList = cQSO.get_target_hits(CallSign)
 
         if TargetList:
             Report.append(f'THEY need you for {",".join(TargetList)}')
@@ -1175,7 +1175,6 @@ class cQSO:
     ContactsForP:     dict[str, tuple[str, str, int, str]]
     ContactsForK3Y:   dict[str, dict[int, str]]
 
-
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
@@ -1184,38 +1183,39 @@ class cQSO:
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
-    def __init__(self):
-        self.QSOs = []
+    @classmethod
+    def initialize(cls):
+        cls.QSOs = []
 
-        self.Brag               = {}
-        self.ContactsForC       = {}
-        self.ContactsForT       = {}
-        self.ContactsForS       = {}
-        self.ContactsForWAS     = {}
-        self.ContactsForWAS_C   = {}
-        self.ContactsForWAS_T   = {}
-        self.ContactsForWAS_S   = {}
-        self.ContactsForP       = {}
-        self.ContactsForK3Y     = {}
-        self.QSOsByMemberNumber = {}
+        cls.Brag               = {}
+        cls.ContactsForC       = {}
+        cls.ContactsForT       = {}
+        cls.ContactsForS       = {}
+        cls.ContactsForWAS     = {}
+        cls.ContactsForWAS_C   = {}
+        cls.ContactsForWAS_T   = {}
+        cls.ContactsForWAS_S   = {}
+        cls.ContactsForP       = {}
+        cls.ContactsForK3Y     = {}
+        cls.QSOsByMemberNumber = {}
 
-        self.read_qsos()
+        cls.read_qsos()
 
         MyMemberEntry       = cSKCC.Members[config.MY_CALLSIGN]
-        self.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
-        self.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
-        self.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
-        self.MyS_Date       = cUtil.effective(MyMemberEntry['s_date'])
-        self.MyTX8_Date     = cUtil.effective(MyMemberEntry['tx8_date'])
+        cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
+        cls.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
+        cls.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
+        cls.MyS_Date       = cUtil.effective(MyMemberEntry['s_date'])
+        cls.MyTX8_Date     = cUtil.effective(MyMemberEntry['tx8_date'])
 
-        self.MyMemberNumber = MyMemberEntry['plain_number']
+        cls.MyMemberNumber = MyMemberEntry['plain_number']
 
     @classmethod
     async def watch_logfile_task(cls):
         try:
             while not shutdown_event.is_set():
                 try:
-                    if os.path.exists(config.ADI_FILE) and os.path.getmtime(config.ADI_FILE) != QSOs.AdiFileReadTimeStamp:
+                    if os.path.exists(config.ADI_FILE) and os.path.getmtime(config.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
                         cDisplay.print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
                         # Once we detect the file has changed, we can't necessarily read it
@@ -1235,7 +1235,7 @@ class cQSO:
 
                         # Check again before potentially expensive refresh
                         if not shutdown_event.is_set():
-                            QSOs.refresh()
+                            cls.refresh()
 
                 except FileNotFoundError:
                     print(f"Warning: ADI file '{config.ADI_FILE}' not found or inaccessible")
@@ -1254,16 +1254,17 @@ class cQSO:
         except Exception as e:
             print(f"Unexpected error in WatchLogFile: {e}")
 
-    def awards_check(self) -> None:
-        C_Level = len(self.ContactsForC)  // Levels['C']
-        T_Level = len(self.ContactsForT)  // Levels['T']
-        S_Level = len(self.ContactsForS)  // Levels['S']
-        P_Level = self.calc_prefix_points() // Levels['P']
+    @classmethod
+    def awards_check(cls) -> None:
+        C_Level = len(cls.ContactsForC)  // Levels['C']
+        T_Level = len(cls.ContactsForT)  // Levels['T']
+        S_Level = len(cls.ContactsForS)  // Levels['S']
+        P_Level = cls.calc_prefix_points() // Levels['P']
 
         ### C ###
 
-        if self.MyC_Date:
-            Award_C_Level = cSKCC.CenturionLevel[self.MyMemberNumber]
+        if cls.MyC_Date:
+            Award_C_Level = cSKCC.CenturionLevel[cls.MyMemberNumber]
 
             while (C_Level > 10) and (C_Level % 5):
                 C_Level -= 1
@@ -1272,13 +1273,13 @@ class cQSO:
                 C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
                 print(f'FYI: You qualify for Cx{C_Level} but have only applied for {C_or_Cx}.')
         else:
-            if C_Level == 1 and self.MyMemberNumber not in cSKCC.CenturionLevel:
+            if C_Level == 1 and cls.MyMemberNumber not in cSKCC.CenturionLevel:
                 print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
 
-        if self.MyT_Date:
-            Award_T_Level = cSKCC.TribuneLevel[self.MyMemberNumber]
+        if cls.MyT_Date:
+            Award_T_Level = cSKCC.TribuneLevel[cls.MyMemberNumber]
 
             while (T_Level > 10) and (T_Level % 5):
                 T_Level -= 1
@@ -1287,37 +1288,37 @@ class cQSO:
                 T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
                 print(f'FYI: You qualify for Tx{T_Level} but have only applied for {T_or_Tx}.')
         else:
-            if T_Level == 1 and self.MyMemberNumber not in cSKCC.TribuneLevel:
+            if T_Level == 1 and cls.MyMemberNumber not in cSKCC.TribuneLevel:
                 print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
 
-        if self.MyS_Date:
-            Award_S_Level = cSKCC.SenatorLevel[self.MyMemberNumber]
+        if cls.MyS_Date:
+            Award_S_Level = cSKCC.SenatorLevel[cls.MyMemberNumber]
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
                 print(f'FYI: You qualify for Sx{S_Level} but have only applied for {S_or_Sx}.')
         else:
-            if S_Level == 1 and self.MyMemberNumber not in cSKCC.SenatorLevel:
+            if S_Level == 1 and cls.MyMemberNumber not in cSKCC.SenatorLevel:
                 print('FYI: You qualify for S but have not yet applied for it.')
 
         ### WAS and WAS-C and WAS-T and WAS-S ###
 
         if 'WAS' in config.GOALS:
-            if len(self.ContactsForWAS) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasLevel:
+            if len(cls.ContactsForWAS) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasLevel:
                 print('FYI: You qualify for WAS but have not yet applied for it.')
 
         if 'WAS-C' in config.GOALS:
-            if len(self.ContactsForWAS_C) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasCLevel:
+            if len(cls.ContactsForWAS_C) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasCLevel:
                 print('FYI: You qualify for WAS-C but have not yet applied for it.')
 
         if 'WAS-T' in config.GOALS:
-            if len(self.ContactsForWAS_T) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasTLevel:
+            if len(cls.ContactsForWAS_T) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasTLevel:
                 print('FYI: You qualify for WAS-T but have not yet applied for it.')
 
         if 'WAS-S' in config.GOALS:
-            if len(self.ContactsForWAS_S) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasSLevel:
+            if len(cls.ContactsForWAS_S) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasSLevel:
                 print('FYI: You qualify for WAS-S but have not yet applied for it.')
 
         if 'P' in config.GOALS:
@@ -1347,14 +1348,15 @@ class cQSO:
 
         return remaining, x_factor
 
-    def read_qsos(self) -> None:
+    @classmethod
+    def read_qsos(cls) -> None:
         """ Reads QSOs from the ADIF log file and processes them efficiently. """
 
         AdiFileAbsolute = os.path.abspath(config.ADI_FILE)
         cDisplay.print(f"\nReading QSOs for {config.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
-        self.QSOs = []
-        self.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
+        cls.QSOs = []
+        cls.AdiFileReadTimeStamp = os.path.getmtime(config.ADI_FILE)
 
         with open(AdiFileAbsolute, 'rb') as file:
             Body = re.split(r'<eoh>', file.read().decode('utf-8', 'ignore'), flags=re.I | re.M)[-1].strip(' \t\r\n\x1a')
@@ -1375,7 +1377,7 @@ class cQSO:
             fFrequency = float(record.get('FREQ', 0.0)) * 1000 if record.get('FREQ', '').replace('.', '', 1).isdigit() else 0.0
 
             # Append QSO data
-            self.QSOs.append((
+            cls.QSOs.append((
                 record['QSO_DATE'] + record['TIME_ON'],
                 record['CALL'],
                 record.get('STATE', ''),
@@ -1384,22 +1386,24 @@ class cQSO:
             ))
 
         # Sort QSOs by date
-        self.QSOs.sort(key=lambda qso: qso[0])
+        cls.QSOs.sort(key=lambda qso: qso[0])
 
         # Process and map QSOs by member number
-        for qso_date, call_sign, _, _, _ in self.QSOs:
+        for qso_date, call_sign, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
 
             member_number = cSKCC.Members.get(call_sign, {}).get('plain_number')
             if member_number:
-                self.QSOsByMemberNumber.setdefault(member_number, []).append(qso_date)
+                cls.QSOsByMemberNumber.setdefault(member_number, []).append(qso_date)
 
-    def calc_prefix_points(self) -> int:
-        return sum(value[2] for value in self.ContactsForP.values())
+    @classmethod
+    def calc_prefix_points(cls) -> int:
+        return sum(value[2] for value in cls.ContactsForP.values())
 
-    def print_progress(self) -> None:
+    @classmethod
+    def print_progress(cls) -> None:
         def print_remaining(Class: str, Total: int):
             Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
@@ -1418,15 +1422,15 @@ class cQSO:
         print(f'BANDS: {", ".join(str(Band)  for Band in config.BANDS)}')
 
 
-        print_remaining('C', len(self.ContactsForC))
+        print_remaining('C', len(cls.ContactsForC))
 
-        if QSOs.MyC_Date:
-            print_remaining('T', len(self.ContactsForT))
+        if cQSO.MyC_Date:
+            print_remaining('T', len(cls.ContactsForT))
 
-        if QSOs.MyTX8_Date:
-            print_remaining('S', len(self.ContactsForS))
+        if cQSO.MyTX8_Date:
+            print_remaining('S', len(cls.ContactsForS))
 
-        print_remaining('P', self.calc_prefix_points())
+        print_remaining('P', cls.calc_prefix_points())
 
         def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
@@ -1442,24 +1446,25 @@ class cQSO:
             print(f'Total worked towards {Class}: {len(QSOs)}, {Need}.')
 
         if 'WAS' in config.GOALS:
-            remaining_states('WAS', self.ContactsForWAS)
+            remaining_states('WAS', cls.ContactsForWAS)
 
         if 'WAS-C' in config.GOALS:
-            remaining_states('WAS-C', self.ContactsForWAS_C)
+            remaining_states('WAS-C', cls.ContactsForWAS_C)
 
         if 'WAS-T' in config.GOALS:
-            remaining_states('WAS-T', self.ContactsForWAS_T)
+            remaining_states('WAS-T', cls.ContactsForWAS_T)
 
         if 'WAS-S' in config.GOALS:
-            remaining_states('WAS-S', self.ContactsForWAS_S)
+            remaining_states('WAS-S', cls.ContactsForWAS_S)
 
         if 'BRAG' in config.GOALS:
             NowGMT = cFastDateTime.now_gmt()
             MonthIndex = NowGMT.month()-1
             MonthName = cFastDateTime.MonthNames[MonthIndex]
-            print(f'Total worked towards {MonthName} Brag: {len(self.Brag)}')
+            print(f'Total worked towards {MonthName} Brag: {len(cls.Brag)}')
 
-    def get_goal_hits(self, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
+    @classmethod
+    def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
         if TheirCallSign not in cSKCC.Members or TheirCallSign == config.MY_CALLSIGN:
             return []
 
@@ -1471,49 +1476,49 @@ class cQSO:
 
         GoalHitList: list[str] = []
 
-        if 'BRAG' in config.GOALS and TheirMemberNumber not in self.Brag:
+        if 'BRAG' in config.GOALS and TheirMemberNumber not in cls.Brag:
             if (fFrequency and cSKCC.is_on_warc_frequency(fFrequency)) or not cSKCC.is_during_sprint(cFastDateTime.now_gmt()):
                 GoalHitList.append('BRAG')
 
-        if 'C' in config.GOALS and not self.MyC_Date and TheirMemberNumber not in self.ContactsForC:
+        if 'C' in config.GOALS and not cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
             GoalHitList.append('C')
 
-        if 'CXN' in config.GOALS and self.MyC_Date and TheirMemberNumber not in self.ContactsForC:
-            _, x_factor = cQSO.calculate_numerics('C', len(self.ContactsForC))
+        if 'CXN' in config.GOALS and cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
+            _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
             GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
 
-        if 'T' in config.GOALS and self.MyC_Date and not self.MyT_Date and TheirC_Date and TheirMemberNumber not in self.ContactsForT:
+        if 'T' in config.GOALS and cls.MyC_Date and not cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
             GoalHitList.append('T')
 
-        if 'TXN' in config.GOALS and self.MyT_Date and TheirC_Date and TheirMemberNumber not in self.ContactsForT:
-            _, x_factor = cQSO.calculate_numerics('T', len(self.ContactsForT))
+        if 'TXN' in config.GOALS and cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
+            _, x_factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
             GoalHitList.append(cUtil.abbreviate_class('T', x_factor))
 
-        if 'S' in config.GOALS and self.MyTX8_Date and not self.MyS_Date and TheirT_Date and TheirMemberNumber not in self.ContactsForS:
+        if 'S' in config.GOALS and cls.MyTX8_Date and not cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
             GoalHitList.append('S')
 
-        if 'SXN' in config.GOALS and self.MyS_Date and TheirT_Date and TheirMemberNumber not in self.ContactsForS:
-            _, x_factor = cQSO.calculate_numerics('S', len(self.ContactsForS))
+        if 'SXN' in config.GOALS and cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
+            _, x_factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
             GoalHitList.append(cUtil.abbreviate_class('S', x_factor))
 
-        if 'WAS' in config.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in self.ContactsForWAS:
+        if 'WAS' in config.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
             GoalHitList.append('WAS')
 
-        if 'WAS-C' in config.GOALS and TheirC_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in self.ContactsForWAS_C:
+        if 'WAS-C' in config.GOALS and TheirC_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_C:
             GoalHitList.append('WAS-C')
 
-        if 'WAS-T' in config.GOALS and TheirT_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in self.ContactsForWAS_T:
+        if 'WAS-T' in config.GOALS and TheirT_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_T:
             GoalHitList.append('WAS-T')
 
-        if 'WAS-S' in config.GOALS and TheirS_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in self.ContactsForWAS_S:
+        if 'WAS-S' in config.GOALS and TheirS_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_S:
             GoalHitList.append('WAS-S')
 
         if 'P' in config.GOALS and (match := cQSO.Prefix_RegEx.match(TheirCallSign)):
             prefix = match.group(1)
             i_their_member_number = int(TheirMemberNumber)
-            _, x_factor = cQSO.calculate_numerics('P', self.calc_prefix_points())
+            _, x_factor = cQSO.calculate_numerics('P', cls.calc_prefix_points())
 
-            if (contact := self.ContactsForP.get(prefix)):
+            if (contact := cls.ContactsForP.get(prefix)):
                 if i_their_member_number > contact[2]:
                     GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact[2]})')
             else:
@@ -1521,7 +1526,8 @@ class cQSO:
 
         return GoalHitList
 
-    def get_target_hits(self, TheirCallSign: str) -> list[str]:
+    @classmethod
+    def get_target_hits(cls, TheirCallSign: str) -> list[str]:
         if TheirCallSign not in cSKCC.Members or TheirCallSign == config.MY_CALLSIGN:
             return []
 
@@ -1536,9 +1542,9 @@ class cQSO:
         TargetHitList: list[str] = []
 
         if 'C' in config.TARGETS and not TheirC_Date:
-            if TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                qso_date <= TheirJoin_Date or qso_date <= self.MyJoin_Date
-                for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
+                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
             ):
                 TargetHitList.append('C')
 
@@ -1546,59 +1552,61 @@ class cQSO:
             NextLevel = cSKCC.CenturionLevel[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
-                TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                    qso_date <= TheirJoin_Date or qso_date <= self.MyJoin_Date
-                    for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                    qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
+                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
                 )
             ):
                 TargetHitList.append(f'Cx{NextLevel}')
 
 
-        if 'T' in config.TARGETS and TheirC_Date and not TheirT_Date and self.MyC_Date:
-            if TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                qso_date <= TheirC_Date or qso_date <= self.MyC_Date
-                for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+        if 'T' in config.TARGETS and TheirC_Date and not TheirT_Date and cls.MyC_Date:
+            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
+                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
             ):
                 TargetHitList.append('T')
 
-        if 'TXN' in config.TARGETS and TheirT_Date and self.MyC_Date:
+        if 'TXN' in config.TARGETS and TheirT_Date and cls.MyC_Date:
             NextLevel = cSKCC.TribuneLevel[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
-                TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                    qso_date <= TheirC_Date or qso_date <= self.MyC_Date
-                    for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                    qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
+                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
                 )
             ):
                 TargetHitList.append(f'Tx{NextLevel}')
 
-        if 'S' in config.TARGETS and TheirTX8_Date and not TheirS_Date and self.MyT_Date:
-            if TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                qso_date <= TheirTX8_Date or qso_date <= self.MyT_Date
-                for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+        if 'S' in config.TARGETS and TheirTX8_Date and not TheirS_Date and cls.MyT_Date:
+            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
+                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
             ):
                 TargetHitList.append('S')
 
-        if 'SXN' in config.TARGETS and TheirS_Date and self.MyT_Date:
+        if 'SXN' in config.TARGETS and TheirS_Date and cls.MyT_Date:
             NextLevel = cSKCC.SenatorLevel[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
-                TheirMemberNumber not in self.QSOsByMemberNumber or all(
-                    qso_date <= TheirTX8_Date or qso_date <= self.MyT_Date
-                    for qso_date in self.QSOsByMemberNumber[TheirMemberNumber]
+                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                    qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
+                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
                 )
             ):
                 TargetHitList.append(f'Sx{NextLevel}')
 
         return TargetHitList
 
-    def refresh(self) -> None:
-        self.read_qsos()
-        QSOs.get_goal_qsos()
-        self.print_progress()
+    @classmethod
+    def refresh(cls) -> None:
+        cls.read_qsos()
+        cQSO.get_goal_qsos()
+        cls.print_progress()
 
-    def get_brag_qsos(self, PrevMonth: int = 0, Print: bool = False) -> None:
-        self.Brag = {}
+    @classmethod
+    def get_brag_qsos(cls, PrevMonth: int = 0, Print: bool = False) -> None:
+        cls.Brag = {}
 
         DateOfInterestGMT = cFastDateTime.now_gmt()
 
@@ -1620,7 +1628,7 @@ class cQSO:
         fastStartOfMonth = DateOfInterestGMT.start_of_month()
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
-        for Contact in self.QSOs:
+        for Contact in cls.QSOs:
             QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment = Contact
 
             if QsoCallSign in ('K9SKC'):
@@ -1653,8 +1661,8 @@ class cQSO:
 
                     #print(BragOkay, DuringSprint, OnWarcFreq, QsoFreq, QsoDate)
 
-                    if TheirMemberNumber not in self.Brag and BragOkay:
-                        self.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
+                    if TheirMemberNumber not in cls.Brag and BragOkay:
+                        cls.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
                         #print('Brag contact: {} on {} {}'.format(QsoCallSign, QsoDate, QsoFreq))
                     else:
                         #print('Not brag eligible: {} on {}  {}  warc: {}  sprint: {}'.format(QsoCallSign, QsoDate, QsoFreq, OnWarcFreq, DuringSprint))
@@ -1664,9 +1672,10 @@ class cQSO:
             Year = DateOfInterestGMT.year()
             MonthIndex = DateOfInterestGMT.month()-1
             MonthAbbrev = cFastDateTime.MonthNames[MonthIndex][:3]
-            print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(self.Brag)}')
+            print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(cls.Brag)}')
 
-    def get_goal_qsos(self) -> None:
+    @classmethod
+    def get_goal_qsos(cls) -> None:
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None):
             if MemberDate == '' or MyDate == '':
                 return False
@@ -1676,25 +1685,25 @@ class cQSO:
 
             return QsoDate >= MemberDate and QsoDate >= MyDate
 
-        self.ContactsForC     = {}
-        self.ContactsForT     = {}
-        self.ContactsForS     = {}
+        cls.ContactsForC     = {}
+        cls.ContactsForT     = {}
+        cls.ContactsForS     = {}
 
-        self.ContactsForWAS   = {}
-        self.ContactsForWAS_C = {}
-        self.ContactsForWAS_T = {}
-        self.ContactsForWAS_S = {}
-        self.ContactsForP     = {}
-        self.ContactsForK3Y   = {}
+        cls.ContactsForWAS   = {}
+        cls.ContactsForWAS_C = {}
+        cls.ContactsForWAS_T = {}
+        cls.ContactsForWAS_S = {}
+        cls.ContactsForP     = {}
+        cls.ContactsForK3Y   = {}
 
         if 'BRAG_MONTHS' in globals() and 'BRAG' in config.GOALS:
             for PrevMonth in range(abs(config.BRAG_MONTHS), 0, -1):
-                QSOs.get_brag_qsos(PrevMonth = PrevMonth, Print=True)
+                cQSO.get_brag_qsos(PrevMonth = PrevMonth, Print=True)
 
         # MWS - Process current month as well.
-        QSOs.get_brag_qsos(PrevMonth=0, Print=False)
+        cQSO.get_brag_qsos(PrevMonth=0, Print=False)
 
-        for Contact in self.QSOs:
+        for Contact in cls.QSOs:
             QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment = Contact
 
             if QsoCallSign in ('K9SKC', 'K3Y'):
@@ -1733,14 +1742,14 @@ class cQSO:
                         Band = cSKCC.which_arrl_band(QsoFreq)
 
                         if Band:
-                            if not Suffix in self.ContactsForK3Y:
-                                self.ContactsForK3Y[Suffix] = {}
+                            if not Suffix in cls.ContactsForK3Y:
+                                cls.ContactsForK3Y[Suffix] = {}
 
-                            self.ContactsForK3Y[Suffix][Band] = QsoCallSign
+                            cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
             # Prefix
-            if good(QsoDate, TheirJoin_Date, self.MyJoin_Date, '20130101000000'):
-                if TheirMemberNumber != self.MyMemberNumber:
+            if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date, '20130101000000'):
+                if TheirMemberNumber != cls.MyMemberNumber:
                     Match  = cQSO.Prefix_RegEx.match(QsoCallSign)
 
                     if Match:
@@ -1748,48 +1757,48 @@ class cQSO:
 
                         iTheirMemberNumber = int(TheirMemberNumber)
 
-                        if Prefix not in self.ContactsForP or iTheirMemberNumber > self.ContactsForP[Prefix][2]:
+                        if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
                             FirstName = cSKCC.Members[QsoCallSign]['name']
-                            self.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
+                            cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
 
             # Centurion
-            if good(QsoDate, TheirJoin_Date, self.MyJoin_Date):
-                if TheirMemberNumber not in self.ContactsForC:
-                    self.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+            if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date):
+                if TheirMemberNumber not in cls.ContactsForC:
+                    cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
             # Tribune
-            if good(QsoDate, TheirC_Date, self.MyC_Date, '20070301000000'):
-                if TheirMemberNumber not in self.ContactsForT:
-                    self.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+            if good(QsoDate, TheirC_Date, cls.MyC_Date, '20070301000000'):
+                if TheirMemberNumber not in cls.ContactsForT:
+                    cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
             # Senator
-            if good(QsoDate, TheirT_Date, self.MyTX8_Date, '20130801000000'):
-                if TheirMemberNumber not in self.ContactsForS:
-                    self.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+            if good(QsoDate, TheirT_Date, cls.MyTX8_Date, '20130801000000'):
+                if TheirMemberNumber not in cls.ContactsForS:
+                    cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
             if QsoSPC in US_STATES:
                 # WAS
-                if TheirJoin_Date and QsoDate >= TheirJoin_Date and QsoDate >= self.MyJoin_Date:
-                    if QsoSPC not in self.ContactsForWAS:
-                        self.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                if TheirJoin_Date and QsoDate >= TheirJoin_Date and QsoDate >= cls.MyJoin_Date:
+                    if QsoSPC not in cls.ContactsForWAS:
+                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
                 # WAS_C
                 if QsoDate >= '20110612000000':
                     if TheirC_Date and QsoDate >= TheirC_Date:
-                        if QsoSPC not in self.ContactsForWAS_C:
-                            self.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        if QsoSPC not in cls.ContactsForWAS_C:
+                            cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
                 # WAS_T
                 if QsoDate >= '20160201000000':
                     if TheirT_Date and QsoDate >= TheirT_Date:
-                        if QsoSPC not in self.ContactsForWAS_T:
-                            self.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        if QsoSPC not in cls.ContactsForWAS_T:
+                            cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
                 # WAS_S
                 if QsoDate >= '20160201000000':
                     if TheirS_Date and QsoDate >= TheirS_Date:
-                        if QsoSPC not in self.ContactsForWAS_S:
-                            self.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        if QsoSPC not in cls.ContactsForWAS_S:
+                            cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
         def award_p(QSOs: dict[str, tuple[str, str, int, str]]) -> None:
             with open(f'{QSOs_Dir}/{config.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
@@ -1834,16 +1843,16 @@ class cQSO:
         if not os.path.exists(QSOs_Dir):
             os.makedirs(QSOs_Dir)
 
-        award_cts('C',     self.ContactsForC)
-        award_cts('T',     self.ContactsForT)
-        award_cts('S',     self.ContactsForS)
-        award_was('WAS',   self.ContactsForWAS)
-        award_was('WAS-C', self.ContactsForWAS_C)
-        award_was('WAS-T', self.ContactsForWAS_T)
-        award_was('WAS-S', self.ContactsForWAS_S)
+        award_cts('C',     cls.ContactsForC)
+        award_cts('T',     cls.ContactsForT)
+        award_cts('S',     cls.ContactsForS)
+        award_was('WAS',   cls.ContactsForWAS)
+        award_was('WAS-C', cls.ContactsForWAS_C)
+        award_was('WAS-T', cls.ContactsForWAS_T)
+        award_was('WAS-S', cls.ContactsForWAS_S)
 
-        award_p(self.ContactsForP)
-        track_brag(self.Brag)
+        award_p(cls.ContactsForP)
+        track_brag(cls.Brag)
 
         def print_k3y_contacts():
             # Could be cleaner, but want to match order on the SKCC K3Y website.
@@ -1868,8 +1877,8 @@ class cQSO:
                 _Prefix, Suffix = re.split('[/-]', Station)
 
                 def print_band(Band: int):
-                    if (Suffix in self.ContactsForK3Y) and (Band in self.ContactsForK3Y[Suffix]):
-                        print(f'{" " + self.ContactsForK3Y[Suffix][Band]: <7}|', end = '')
+                    if (Suffix in cls.ContactsForK3Y) and (Band in cls.ContactsForK3Y[Suffix]):
+                        print(f'{" " + cls.ContactsForK3Y[Suffix][Band]: <7}|', end = '')
                     else:
                         print(f'{"": <7}|', end = '')
 
@@ -1910,8 +1919,7 @@ class cQSO:
             print_k3y_contacts()
 
 class cSpotters:
-    def __init__(self):
-        self.Spotters: dict[str, tuple[int, list[int]]] = {}
+    Spotters: dict[str, tuple[int, list[int]]] = {}
 
     @staticmethod
     def locator_to_latlong(locator: str) -> tuple[float, float]:
@@ -1964,7 +1972,8 @@ class cSpotters:
         a = sin(d_lat / 2) ** 2 + cos(r_lat1) * cos(r_lat2) * sin(d_lon / 2) ** 2
         return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
-    def get_spotters(self) -> None:
+    @classmethod
+    def get_spotters(cls) -> None:
         def parse_bands(band_csv: str) -> list[int]:
             valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
             return [int(b[:-1]) for b in band_csv.split(',') if b in valid_bands]
@@ -1993,18 +2002,19 @@ class cSpotters:
 
                 try:
                     miles = int(cSpotters.calculate_distance(config.MY_GRIDSQUARE, grid) * 0.62137)
-                    self.Spotters[spotter] = (miles, parse_bands(csv_bands))
+                    cls.Spotters[spotter] = (miles, parse_bands(csv_bands))
                 except ValueError:
                     continue
 
-
-    def get_nearby_spotters(self) -> list[tuple[str, int]]:
-        spotters_sorted = sorted(self.Spotters.items(), key=lambda item: item[1][0])
+    @classmethod
+    def get_nearby_spotters(cls) -> list[tuple[str, int]]:
+        spotters_sorted = sorted(cls.Spotters.items(), key=lambda item: item[1][0])
         nearbySpotters = [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= config.SPOTTER_RADIUS]
         return nearbySpotters
 
-    def get_distance(self, Spotter: str) -> int:
-        Miles, _ = self.Spotters[Spotter]
+    @classmethod
+    def get_distance(cls, Spotter: str) -> int:
+        Miles, _ = cls.Spotters[Spotter]
         return Miles
 
 class cSKCC:
@@ -2036,11 +2046,6 @@ class cSKCC:
         10  : [28050, 28114],
         6   : [50090]
     }
-
-    T = TypeVar('T', bound='cSKCC')
-
-    def __new__(cls: type[T], *args: Any, **kwargs: Any) -> NoReturn:
-        raise TypeError(f"{cls.__name__} is a utility class and cannot be instantiated")
 
     @classmethod
     def initialize(cls):
@@ -2311,12 +2316,12 @@ class cSKCC:
             if Entry['plain_number'] == MyNumber:
                 Report.append('(you)')
             else:
-                GoalList = QSOs.get_goal_hits(CallSign)
+                GoalList = cQSO.get_goal_hits(CallSign)
 
                 if GoalList:
                     Report.append(f'YOU need them for {",".join(GoalList)}')
 
-                TargetList = QSOs.get_target_hits(CallSign)
+                TargetList = cQSO.get_target_hits(CallSign)
 
                 if TargetList:
                     Report.append(f'THEY need you for {",".join(TargetList)}')
@@ -2515,13 +2520,13 @@ async def main_loop():
         print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
         sys.exit()
 
-    QSOs = cQSO()
+    cQSO.initialize()
 
-    QSOs.get_goal_qsos()
-    QSOs.print_progress()
+    cQSO.get_goal_qsos()
+    cQSO.print_progress()
 
     print('')
-    QSOs.awards_check()
+    cQSO.awards_check()
 
     if config.INTERACTIVE:
         print('')
@@ -2540,7 +2545,7 @@ async def main_loop():
                     print("\nExiting by user request...")
                     return
                 elif Line in ('r', 'refresh'):
-                    QSOs.refresh()
+                    cQSO.refresh()
                 elif Line == '':
                     continue
                 else:
