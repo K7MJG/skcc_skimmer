@@ -71,15 +71,15 @@
 #   which may require a pip install.
 #
 
+
 from datetime        import timedelta, datetime
 from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
-
 from dataclasses     import dataclass, field
 from typing          import AsyncGenerator, NoReturn, Any, Final
 
 import asyncio
-
+import subprocess
 import argparse
 import signal
 import socket
@@ -141,14 +141,14 @@ class cUtil:
             return f'{Miles}mi'
 
         return f'{cUtil.miles_to_km(Miles)}km'
-    @staticmethod
 
+    @staticmethod
     def log(Line: str) -> None:
         if config.LOG_FILE.ENABLED and config.LOG_FILE.FILE_NAME is not None:
             with open(config.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
                 File.write(Line + '\n')
-    @staticmethod
 
+    @staticmethod
     def log_error(Line: str) -> None:
         if config.LOG_BAD_SPOTS:
             with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
@@ -1335,7 +1335,13 @@ class cQSO:
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
         increment = Levels[Class]
-        return increment - (Total % increment), (Total + increment) // increment
+
+        # Adjust increments after x10
+        level = (Total // increment) + 1
+        if level > 10:
+            if level % 5 != 0:
+                level -= (level % 5)
+        return increment - (Total % increment), level
 
     @classmethod
     def read_qsos(cls) -> None:
@@ -1398,7 +1404,7 @@ class cQSO:
 
             if Class in config.GOALS:
                 Abbrev = cUtil.abbreviate_class(Class, X_Factor)
-                print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                print(f'{Class}: Have {Total:,} which qualifies for {Abbrev}. NEXT requires zzz ({Remaining:,} more)')
 
         print('')
 
@@ -2460,30 +2466,32 @@ class cRBN:
     def dot_count_reset(cls):
         cls.dot_count = 0
 
-#
-# Main
-#
 
-#
-# cVersion is an uncontrolled file (not committed to Git).  It is created by
-# a release script to properly identify the version stamp of the release, so
-# this code imports the file if it exists or, if it does not, reverts to a
-# generic string.
-#
+def get_version() -> str:
+    """
+    Creates or loads version information. Runs GenerateVersionStamp.py to
+    generate cVersion.py containing the version stamp of the HEAD commit.
+    While GenerateVersionStamp.py is excluded from releases, cVersion.py must be
+    included to provide accurate version information to the user.
+    """
+    if os.path.isfile('GenerateVersionStamp.py'):
+        subprocess.run([sys.executable, "GenerateVersionStamp.py"], check=True)
 
-VERSION: str | None = None
+    version = "<development>"
 
-try:
-    from Lib.cVersion import VERSION
-except ImportError:
-    VERSION = '<dev>'
+    try:
+        from cVersion import version
+    except ImportError:
+        pass
+
+    return version
 
 shutdown_event = asyncio.Event()
 
 async def main_loop():
     global config, SKCC, QSOs, SPOTTERS_NEARBY, Spotters
 
-    print(f'SKCC Skimmer version {VERSION}\n')
+    print(f'SKCC Skimmer version {get_version()}\n')
 
     # Set up shutdown handlers early
     if platform.system() == "Windows":
