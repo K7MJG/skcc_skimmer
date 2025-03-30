@@ -76,7 +76,6 @@ from datetime import timedelta, datetime
 from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
-from concurrent.futures import ThreadPoolExecutor
 
 import asyncio
 import aiohttp
@@ -92,7 +91,6 @@ import textwrap
 import calendar
 import json
 import requests
-import threading
 import platform
 
 RBN_SERVER = 'telnet.reversebeacon.net'
@@ -199,12 +197,12 @@ class cUtil:
         os._exit(0)
 
     @staticmethod
-    def watch_for_ctrl_c():
-        """Runs in a separate thread to detect Ctrl+C on Windows."""
+    async def watch_for_ctrl_c_async():
+        """Runs in the event loop to detect Ctrl+C on Windows."""
         try:
-            # Just wait for KeyboardInterrupt
+            # Just wait indefinitely until KeyboardInterrupt
             while True:
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
         except KeyboardInterrupt:
             print("\nExiting immediately on Ctrl+C...")
             os._exit(0)
@@ -1101,7 +1099,7 @@ class cQSO:
                         if os.path.getsize(config.ADI_FILE) == Size:
                             break
 
-                    cls.refresh()
+                    await cls.refresh_async()
 
             except FileNotFoundError:
                 print(f"Warning: ADI file '{config.ADI_FILE}' not found or inaccessible")
@@ -1473,9 +1471,9 @@ class cQSO:
         return TargetHitList
 
     @classmethod
-    def refresh(cls) -> None:
+    async def refresh_async(cls) -> None:
         cls.read_qsos()
-        cQSO.get_goal_qsos()
+        await cQSO.get_goal_qsos_async()
         cls.print_progress()
 
     @classmethod
@@ -1549,7 +1547,7 @@ class cQSO:
             print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(cls.Brag)}')
 
     @classmethod
-    def get_goal_qsos(cls) -> None:
+    async def get_goal_qsos_async(cls) -> None:
         """Optimized goal QSO processing with batched operations."""
         # Helper function to check date criteria
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None):
@@ -1681,63 +1679,75 @@ class cQSO:
             os.makedirs(QSOs_Dir)
 
         # Award files
-        cls.award_cts('C', cls.ContactsForC)
-        cls.award_cts('T', cls.ContactsForT)
-        cls.award_cts('S', cls.ContactsForS)
-        cls.award_was('WAS', cls.ContactsForWAS)
-        cls.award_was('WAS-C', cls.ContactsForWAS_C)
-        cls.award_was('WAS-T', cls.ContactsForWAS_T)
-        cls.award_was('WAS-S', cls.ContactsForWAS_S)
-        cls.award_p(cls.ContactsForP)
-        cls.track_brag(cls.Brag)
+        await cls.award_cts_async('C', cls.ContactsForC)
+        await cls.award_cts_async('T', cls.ContactsForT)
+        await cls.award_cts_async('S', cls.ContactsForS)
+        await cls.award_was_async('WAS', cls.ContactsForWAS)
+        await cls.award_was_async('WAS-C', cls.ContactsForWAS_C)
+        await cls.award_was_async('WAS-T', cls.ContactsForWAS_T)
+        await cls.award_was_async('WAS-S', cls.ContactsForWAS_S)
+        await cls.award_p_async(cls.ContactsForP)
+        await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
         if 'K3Y' in config.GOALS:
             cls.print_k3y_contacts()
 
     @classmethod
-    def award_p(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
-        with open(f'QSOs/{config.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
+    async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
+        """Async version of award_p to write files using aiofiles"""
+        import aiofiles  # You'll need to add this to your imports
+
+        async with aiofiles.open(f'QSOs/{config.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
             iPoints = 0
             for index, (_qso_date, prefix, member_number, first_name) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
             ):
                 iPoints += member_number
-                file.write(f"{index:>4} {member_number:>8} {first_name:<10.10} {prefix:<6} {iPoints:>12,}\n")
+                await file.write(f"{index:>4} {member_number:>8} {first_name:<10.10} {prefix:<6} {iPoints:>12,}\n")
 
     @classmethod
-    def award_cts(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+    async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+        """Async version of award_cts to write files using aiofiles"""
+        import aiofiles
+
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-        with open(f'QSOs/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+        async with aiofiles.open(f'QSOs/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
             for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
                 Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
-                File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
+                await File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
 
     @classmethod
-    def award_was(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+    async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+        """Async version of award_was to write files using aiofiles"""
+        import aiofiles
+
         QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
-        with open(f'QSOs/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(f'QSOs/{config.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
             for state in US_STATES:
                 if state in QSOsByState:
                     spc, date, callsign = QSOsByState[state]
-                    file.write(f"{spc}    {callsign:<12}  {date[:4]}-{date[4:6]}-{date[6:8]}\n")
+                    await file.write(f"{spc}    {callsign:<12}  {date[:4]}-{date[4:6]}-{date[6:8]}\n")
                 else:
-                    file.write(f"{state}\n")
+                    await file.write(f"{state}\n")
 
     @classmethod
-    def track_brag(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
-        with open(f'QSOs/{config.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
+    async def track_brag_async(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
+        """Async version of track_brag to write files using aiofiles"""
+        import aiofiles
+
+        async with aiofiles.open(f'QSOs/{config.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
                 sorted(QSOs.values()), start=1
             ):
                 date = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
-                file.write(
-                    f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}  {qso_freq / 1000:.3f}\n"
-                    if qso_freq else f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}\n"
-                )
+                if qso_freq:
+                    await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}  {qso_freq / 1000:.3f}\n")
+                else:
+                    await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}\n")
 
     @classmethod
     def print_k3y_contacts(cls) -> None:
@@ -1935,40 +1945,42 @@ class cSKCC:
     }
 
     @classmethod
-    async def initialize(cls):
+    async def initialize_async(cls):
         """Initialize SKCC data using parallel downloads for rosters."""
         # First, read the main SKCC data
-        await cls.read_skcc_data()
+        await cls.read_skcc_data_async()
 
-        # Download all rosters in parallel using thread pool
+        # Convert the synchronous methods to async
         print("Downloading award rosters...")
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            # Submit all tasks
-            centurion_future = executor.submit(cls.read_level_list, 'Centurion', 'centurionlist.txt')
-            tribune_future = executor.submit(cls.read_level_list, 'Tribune', 'tribunelist.txt')
-            senator_future = executor.submit(cls.read_level_list, 'Senator', 'senator.txt')
-            was_future = executor.submit(cls.read_roster, 'WAS', 'operating_awards/was/was_roster.php')
-            was_c_future = executor.submit(cls.read_roster, 'WAS-C', 'operating_awards/was-c/was-c_roster.php')
-            was_t_future = executor.submit(cls.read_roster, 'WAS-T', 'operating_awards/was-t/was-t_roster.php')
-            was_s_future = executor.submit(cls.read_roster, 'WAS-S', 'operating_awards/was-s/was-s_roster.php')
-            prefix_future = executor.submit(cls.read_roster, 'PFX', 'operating_awards/pfx/prefix_roster.php')
+        try:
+            # Create a list of coroutines for all downloads
+            tasks = [
+                cls.read_level_list_async('Centurion', 'centurionlist.txt'),
+                cls.read_level_list_async('Tribune', 'tribunelist.txt'),
+                cls.read_level_list_async('Senator', 'senator.txt'),
+                cls.read_roster_async('WAS', 'operating_awards/was/was_roster.php'),
+                cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'),
+                cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'),
+                cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'),
+                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php')
+            ]
 
-            # Wait for completion with timeout to avoid hanging
-            try:
-                cls.centurion_level = centurion_future.result(timeout=30)
-                cls.tribune_level = tribune_future.result(timeout=30)
-                cls.senator_level = senator_future.result(timeout=30)
-                cls.was_level = was_future.result(timeout=30)
-                cls.was_c_level = was_c_future.result(timeout=30)
-                cls.was_t_level = was_t_future.result(timeout=30)
-                cls.was_s_level = was_s_future.result(timeout=30)
-                cls.prefix_level = prefix_future.result(timeout=30)
+            # Wait for all downloads to complete with a timeout
+            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
 
-                print("Successfully downloaded all award rosters.")
-            except Exception as e:
-                print(f"Error downloading rosters: {e}")
-                sys.exit(1)
+            # Unpack results
+            cls.centurion_level, cls.tribune_level, cls.senator_level, \
+            cls.was_level, cls.was_c_level, cls.was_t_level, \
+            cls.was_s_level, cls.prefix_level = results
+
+            print("Successfully downloaded all award rosters.")
+        except asyncio.TimeoutError:
+            print("Timeout error downloading rosters.")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error downloading rosters: {e}")
+            sys.exit(1)
 
     @classmethod
     def build_member_info(cls, CallSign: str) -> str:
@@ -2012,7 +2024,7 @@ class cSKCC:
         )
 
     @staticmethod
-    async def block_during_update_window() -> None:
+    async def block_during_update_window_async() -> None:
         def time_now_gmt():
             TimeNowGMT = time.strftime('%H%M00', time.gmtime())
             return int(TimeNowGMT)
@@ -2056,22 +2068,26 @@ class cSKCC:
         return None
 
     @staticmethod
-    def read_level_list(Type: str, URL: str) -> dict[str, int] | NoReturn:
-        """Read award level list with improved error handling."""
+    async def read_level_list_async(Type: str, URL: str) -> dict[str, int] | NoReturn:
+        """Read award level list with async HTTP request."""
         print(f"Retrieving SKCC award info from {URL}...")
 
         try:
-            # Use a timeout to prevent hanging
-            response = requests.get(f"https://www.skccgroup.com/{URL}", timeout=10)
-            response.raise_for_status()
-        except requests.RequestException as e:
+            # Use aiohttp instead of requests for async HTTP
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+                    if response.status != 200:
+                        print(f"Error retrieving award info: HTTP {response.status}")
+                        return {}
+                    text = await response.text()
+        except Exception as e:
             print(f"Error retrieving award info: {e}")
-            return {}  # Return empty dict rather than exiting
+            return {}
 
         today_gmt = time.strftime("%Y%m%d000000", time.gmtime())
         level: dict[str, int] = {}
 
-        for line in response.text.splitlines()[1:]:
+        for line in text.splitlines()[1:]:
             try:
                 cert_number, call_sign, member_number, *_rest, effective_date, endorsements = line.split("|")
             except ValueError:
@@ -2092,19 +2108,23 @@ class cSKCC:
         return level
 
     @staticmethod
-    def read_roster(Name: str, URL: str) -> dict[str, int] | NoReturn:
-        """Read roster with improved error handling."""
+    async def read_roster_async(Name: str, URL: str) -> dict[str, int] | NoReturn:
+        """Read roster with async HTTP request."""
         print(f"Retrieving SKCC {Name} roster...")
 
         try:
-            # Use a timeout to prevent hanging
-            response = requests.get(f"https://www.skccgroup.com/{URL}", timeout=10)
-            response.raise_for_status()
-        except requests.RequestException as e:
+            # Use aiohttp instead of requests for async HTTP
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+                    if response.status != 200:
+                        print(f"Error retrieving {Name} roster: HTTP {response.status}")
+                        return {}
+                    text = await response.text()
+        except Exception as e:
             print(f"Error retrieving {Name} roster: {e}")
-            return {}  # Return empty dict rather than exiting
+            return {}
 
-        rows = re.findall(r"<tr.*?>(.*?)</tr>", response.text, re.I | re.S)
+        rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
         columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
 
         return {
@@ -2114,7 +2134,7 @@ class cSKCC:
         }
 
     @classmethod
-    async def read_skcc_data(cls) -> None | NoReturn:
+    async def read_skcc_data_async(cls) -> None | NoReturn:
         """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
@@ -2385,7 +2405,7 @@ class cRBN:
     def dot_count_reset(cls):
         cls.dot_count = 0
 
-async def get_version() -> str:
+async def get_version_async() -> str:
     """
     Creates or loads version information. Runs GenerateVersionStamp.py to
     generate cVersion.py containing the version stamp of the HEAD commit.
@@ -2415,13 +2435,12 @@ async def get_version() -> str:
 async def main_loop():
     global config, SPOTTERS_NEARBY, Spotters
 
-    print(f'SKCC Skimmer version {await get_version()}\n')
+    print(f'SKCC Skimmer version {await get_version_async()}\n')
 
-    # Set up shutdown handlers early
+    # New implementation using asyncio:
     if platform.system() == "Windows":
-        # Windows needs a separate thread to handle KeyboardInterrupt
-        ctrl_c_thread = threading.Thread(target=cUtil.watch_for_ctrl_c, daemon=True)
-        ctrl_c_thread.start()
+        # Add a task to the event loop to watch for keyboard interrupts
+        asyncio.create_task(cUtil.watch_for_ctrl_c_async())
     else:
         # Unix-like systems can use signal handlers
         for sig in (signal.SIGINT, signal.SIGTERM):
@@ -2431,7 +2450,7 @@ async def main_loop():
 
     config = cConfig(ArgV)
 
-    await cSKCC.block_during_update_window()
+    await cSKCC.block_during_update_window_async()
 
     if config.VERBOSE:
         config.PROGRESS_DOTS.ENABLED = False
@@ -2439,7 +2458,7 @@ async def main_loop():
     cUtil.file_check(config.ADI_FILE)
 
     # Initialize SKCC data with parallel downloads
-    await cSKCC.initialize()
+    await cSKCC.initialize_async()
 
     if config.MY_CALLSIGN not in cSKCC.members:
         print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
@@ -2447,7 +2466,7 @@ async def main_loop():
 
     # Initialize QSO data
     cQSO.initialize()
-    cQSO.get_goal_qsos()
+    await cQSO.get_goal_qsos_async()
     cQSO.print_progress()
 
     print('')
@@ -2466,7 +2485,7 @@ async def main_loop():
                         print("\nExiting by user request...")
                         return
                     case 'r' | 'refresh':
-                        cQSO.refresh()
+                        await cQSO.refresh_async()
                     case '':
                         continue
                     case cmd:
