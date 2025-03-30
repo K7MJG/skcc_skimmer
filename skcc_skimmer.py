@@ -73,7 +73,7 @@
 
 
 from datetime import timedelta, datetime
-from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine
+from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, Self, TypedDict
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
 
@@ -81,6 +81,7 @@ import asyncio
 import aiohttp
 from aiohttp import ClientTimeout
 import aiofiles
+import aiofiles.os
 import argparse
 import signal
 import socket
@@ -160,8 +161,8 @@ class cUtil:
         return Class
 
     @staticmethod
-    def file_check(Filename: str) -> None | NoReturn:
-        if os.path.exists(Filename):
+    async def file_check_async(Filename: str) -> None | NoReturn:
+        if await aiofiles.os.path.exists(Filename):
             return
 
         print('')
@@ -193,7 +194,6 @@ class cUtil:
     @staticmethod
     def handle_shutdown(signum: int, frame: object | None = None) -> None:
         """Exits immediately when Ctrl+C is detected."""
-        print("\nExiting immediately on Ctrl+C...")
         # Force immediate exit without any cleanup
         os._exit(0)
 
@@ -205,7 +205,6 @@ class cUtil:
             while True:
                 await asyncio.sleep(0.1)
         except KeyboardInterrupt:
-            print("\nExiting immediately on Ctrl+C...")
             os._exit(0)
 
 class cConfig:
@@ -626,14 +625,14 @@ class cFastDateTime:
         return list(map(int, [self.FastDateTime[:4],   self.FastDateTime[4:6],   self.FastDateTime[6:8],
                               self.FastDateTime[8:10], self.FastDateTime[10:12], self.FastDateTime[12:14]]))
 
-    def start_of_month(self) -> 'cFastDateTime':
+    def start_of_month(self) -> Self:
         Year, Month, _Day, _Hour, _Minute, _Second = self.split_date_time()
-        return cFastDateTime(f'{Year:0>4}{Month:0>2}{1:0>2}000000')
+        return type(self)(f'{Year:0>4}{Month:0>2}{1:0>2}000000')
 
-    def end_of_month(self) -> 'cFastDateTime':
+    def end_of_month(self) -> Self:
         Year, Month, _Day, _Hour, _Minute, _Second = self.split_date_time()
         _, DaysInMonth = calendar.monthrange(Year, Month)
-        return cFastDateTime(f'{Year:0>4}{Month:0>2}{DaysInMonth:0>2}235959')
+        return type(self)(f'{Year:0>4}{Month:0>2}{DaysInMonth:0>2}235959')
 
     def year(self) -> int:
         return int(self.FastDateTime[0:4])
@@ -1097,7 +1096,7 @@ class cQSO:
     async def watch_logfile_task(cls):
         while True:
             try:
-                if os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
+                if await aiofiles.os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
                     cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
 
                     # Wait until file size stabilizes
@@ -1690,7 +1689,7 @@ class cQSO:
 
         # Generate output files
         QSOs_Dir = 'QSOs'
-        if not os.path.exists(QSOs_Dir):
+        if not await aiofiles.os.path.exists(QSOs_Dir):
             os.makedirs(QSOs_Dir)
 
         # Award files
@@ -1942,11 +1941,24 @@ class cSpotters:
         Miles, _ = cls.spotters[Spotter]
         return Miles
 
+
 class cSKCC:
+    class cMemberEntry(TypedDict):
+        name: str
+        plain_number: str
+        spc: str
+        join_date: str
+        c_date: str
+        t_date: str
+        tx8_date: str
+        s_date: str
+        main_call: str
+
+    members:         ClassVar[dict[str, cMemberEntry]] = {}
+
     centurion_level: ClassVar[dict[str, int]] = {}
     tribune_level:   ClassVar[dict[str, int]] = {}
     senator_level:   ClassVar[dict[str, int]] = {}
-    members:         ClassVar[dict[str, dict[str, str]]] = {}
     was_level:       ClassVar[dict[str, int]] = {}
     was_c_level:     ClassVar[dict[str, int]] = {}
     was_t_level:     ClassVar[dict[str, int]] = {}
@@ -1997,8 +2009,8 @@ class cSKCC:
                 cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php')
             ]
 
-            # Wait for all downloads to complete with a timeout
-            results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+            async with asyncio.timeout(30):  # 30 second timeout
+                results = await asyncio.gather(*tasks)
 
             # Unpack results
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
@@ -2404,13 +2416,8 @@ class cRBN:
                     await writer.drain()
                     await reader.readuntil(b">\r\n\r\n")
 
-                    while True:
-                        try:
-                            data: bytes = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=1.0)
-                            yield data  # Send data to caller
-                        except asyncio.TimeoutError:
-                            continue  # Timeout is fine, just continue
-
+                    async for data in reader:
+                        yield data
                 except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
                     pass  # Silently ignore & retry
                 except asyncio.CancelledError:
@@ -2499,7 +2506,7 @@ async def main_loop():
     if cConfig.VERBOSE:
         cConfig.PROGRESS_DOTS.ENABLED = False
 
-    cUtil.file_check(cConfig.ADI_FILE)
+    await cUtil.file_check_async(cConfig.ADI_FILE)
 
     # Initialize SKCC data with parallel downloads
     await cSKCC.initialize_async()
@@ -2557,33 +2564,25 @@ async def main_loop():
     # Clear log file if needed
     if cConfig.LOG_FILE.DELETE_ON_STARTUP:
         Filename = cConfig.LOG_FILE.FILE_NAME
-        if Filename is not None and os.path.exists(Filename):
+        if Filename is not None and await aiofiles.os.path.exists(Filename):
             os.remove(Filename)
 
     print()
     print('Running...')
     print()
 
-    # Create tasks and let them run until program exit
-    tasks: list[asyncio.Task[None]] = []
-
-    tasks.append(asyncio.create_task(cQSO.watch_logfile_task()))
-    tasks.append(asyncio.create_task(cSPOTS.handle_spots_task()))
-
-    if cConfig.PROGRESS_DOTS.ENABLED:
-        tasks.append(asyncio.create_task(cRBN.write_dots_task()))
-
-    if cConfig.SKED.ENABLED:
-        tasks.append(asyncio.create_task(cSked.sked_page_scraper_task_async()))
-
-    # Wait indefinitely until interrupted by Ctrl+C
     try:
-        await asyncio.Future()  # This future never completes
-    except asyncio.CancelledError:
-        pass  # This won't happen since we exit with os._exit(0)
-    except KeyboardInterrupt:
-        print("\nReceived keyboard interrupt, shutting down...")
-        sys.exit(0)
+        async with asyncio.TaskGroup() as tg:
+            tg.create_task(cQSO.watch_logfile_task())
+            tg.create_task(cSPOTS.handle_spots_task())
+            if cConfig.PROGRESS_DOTS.ENABLED:
+                tg.create_task(cRBN.write_dots_task())
+            if cConfig.SKED.ENABLED:
+                tg.create_task(cSked.sked_page_scraper_task_async())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        return
+    except Exception:
+        return
 
 if __name__ == "__main__":
     asyncio.run(main_loop())
