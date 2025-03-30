@@ -79,6 +79,7 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 import asyncio
+import aiohttp
 import argparse
 import signal
 import socket
@@ -158,13 +159,6 @@ class cUtil:
             return f'{Class}x{X_Factor}'
 
         return Class
-
-    @staticmethod
-    def build_member_info(CallSign: str) -> str:
-        entry = cSKCC.members[CallSign]
-        number, suffix = cSKCC.get_full_member_number(CallSign)
-
-        return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
     @staticmethod
     def file_check(Filename: str) -> None | NoReturn:
@@ -593,7 +587,7 @@ class cConfig:
 class cFastDateTime:
     FastDateTime: str
 
-    MONTH_NAMES: Final = tuple('January February March April May June July August September October November December'.split())
+    MONTH_NAMES: Final = 'January February March April May June July August September October November December'.split()
 
     def __init__(self, Object: datetime | time.struct_time | tuple[int, int, int] | tuple[int, int, int, int, int, int] | str | None) -> None:
         if isinstance(Object, datetime):
@@ -710,7 +704,7 @@ class cSked:
             if CallSign in config.EXCLUSIONS:
                 continue
 
-            Report: list[str] = [cUtil.build_member_info(CallSign)]
+            Report: list[str] = [cSKCC.build_member_info(CallSign)]
 
             if CallSign in cSPOTS.last_spotted:
                 FrequencyKHz, StartTime = cSPOTS.last_spotted[CallSign]
@@ -1037,7 +1031,7 @@ class cSPOTS:
                 NotificationFlag = cls.handle_notification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
-                MemberInfo = cUtil.build_member_info(CallSign)
+                MemberInfo = cSKCC.build_member_info(CallSign)
                 NotificationFlag = cls.handle_notification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
@@ -1941,13 +1935,14 @@ class cSKCC:
     }
 
     @classmethod
-    def initialize(cls):
+    async def initialize(cls):
         """Initialize SKCC data using parallel downloads for rosters."""
         # First, read the main SKCC data
-        cls.read_skcc_data()
+        await cls.read_skcc_data()
 
         # Download all rosters in parallel using thread pool
         print("Downloading award rosters...")
+
         with ThreadPoolExecutor(max_workers=8) as executor:
             # Submit all tasks
             centurion_future = executor.submit(cls.read_level_list, 'Centurion', 'centurionlist.txt')
@@ -1974,6 +1969,13 @@ class cSKCC:
             except Exception as e:
                 print(f"Error downloading rosters: {e}")
                 sys.exit(1)
+
+    @classmethod
+    def build_member_info(cls, CallSign: str) -> str:
+        entry = cls.members[CallSign]
+        number, suffix = cls.get_full_member_number(CallSign)
+
+        return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
     @staticmethod
     def wes(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
@@ -2010,7 +2012,7 @@ class cSKCC:
         )
 
     @staticmethod
-    def block_during_update_window() -> None:
+    async def block_during_update_window() -> None:
         def time_now_gmt():
             TimeNowGMT = time.strftime('%H%M00', time.gmtime())
             return int(TimeNowGMT)
@@ -2020,7 +2022,7 @@ class cSKCC:
             print('SKCC Skimmer will start when complete.  Please wait...')
 
             while time_now_gmt() % 20000 == 0:
-                time.sleep(2)
+                await asyncio.sleep(2)  # Non-blocking sleep
                 sys.stderr.write('.')
             else:
                 print('')
@@ -2112,24 +2114,24 @@ class cSKCC:
         }
 
     @classmethod
-    def read_skcc_data(cls) -> None | NoReturn:
-        """Read SKCC member data with improved error handling."""
+    async def read_skcc_data(cls) -> None | NoReturn:
+        """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
+        url = 'https://www.skccgroup.com/membership_data/skccdata.txt'
+
         try:
-            # Use a timeout to prevent hanging
-            response = requests.get('https://www.skccgroup.com/membership_data/skccdata.txt', timeout=30)
-            response.raise_for_status()
-        except requests.RequestException as e:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+                async with session.get(url) as response:
+                    if response.status != 200:
+                        print(f"Unexpected response code {response.status} from SKCC website")
+                        sys.exit(1)
+                    text = await response.text()
+        except aiohttp.ClientError as e:
             print(f"Error retrieving SKCC data: {e}")
             sys.exit(1)
 
-        if response.status_code != 200:
-            print(f"Unexpected response code {response.status_code} from SKCC website")
-            sys.exit(1)
-
-        SkccList = response.text
-        lines = SkccList.splitlines()
+        lines = text.splitlines()
 
         # Clear existing data
         cls.members.clear()
@@ -2152,28 +2154,28 @@ class cSKCC:
                     'name'         : name,
                     'plain_number' : plain_number,
                     'spc'          : spc,
-                    'join_date'    : cSKCC.normalize_skcc_date(join_date),
-                    'c_date'       : cSKCC.normalize_skcc_date(c_date),
-                    't_date'       : cSKCC.normalize_skcc_date(t_date),
-                    'tx8_date'     : cSKCC.normalize_skcc_date(tx8_date),
-                    's_date'       : cSKCC.normalize_skcc_date(s_date),
+                    'join_date'    : cls.normalize_skcc_date(join_date),
+                    'c_date'       : cls.normalize_skcc_date(c_date),
+                    't_date'       : cls.normalize_skcc_date(t_date),
+                    'tx8_date'     : cls.normalize_skcc_date(tx8_date),
+                    's_date'       : cls.normalize_skcc_date(s_date),
                     'main_call'    : current_call,
                 }
 
         print(f"Successfully loaded data for {len(cls.members)} member callsigns")
 
-    @staticmethod
-    def is_on_skcc_frequency(frequency_khz: float, tolerance_khz: int = 10) -> bool:
+    @classmethod
+    def is_on_skcc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
         return any(
             ((Band == 60) and ((5332 - 1.5) <= frequency_khz <= (5405 + 1.5))) or
             any((((MidPoint - tolerance_khz) <= frequency_khz) and (frequency_khz <= (MidPoint + tolerance_khz))) for MidPoint in MidPoints)
-            for Band, MidPoints in cSKCC._calling_frequencies_khz.items()
+            for Band, MidPoints in cls._calling_frequencies_khz.items()
         )
 
-    @staticmethod
-    def which_band(frequency_khz: float, tolerance_khz: float = 10) -> int | None:
+    @classmethod
+    def which_band(cls, frequency_khz: float, tolerance_khz: float = 10) -> int | None:
         return next(
-            (Band for Band, MidPointsKHz in cSKCC._calling_frequencies_khz.items()
+            (Band for Band, MidPointsKHz in cls._calling_frequencies_khz.items()
             for MidPointKHz in MidPointsKHz
             if (MidPointKHz - tolerance_khz) <= frequency_khz <= (MidPointKHz + tolerance_khz)),
             None
@@ -2198,17 +2200,17 @@ class cSKCC:
 
         return None
 
-    @staticmethod
-    def is_on_warc_frequency(frequency_khz: float, tolerance_khz: int = 10) -> bool:
+    @classmethod
+    def is_on_warc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
         return any(
             (CallingFrequencyKHz - tolerance_khz) <= frequency_khz <= (CallingFrequencyKHz + tolerance_khz)
             for Band in (30, 17, 12)
-            for CallingFrequencyKHz in cSKCC._calling_frequencies_khz[Band]
+            for CallingFrequencyKHz in cls._calling_frequencies_khz[Band]
         )
 
-    @staticmethod
-    def get_full_member_number(CallSign: str) -> tuple[str, str]:
-        Entry = cSKCC.members[CallSign]
+    @classmethod
+    def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
+        Entry = cls.members[CallSign]
 
         MemberNumber = Entry['plain_number']
 
@@ -2217,30 +2219,30 @@ class cSKCC:
 
         if cUtil.effective(Entry['s_date']):
             Suffix = 'S'
-            Level = cSKCC.senator_level.get(MemberNumber, 1)
+            Level = cls.senator_level.get(MemberNumber, 1)
         elif cUtil.effective(Entry['t_date']):
             Suffix = 'T'
-            Level = cSKCC.tribune_level.get(MemberNumber, 1)
+            Level = cls.tribune_level.get(MemberNumber, 1)
 
             if Level == 8 and not cUtil.effective(Entry['tx8_date']):
                 Level = 7
         elif cUtil.effective(Entry['c_date']):
             Suffix = 'C'
-            Level = cSKCC.centurion_level.get(MemberNumber, 1)
+            Level = cls.centurion_level.get(MemberNumber, 1)
 
         if Level > 1:
             Suffix += f'x{Level}'
 
         return (MemberNumber, Suffix)
 
-    @staticmethod
-    def lookups(LookupString: str) -> None:
+    @classmethod
+    def lookups(cls, LookupString: str) -> None:
         def print_callsign(CallSign: str):
-            Entry = cSKCC.members[CallSign]
+            Entry = cls.members[CallSign]
 
-            MyNumber = cSKCC.members[config.MY_CALLSIGN]['plain_number']
+            MyNumber = cls.members[config.MY_CALLSIGN]['plain_number']
 
-            Report = [cUtil.build_member_info(CallSign)]
+            Report = [cls.build_member_info(CallSign)]
 
             if Entry['plain_number'] == MyNumber:
                 Report.append('(you)')
@@ -2273,7 +2275,7 @@ class cSKCC:
 
                 # Find the callsign for this member number
                 found = False
-                for CallSign, Value in cSKCC.members.items():
+                for CallSign, Value in cls.members.items():
                     if Value['plain_number'] == Number and CallSign == Value['main_call']:
                         print_callsign(CallSign)
                         found = True
@@ -2283,7 +2285,7 @@ class cSKCC:
                     print(f'  No member with the number {Number}.')
             else:
                 # Check if it's a valid callsign
-                if CallSign := cSKCC.extract_callsign(Item):
+                if CallSign := cls.extract_callsign(Item):
                     print_callsign(CallSign)
                 else:
                     print(f'  {Item} - not an SKCC member.')
@@ -2291,8 +2293,9 @@ class cSKCC:
         print('')
 
 class cRBN:
-    connected: bool = False
     dot_count: int = 0
+
+    _connected: ClassVar[bool] = False
 
     @staticmethod
     async def resolve_host(host: str, port: int) -> list[tuple[socket.AddressFamily, str]]:
@@ -2322,14 +2325,14 @@ class cRBN:
                 await asyncio.sleep(5)
                 continue
 
-            cls.connected = False
+            cls._connected = False
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
                 try:
                     reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")
-                    cls.connected = True
+                    cls._connected = True
 
                     # Authenticate with the RBN server
                     await reader.readuntil(b"call: ")
@@ -2362,25 +2365,16 @@ class cRBN:
                 if reader and writer:  # If connection succeeds, stop trying
                     break
 
-            if not cls.connected:
+            if not cls._connected:
                 print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
             await asyncio.sleep(5)
-
-        # Final cleanup if cancelled
-        if writer is not None and not writer.is_closing():
-            writer.close()
-            try:
-                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
-            except (asyncio.TimeoutError, Exception):
-                pass
-        raise  # Re-raise cancellation
 
     @classmethod
     async def write_dots_task(cls):
         while True:
             await asyncio.sleep(config.PROGRESS_DOTS.DISPLAY_SECONDS)
 
-            if cls.connected:
+            if cls._connected:
                 print('.', end='', flush=True)
                 cls.dot_count += 1
 
@@ -2437,7 +2431,7 @@ async def main_loop():
 
     config = cConfig(ArgV)
 
-    cSKCC.block_during_update_window()
+    await cSKCC.block_during_update_window()
 
     if config.VERBOSE:
         config.PROGRESS_DOTS.ENABLED = False
@@ -2445,7 +2439,7 @@ async def main_loop():
     cUtil.file_check(config.ADI_FILE)
 
     # Initialize SKCC data with parallel downloads
-    cSKCC.initialize()
+    await cSKCC.initialize()
 
     if config.MY_CALLSIGN not in cSKCC.members:
         print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
@@ -2524,5 +2518,9 @@ async def main_loop():
         await asyncio.Future()  # This future never completes
     except asyncio.CancelledError:
         pass  # This won't happen since we exit with os._exit(0)
+    except KeyboardInterrupt:
+        print("\nReceived keyboard interrupt, shutting down...")
+        sys.exit(0)
 
-asyncio.run(main_loop())
+if __name__ == "__main__":
+    asyncio.run(main_loop())
