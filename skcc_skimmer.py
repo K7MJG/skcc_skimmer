@@ -150,8 +150,8 @@ class cUtil:
         if config.LOG_BAD_SPOTS:
             with open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
                 File.write(Line + '\n')
-    @staticmethod
 
+    @staticmethod
     def abbreviate_class(Class: str, X_Factor: int) -> str:
         if X_Factor > 1:
             return f'{Class}x{X_Factor}'
@@ -679,8 +679,8 @@ class cFastDateTime:
         return cFastDateTime(time.gmtime())
 
 class cDisplay:
-    @classmethod
-    def print(cls, text: str):
+    @staticmethod
+    def print(text: str):
         if cRBN.dot_count > 0:
             print()
 
@@ -2046,19 +2046,19 @@ class cSKCC:
         sDay, sMonthAbbrev, sYear = Date.split()
         return f"{int(sYear):04}{cSKCC._month_abbreviations[sMonthAbbrev]:02}{int(sDay):02}000000"
 
-    @classmethod
-    def extract_callsign(cls, CallSign: str) -> str | None:
+    @staticmethod
+    def extract_callsign(CallSign: str) -> str | None:
         # Strip punctuation except '/'
         CallSign = CallSign.strip(string.punctuation.replace("/", ""))
 
-        if CallSign in cls.members or CallSign == "K3Y":
+        if CallSign in cSKCC.members or CallSign == "K3Y":
             return CallSign
 
         if "/" in CallSign:
             parts = CallSign.split("/")
             if len(parts) in {2, 3}:  # Valid cases
                 prefix, suffix = parts[:2]
-                return prefix if prefix in cls.members else suffix if suffix in cls.members else None
+                return prefix if prefix in cSKCC.members else suffix if suffix in cSKCC.members else None
 
         return None
 
@@ -2201,9 +2201,9 @@ class cSKCC:
             for CallingFrequencyKHz in cSKCC._calling_frequencies_khz[Band]
         )
 
-    @classmethod
-    def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
-        Entry = cls.members[CallSign]
+    @staticmethod
+    def get_full_member_number(CallSign: str) -> tuple[str, str]:
+        Entry = cSKCC.members[CallSign]
 
         MemberNumber = Entry['plain_number']
 
@@ -2212,24 +2212,24 @@ class cSKCC:
 
         if cUtil.effective(Entry['s_date']):
             Suffix = 'S'
-            Level = cls.senator_level[MemberNumber]
+            Level = cSKCC.senator_level[MemberNumber]
         elif cUtil.effective(Entry['t_date']):
             Suffix = 'T'
-            Level = cls.tribune_level[MemberNumber]
+            Level = cSKCC.tribune_level[MemberNumber]
 
             if Level == 8 and not cUtil.effective(Entry['tx8_date']):
                 Level = 7
         elif cUtil.effective(Entry['c_date']):
             Suffix = 'C'
-            Level = cls.centurion_level[MemberNumber]
+            Level = cSKCC.centurion_level[MemberNumber]
 
         if Level > 1:
             Suffix += f'x{Level}'
 
         return (MemberNumber, Suffix)
 
-    @classmethod
-    def lookups(cls, LookupString: str) -> None:
+    @staticmethod
+    def lookups(LookupString: str) -> None:
         def print_callsign(CallSign: str):
             Entry = cSKCC.members[CallSign]
 
