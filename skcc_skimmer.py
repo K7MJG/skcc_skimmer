@@ -92,7 +92,6 @@ import string
 import textwrap
 import calendar
 import json
-import requests
 import platform
 
 RBN_SERVER = 'telnet.reversebeacon.net'
@@ -702,119 +701,21 @@ class cSked:
     @classmethod
     async def handle_logins_async(cls, SkedLogins: list[tuple[str, str]], Heading: str):
         SkedHit: dict[str, list[str]] = {}
-        GoalList: list[str] = []
-        TargetList: list[str] = []
 
-        processing_tasks: list[Coroutine[Any, Any, None]] = []
+        # Create tasks for processing all logins in parallel
+        processing_tasks: list[Coroutine[Any, Any, None]]  = []
 
-        for CallSign, Status in SkedLogins:
-            if CallSign == cConfig.MY_CALLSIGN:
+        for orig_call, status in SkedLogins:
+            if orig_call == cConfig.MY_CALLSIGN:
                 continue
 
-            CallSign = cSKCC.extract_callsign(CallSign)
-
-            if not CallSign:
+            call_sign = cSKCC.extract_callsign(orig_call)
+            if not call_sign or call_sign in cConfig.EXCLUSIONS:
                 continue
 
-            if CallSign in cConfig.EXCLUSIONS:
-                continue
+            processing_tasks.append(cls._process_login_async(call_sign, status, SkedHit))
 
-            processing_tasks.append(cls._process_login_async(CallSign, Status, SkedHit))
-
-            Report: list[str] = [cSKCC.build_member_info(CallSign)]
-
-            if CallSign in cSPOTS.last_spotted:
-                FrequencyKHz, StartTime = cSPOTS.last_spotted[CallSign]
-
-                Now = time.time()
-                DeltaSeconds = max(int(Now - StartTime), 1)
-
-                if DeltaSeconds > cConfig.SPOT_PERSISTENCE_MINUTES * 60:
-                    del cSPOTS.last_spotted[CallSign]
-                elif DeltaSeconds > 60:
-                    DeltaMinutes = DeltaSeconds // 60
-                    Units = 'minutes' if DeltaMinutes > 1 else 'minute'
-                    Report.append(f'Last spotted {DeltaMinutes} {Units} ago on {FrequencyKHz}')
-                else:
-                    Units = 'seconds' if DeltaSeconds > 1 else 'second'
-                    Report.append(f'Last spotted {DeltaSeconds} {Units} ago on {FrequencyKHz}')
-
-            GoalList = []
-
-            if 'K3Y' in cConfig.GOALS:
-                def collect_station() -> tuple[str, str] | None:
-                    K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
-                    Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
-
-                    if Matches:
-                        return Matches.group(1), Matches.group(2).upper()
-
-                    SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
-                    Matches = re.search(SKM_RegEx, Status, re.IGNORECASE)
-
-                    if Matches:
-                        return Matches.group(1), Matches.group(2).upper()
-
-                    return None
-
-                def collect_frequency_khz() -> float | None:
-                    # Group 1 examples: 7.055.5 14.055.5
-                    # Group 2 examples: 7.055   14.055
-                    # Group 3 examples: 7055.5  14055.5
-                    # Group 4 examples: 7055    14055
-                    Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
-
-                    if match := Freq_RegEx.search(Status):
-                        FrequencyStr = match.group(1) or match.group(2) or match.group(3) or match.group(4)
-
-                        if FrequencyStr:
-                            return float(FrequencyStr.replace('.', '', 1)) if match.group(1) else float(FrequencyStr) * (1000 if match.group(2) else 1)
-
-                    return None
-
-                def combine(Type: str, Station: str):
-                    if Type == 'SKM':
-                        return f'SKM-{Station}'
-                    else:
-                        return f'K3Y/{Station}'
-
-                if Status != '':
-                    FullTuple = collect_station()
-
-                    if FullTuple:
-                        Type, Station = FullTuple
-                        FrequencyKHz = collect_frequency_khz()
-
-                        if FrequencyKHz:
-                            Band = cSKCC.which_band(FrequencyKHz)
-
-                            if Band:
-                                if (not Station in cQSO.ContactsForK3Y) or (not Band in cQSO.ContactsForK3Y[Station]):
-                                    GoalList.append(f'{combine(Type, Station)} ({Band}m)')
-                        else:
-                            GoalList.append(f'{combine(Type, Station)}')
-
-            GoalList = GoalList + cQSO.get_goal_hits(CallSign)
-
-            if GoalList:
-                Report.append(f'YOU need them for {",".join(GoalList)}')
-
-            TargetList = cQSO.get_target_hits(CallSign)
-
-            if TargetList:
-                Report.append(f'THEY need you for {",".join(TargetList)}')
-
-            IsFriend = CallSign in cConfig.FRIENDS
-
-            if IsFriend:
-                Report.append('friend')
-
-            if Status:
-                Report.append(f'STATUS: {cUtil.stripped(Status)}')
-
-            if TargetList or GoalList or IsFriend:
-                SkedHit[CallSign] = Report
-
+        # Wait for all processing to complete
         await asyncio.gather(*processing_tasks)
 
         if SkedHit:
@@ -825,14 +726,20 @@ class cSked:
             if cls._FirstPass:
                 NewLogins = []
             else:
-                NewLogins = list(set(SkedHit)-set(cls._PreviousLogins))
+                NewLogins = list(set(SkedHit) - set(cls._PreviousLogins))
 
-            cDisplay.print('=========== '+Heading+' Sked Page '+'=' * (16-len(Heading)))
+            cDisplay.print('=========== ' + Heading + ' Sked Page ' + '=' * (16-len(Heading)))
 
             for CallSign in sorted(SkedHit):
+                GoalList = [hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for")]
+                TargetList = [hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for")]
+                IsFriend = "friend" in SkedHit[CallSign]
+
                 if CallSign in NewLogins:
                     if cConfig.NOTIFICATION.ENABLED:
-                        if (CallSign in cConfig.FRIENDS and 'friends' in cConfig.NOTIFICATION.CONDITION) or (GoalList and 'goals' in cConfig.NOTIFICATION.CONDITION) or (TargetList and 'targets' in cConfig.NOTIFICATION.CONDITION):
+                        if (IsFriend and 'friends' in cConfig.NOTIFICATION.CONDITION) or \
+                        (GoalList and 'goals' in cConfig.NOTIFICATION.CONDITION) or \
+                        (TargetList and 'targets' in cConfig.NOTIFICATION.CONDITION):
                             cUtil.beep()
 
                     NewIndicator = '+'
@@ -843,12 +750,18 @@ class cSked:
                 cDisplay.print(Out)
                 await cUtil.log_async(f'{ZuluDate} {Out}')
 
+            # Only add the separator here, not at the end
+            cDisplay.print('=======================================')
+
+            cls._PreviousLogins = SkedHit
+            cls._FirstPass = False
+
         return SkedHit
 
     @classmethod
     async def _process_login_async(cls, CallSign: str, Status: str, SkedHit: dict[str, list[str]]) -> None:
-        """Process a single sked login asynchronously."""
-        Report: list[str] = [cSKCC.build_member_info(CallSign)]
+        """Process a single sked login asynchronously and add to SkedHit if relevant."""
+        Report: list[str] = [await cSKCC.build_member_info_async(CallSign)]
 
         if CallSign in cSPOTS.last_spotted:
             FrequencyKHz, StartTime = cSPOTS.last_spotted[CallSign]
@@ -866,10 +779,39 @@ class cSked:
                 Units = 'seconds' if DeltaSeconds > 1 else 'second'
                 Report.append(f'Last spotted {DeltaSeconds} {Units} ago on {FrequencyKHz}')
 
-        # Rest of the processing code...
-        # (Complete implementation would include K3Y processing, goal and target hits, etc.)
+        GoalList: list[str] = []
 
-        GoalList = cQSO.get_goal_hits(CallSign)
+        if 'K3Y' in cConfig.GOALS and Status:
+            # K3Y processing logic here...
+            K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
+            SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
+            Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
+
+            Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
+            if Matches:
+                Type, Station = Matches.group(1), Matches.group(2).upper()
+            else:
+                Matches = re.search(SKM_RegEx, Status, re.IGNORECASE)
+                if Matches:
+                    Type, Station = Matches.group(1), Matches.group(2).upper()
+                else:
+                    Type, Station = None, None
+
+            if Type and Station:
+                match = Freq_RegEx.search(Status)
+                if match:
+                    FrequencyStr = match.group(1) or match.group(2) or match.group(3) or match.group(4)
+                    if FrequencyStr:
+                        FrequencyKHz = float(FrequencyStr.replace('.', '', 1)) if match.group(1) else float(FrequencyStr) * (1000 if match.group(2) else 1)
+                        Band = cSKCC.which_band(FrequencyKHz)
+                        if Band:
+                            if (not Station in cQSO.ContactsForK3Y) or (not Band in cQSO.ContactsForK3Y[Station]):
+                                GoalList.append(f'{"SKM-" + Station if Type == "SKM" else "K3Y/" + Station} ({Band}m)')
+                else:
+                    GoalList.append(f'{"SKM-" + Station if Type == "SKM" else "K3Y/" + Station}')
+
+        # Add regular goal hits
+        GoalList.extend(cQSO.get_goal_hits(CallSign))
 
         if GoalList:
             Report.append(f'YOU need them for {",".join(GoalList)}')
@@ -914,9 +856,6 @@ class cSked:
 
                     cls._PreviousLogins = Hits
                     cls._FirstPass = False
-
-                    if Hits:
-                        cDisplay.print('=======================================')
         except Exception as e:
             print(f"\nProblem retrieving information from the Sked Page: {e}. Skipping...")
 
@@ -1098,7 +1037,7 @@ class cSPOTS:
                 NotificationFlag = cls.handle_notification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
-                MemberInfo = cSKCC.build_member_info(CallSign)
+                MemberInfo = await cSKCC.build_member_info_async(CallSign)
                 NotificationFlag = cls.handle_notification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
@@ -1128,7 +1067,7 @@ class cQSO:
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
     @classmethod
-    def initialize(cls):
+    async def initialize_async(cls):
         cls.QSOs = []
 
         cls.Brag               = {}
@@ -1143,7 +1082,7 @@ class cQSO:
         cls.ContactsForK3Y     = {}
         cls.QSOsByMemberNumber = {}
 
-        cls.read_qsos()
+        await cls.read_qsos_async()
 
         MyMemberEntry      = cSKCC.members[cConfig.MY_CALLSIGN]
         cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
@@ -1265,8 +1204,8 @@ class cQSO:
         return increment - (Total % increment), level
 
     @classmethod
-    def read_qsos(cls) -> None:
-        """Optimized QSO reading with chunked processing for better memory efficiency."""
+    async def read_qsos_async(cls) -> None:
+        """Optimized QSO reading with chunked async processing for better memory efficiency."""
         AdiFileAbsolute = os.path.abspath(cConfig.ADI_FILE)
         cDisplay.print(f"\nReading QSOs for {cConfig.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
@@ -1279,15 +1218,22 @@ class cQSO:
         field_pattern = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
 
         try:
-            with open(AdiFileAbsolute, 'rb') as file:
-                # Read the whole file - we could process in chunks for very large files
-                content = file.read().decode('utf-8', 'ignore')
+            async with aiofiles.open(AdiFileAbsolute, 'rb') as file:
+                # Read the file in chunks for better memory usage with large files
+                content = b''
+                chunk_size = 1024 * 1024  # 1MB chunks
+
+                while chunk := await file.read(chunk_size):
+                    content += chunk
+
+                # Decode content
+                text = content.decode('utf-8', 'ignore')
 
                 # Split header from body
-                parts = eoh_pattern.split(content, maxsplit=1)
+                parts = eoh_pattern.split(text, maxsplit=1)
                 if len(parts) < 2:
                     print("Warning: Could not find EOH marker in ADIF file")
-                    Body = content
+                    Body = text
                 else:
                     Body = parts[1].strip(' \t\r\n\x1a')
 
@@ -1541,7 +1487,7 @@ class cQSO:
 
     @classmethod
     async def refresh_async(cls) -> None:
-        cls.read_qsos()
+        await cls.read_qsos_async()
         await cQSO.get_goal_qsos_async()
         cls.print_progress()
 
@@ -1934,23 +1880,23 @@ class cSpotters:
         return 2 * R * atan2(sqrt(a), sqrt(1 - a))
 
     @classmethod
-    def get_spotters(cls) -> None:
-        """Get RBN spotters within the configured radius using parallel requests."""
-        def parse_bands(band_csv: str) -> list[int]:
-            valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
-            return [int(b[:-1]) for b in band_csv.split(',') if b in valid_bands]
-
+    async def get_spotters_async(cls) -> None:
+        """Get RBN spotters within the configured radius using parallel async requests."""
         print(f"\nFinding RBN spotters within {cConfig.SPOTTER_RADIUS} miles of '{cConfig.MY_GRIDSQUARE}'...")
 
         try:
-            # Use a timeout to prevent hanging
-            response = requests.get('https://reversebeacon.net/cont_includes/status.php?t=skt', timeout=10)
-            response.raise_for_status()
-        except requests.RequestException as e:
+            # Use aiohttp instead of requests for async HTTP
+            async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
+                async with session.get('https://reversebeacon.net/cont_includes/status.php?t=skt') as response:
+                    if response.status != 200:
+                        print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
+                        sys.exit()
+                    html = await response.text()
+        except aiohttp.ClientError as e:
             print(f'*** Fatal Error: Unable to retrieve spotters from RBN: {e}')
             sys.exit()
 
-        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', response.text, re.S)
+        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.S)
 
         columns_regex = re.compile(
             r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
@@ -1958,16 +1904,32 @@ class cSpotters:
             re.S
         )
 
+        # Process spotters in parallel
+        processing_tasks: list[Coroutine[Any, Any, None]]  = []
+
         for row in rows:
             for spotter, csv_bands, grid in columns_regex.findall(row):
                 if grid == "XX88LL":
                     continue
 
-                try:
-                    miles = int(cSpotters.calculate_distance(cConfig.MY_GRIDSQUARE, grid) * 0.62137)
-                    cls.spotters[spotter] = (miles, parse_bands(csv_bands))
-                except ValueError:
-                    continue
+                processing_tasks.append(cls._process_spotter(spotter, csv_bands, grid))
+
+        # Wait for all processing tasks to complete
+        await asyncio.gather(*processing_tasks)
+
+    @classmethod
+    async def _process_spotter(cls, spotter: str, csv_bands: str, grid: str) -> None:
+        """Process a single spotter entry asynchronously."""
+        try:
+            miles = int(cSpotters.calculate_distance(cConfig.MY_GRIDSQUARE, grid) * 0.62137)
+
+            # Parse bands from csv string
+            valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
+            bands = [int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands]
+
+            cls.spotters[spotter] = (miles, bands)
+        except ValueError:
+            pass
 
     @classmethod
     def get_nearby_spotters(cls) -> list[tuple[str, int]]:
@@ -2052,9 +2014,9 @@ class cSKCC:
             sys.exit(1)
 
     @classmethod
-    def build_member_info(cls, CallSign: str) -> str:
+    async def build_member_info_async(cls, CallSign: str) -> str:
         entry = cls.members[CallSign]
-        number, suffix = cls.get_full_member_number(CallSign)
+        number, suffix = await cls.get_full_member_number_async(CallSign)
 
         return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
@@ -2298,24 +2260,31 @@ class cSKCC:
         )
 
     @classmethod
-    def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
+    async def get_full_member_number_async(cls, CallSign: str) -> tuple[str, str]:
+        """Async version to get a member's full number including suffix."""
         Entry = cls.members[CallSign]
-
         MemberNumber = Entry['plain_number']
 
         Suffix = ''
-        Level  = 1
+        Level = 1
 
-        if cUtil.effective(Entry['s_date']):
+        # Use asyncio.gather to concurrently fetch member information
+        c_date, t_date, s_date = await asyncio.gather(
+            asyncio.to_thread(cUtil.effective, Entry['c_date']),
+            asyncio.to_thread(cUtil.effective, Entry['t_date']),
+            asyncio.to_thread(cUtil.effective, Entry['s_date'])
+        )
+
+        if s_date:
             Suffix = 'S'
             Level = cls.senator_level.get(MemberNumber, 1)
-        elif cUtil.effective(Entry['t_date']):
+        elif t_date:
             Suffix = 'T'
             Level = cls.tribune_level.get(MemberNumber, 1)
 
             if Level == 8 and not cUtil.effective(Entry['tx8_date']):
                 Level = 7
-        elif cUtil.effective(Entry['c_date']):
+        elif c_date:
             Suffix = 'C'
             Level = cls.centurion_level.get(MemberNumber, 1)
 
@@ -2330,7 +2299,7 @@ class cSKCC:
         async def print_callsign_async(CallSign: str):
             Entry = cls.members[CallSign]
             MyNumber = cls.members[cConfig.MY_CALLSIGN]['plain_number']
-            Report = [cls.build_member_info(CallSign)]
+            Report = [await cls.build_member_info_async(CallSign)]
 
             if Entry['plain_number'] == MyNumber:
                 Report.append('(you)')
@@ -2540,7 +2509,7 @@ async def main_loop():
         sys.exit()
 
     # Initialize QSO data
-    cQSO.initialize()
+    await cQSO.initialize_async()
     await cQSO.get_goal_qsos_async()
     cQSO.print_progress()
 
@@ -2572,7 +2541,7 @@ async def main_loop():
 
     # Get nearby spotters
     Spotters = cSpotters()
-    Spotters.get_spotters()
+    await Spotters.get_spotters_async()
 
     nearby_list_with_distance = Spotters.get_nearby_spotters()
     formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
