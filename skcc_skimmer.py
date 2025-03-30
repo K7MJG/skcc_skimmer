@@ -198,9 +198,10 @@ class cUtil:
 
     @staticmethod
     def handle_shutdown(signum: int, frame: object | None = None) -> None:
-        """Sets the shutdown event when Ctrl+C is detected."""
-        print("\nCtrl+C detected. Shutting down gracefully...")
-        shutdown_event.set()
+        """Exits immediately when Ctrl+C is detected."""
+        print("\nExiting immediately on Ctrl+C...")
+        # Force immediate exit without any cleanup
+        os._exit(0)
 
     @staticmethod
     def watch_for_ctrl_c():
@@ -210,7 +211,8 @@ class cUtil:
             while True:
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            cUtil.handle_shutdown(signal.SIGINT, None)
+            print("\nExiting immediately on Ctrl+C...")
+            os._exit(0)
 
 class cConfig:
     @dataclass
@@ -751,7 +753,7 @@ class cSked:
                     # Group 2 examples: 7.055   14.055
                     # Group 3 examples: 7055.5  14055.5
                     # Group 4 examples: 7055    14055
-                    Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{1,3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
+                    Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
 
                     if match := Freq_RegEx.search(Status):
                         FrequencyStr = match.group(1) or match.group(2) or match.group(3) or match.group(4)
@@ -863,42 +865,13 @@ class cSked:
 
     @classmethod
     async def sked_page_scraper_task(cls):
-        try:
-            while not shutdown_event.is_set():
-                try:
-                    cls.display_logins()
-                except Exception as e:
-                    print(f"Error in DisplayLogins: {e}")
+        while True:
+            try:
+                cls.display_logins()
+            except Exception as e:
+                print(f"Error in DisplayLogins: {e}")
 
-                # Use wait_for with short timeout to check shutdown_event more frequently
-                try:
-                    await asyncio.wait_for(
-                        shutdown_event.wait(),
-                        timeout=min(config.SKED.CHECK_SECONDS, 5)
-                    )
-                    # If we get here, shutdown_event was set
-                    break
-                except asyncio.TimeoutError:
-                    # Just a timeout, continue if we need to wait longer
-                    if config.SKED.CHECK_SECONDS <= 5:
-                        # We've waited enough
-                        continue
-                    else:
-                        # Wait the remaining time
-                        remaining = config.SKED.CHECK_SECONDS - 5
-                        try:
-                            await asyncio.wait_for(shutdown_event.wait(), timeout=remaining)
-                            # If we get here, shutdown_event was set
-                            break
-                        except asyncio.TimeoutError:
-                            # Full time elapsed, loop again
-                            pass
-
-        except asyncio.CancelledError:
-            print("cSked.RunForever_Task cancelled.")
-            raise
-        except Exception as e:
-            print(f"Unexpected error in RunForever: {e}")
+            await asyncio.sleep(config.SKED.CHECK_SECONDS)
 
 class cSPOTS:
     last_spotted: ClassVar[dict[str, tuple[float, float]]] = {}
@@ -909,40 +882,16 @@ class cSPOTS:
 
     @classmethod
     async def handle_spots_task(cls):
-        generator = None
-        try:
-            generator = cRBN.feed_generator(config.MY_CALLSIGN)
+        generator = cRBN.feed_generator(config.MY_CALLSIGN)
 
-            async for data in generator:
-                if shutdown_event.is_set():
-                    # Gracefully exit if shutdown is requested
-                    break
-
-                try:
-                    line = data.rstrip().decode("ascii", errors="replace")
-                    cSPOTS.handle_spot(line)
-                except Exception as e:
-                    # Don't let processing errors crash the whole task
-                    print(f"Error processing spot: {e}")
-                    continue
-
-        except asyncio.CancelledError:
-            print("cSPOTS.HandleSpots_Task cancelled.")
-            # Make sure to close the generator to release resources
-            if generator is not None:
-                await generator.aclose()
-            raise
-
-        except Exception as e:
-            print(f"Unexpected error in HandleSpots: {e}")
-
-        finally:
-            # Ensure the generator is closed properly
-            if generator is not None:
-                try:
-                    await generator.aclose()
-                except Exception:
-                    pass
+        async for data in generator:
+            try:
+                line = data.rstrip().decode("ascii", errors="replace")
+                cSPOTS.handle_spot(line)
+            except Exception as e:
+                # Don't let processing errors crash the whole task
+                print(f"Error processing spot: {e}")
+                continue
 
     @staticmethod
     def parse_spot(Line: str) -> None | tuple[str, str, float, str, str, int, int]:
@@ -1210,47 +1159,28 @@ class cQSO:
 
     @classmethod
     async def watch_logfile_task(cls):
-        try:
-            while not shutdown_event.is_set():
-                try:
-                    if os.path.exists(config.ADI_FILE) and os.path.getmtime(config.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
-                        cDisplay.print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
+        while True:
+            try:
+                if os.path.exists(config.ADI_FILE) and os.path.getmtime(config.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
+                    cDisplay.print(f"'{config.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                        # Once we detect the file has changed, we can't necessarily read it
-                        # immediately because the logger may still be writing to it, so we wait
-                        # until the write is complete.
-                        while not shutdown_event.is_set():
-                            Size = os.path.getsize(config.ADI_FILE)
+                    # Once we detect the file has changed, we can't necessarily read it
+                    # immediately because the logger may still be writing to it, so we wait
+                    # until the write is complete.
+                    while True:
+                        Size = os.path.getsize(config.ADI_FILE)
+                        await asyncio.sleep(1)
+                        if os.path.getsize(config.ADI_FILE) == Size:
+                            break
 
-                            # Use a shorter sleep and check shutdown flag
-                            for _ in range(3):  # 3 x 0.3 seconds = ~1 second
-                                if shutdown_event.is_set():
-                                    return
-                                await asyncio.sleep(0.3)
+                    cls.refresh()
 
-                            if os.path.getsize(config.ADI_FILE) == Size:
-                                break
+            except FileNotFoundError:
+                print(f"Warning: ADI file '{config.ADI_FILE}' not found or inaccessible")
+            except Exception as e:
+                print(f"Error watching log file: {e}")
 
-                        # Check again before potentially expensive refresh
-                        if not shutdown_event.is_set():
-                            cls.refresh()
-
-                except FileNotFoundError:
-                    print(f"Warning: ADI file '{config.ADI_FILE}' not found or inaccessible")
-                except Exception as e:
-                    print(f"Error watching log file: {e}")
-
-                # Use shorter sleep intervals to check shutdown flag more frequently
-                for _ in range(6):  # 6 x 0.5 seconds = 3 seconds
-                    if shutdown_event.is_set():
-                        return
-                    await asyncio.sleep(0.5)
-
-        except asyncio.CancelledError:
-            print("cQSO.WatchLogFile_Task cancelled.")
-            raise
-        except Exception as e:
-            print(f"Unexpected error in WatchLogFile: {e}")
+            await asyncio.sleep(3)
 
     @classmethod
     def awards_check(cls) -> None:
@@ -2382,10 +2312,7 @@ class cRBN:
     async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
         """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4."""
 
-        reader: asyncio.StreamReader | None = None
-        writer: asyncio.StreamWriter | None = None
-
-        while not shutdown_event.is_set():
+        while True:
             # Resolve the hostname dynamically
             addresses: list[tuple[socket.AddressFamily, str]] = await cRBN.resolve_host(RBN_SERVER, RBN_PORT)
             if not addresses:
@@ -2397,9 +2324,11 @@ class cRBN:
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
+                reader = writer = None
+
                 try:
                     reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
-                    print(f"Connected to '{RBN_SERVER}' using {protocol}.")  # Only print success
+                    print(f"Connected to '{RBN_SERVER}' using {protocol}.")
                     cls.connected = True
 
                     # Authenticate with the RBN server
@@ -2408,43 +2337,33 @@ class cRBN:
                     await writer.drain()
                     await reader.readuntil(b">\r\n\r\n")
 
-                    while not shutdown_event.is_set():
+                    while True:
                         try:
                             data: bytes = await asyncio.wait_for(reader.readuntil(b'\n'), timeout=1.0)
                             yield data  # Send data to caller
                         except asyncio.TimeoutError:
                             continue  # Timeout is fine, just continue
+                        except Exception:
+                            # Connection lost or other error, try to reconnect
+                            raise
 
-                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-                    pass  # Silently ignore & retry
-                except asyncio.CancelledError:
-                    raise  # Ensure proper cancellation handling
                 except Exception:
-                    pass  # Silently ignore unexpected errors
-                finally:
-                    # Cleanup connections properly
+                    # On any error, try the next address or reconnect
                     if writer is not None:
-                        writer.close()
                         try:
-                            await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-                        except (asyncio.TimeoutError, Exception):
+                            writer.close()
+                        except:
                             pass
-
-                if reader and writer:  # If connection succeeds, stop trying
                     break
 
-            if not cls.connected:
-                print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
-            await asyncio.sleep(5)
+                # If we got here with a successful connection, stop trying other addresses
+                if cls.connected:
+                    break
 
-        # Final cleanup if cancelled
-        if writer is not None and not writer.is_closing():
-            writer.close()
-            try:
-                await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
-            except (asyncio.TimeoutError, Exception):
-                pass
-        raise  # Re-raise cancellation
+            # If we couldn't connect with any address, wait before retrying
+            if not cls.connected:
+                print(f"Connection to {RBN_SERVER} failed. Retrying in 5 seconds...")
+                await asyncio.sleep(5)
 
     @classmethod
     async def write_dots_task(cls):
@@ -2461,7 +2380,6 @@ class cRBN:
     @classmethod
     def dot_count_reset(cls):
         cls.dot_count = 0
-
 
 async def get_version() -> str:
     """
@@ -2489,8 +2407,6 @@ async def get_version() -> str:
         pass
 
     return VERSION
-
-shutdown_event = asyncio.Event()
 
 async def main_loop():
     global config, SKCC, QSOs, SPOTTERS_NEARBY, Spotters
@@ -2557,7 +2473,7 @@ async def main_loop():
                     cSKCC.lookups(Line)
             except KeyboardInterrupt:
                 print("\nExiting by user request...")
-                return
+                os._exit(0)
 
     Spotters = cSpotters()
     Spotters.get_spotters()
@@ -2583,38 +2499,23 @@ async def main_loop():
     print('Running...')
     print()
 
-    # Create all tasks but keep references to them
+    # Create all tasks and let them run until program exit
     tasks: list[asyncio.Task[None]] = []
 
+    # Create and gather the tasks
+    tasks.append(asyncio.create_task(cQSO.watch_logfile_task()))
+    tasks.append(asyncio.create_task(cSPOTS.handle_spots_task()))
+
+    if config.PROGRESS_DOTS.ENABLED:
+        tasks.append(asyncio.create_task(cRBN.write_dots_task()))
+
+    if config.SKED.ENABLED:
+        tasks.append(asyncio.create_task(cSked.sked_page_scraper_task()))
+
+    # Wait forever (until Ctrl+C interrupts)
     try:
-        # Create a task group to manage all tasks
-        async with asyncio.TaskGroup() as tg:
-            tasks.append(tg.create_task(cQSO.watch_logfile_task()))
-            tasks.append(tg.create_task(cSPOTS.handle_spots_task()))
-
-            if config.PROGRESS_DOTS.ENABLED:
-                tasks.append(tg.create_task(cRBN.write_dots_task()))
-
-            if config.SKED.ENABLED:
-                tasks.append(tg.create_task(cSked.sked_page_scraper_task()))
-
-            # Wait for shutdown event
-            await shutdown_event.wait()
-            print("Shutdown event received. Cancelling all tasks...")
-
-    except* asyncio.CancelledError:
-        # This should catch any cancellation errors from the tasks
-        pass
-    finally:
-        # Make sure all resources are cleaned up
-        # Explicitly cancel all tasks to ensure they finish
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-
-        # Wait a moment for tasks to finish cleanup
-        await asyncio.sleep(0.5)
-
-        print("All tasks finished. Exiting cleanly.")
+        await asyncio.Future()  # This future never completes
+    except asyncio.CancelledError:
+        pass  # This won't happen since we exit with os._exit(0)
 
 asyncio.run(main_loop())
