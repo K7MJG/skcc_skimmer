@@ -76,7 +76,7 @@ from datetime        import timedelta, datetime
 from typing          import Any, NoReturn, Literal, get_args
 from math            import radians, sin, cos, atan2, sqrt
 from dataclasses     import dataclass, field
-from typing          import AsyncGenerator, NoReturn, Any, Final
+from typing          import AsyncGenerator, NoReturn, Any, Final, ClassVar
 
 import asyncio
 import subprocess
@@ -163,7 +163,7 @@ class cUtil:
 
     @staticmethod
     def build_member_info(CallSign: str) -> str:
-        entry = cSKCC.Members[CallSign]
+        entry = cSKCC._members[CallSign]
         number, suffix = cSKCC.get_full_member_number(CallSign)
 
         return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
@@ -690,11 +690,11 @@ class cDisplay:
         cRBN.dot_count_reset()
 
 class cSked:
-    RegEx = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
-    SkedSite = None
+    _RegEx:          ClassVar[re.Pattern[str]] = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    _SkedSite:       ClassVar[str | None] = None
 
-    PreviousLogins = {}
-    FirstPass = True
+    _PreviousLogins: ClassVar[dict[str, list[str]]] = {}
+    _FirstPass:      ClassVar[bool] = True
 
     @classmethod
     def handle_logins(cls, SkedLogins: list[tuple[str, str]], Heading: str):
@@ -716,14 +716,14 @@ class cSked:
 
             Report: list[str] = [cUtil.build_member_info(CallSign)]
 
-            if CallSign in cSPOTS.LastSpotted:
-                FrequencyKHz, StartTime = cSPOTS.LastSpotted[CallSign]
+            if CallSign in cSPOTS._LastSpotted:
+                FrequencyKHz, StartTime = cSPOTS._LastSpotted[CallSign]
 
                 Now = time.time()
                 DeltaSeconds = max(int(Now - StartTime), 1)
 
                 if DeltaSeconds > config.SPOT_PERSISTENCE_MINUTES * 60:
-                    del cSPOTS.LastSpotted[CallSign]
+                    del cSPOTS._LastSpotted[CallSign]
                 elif DeltaSeconds > 60:
                     DeltaMinutes = DeltaSeconds // 60
                     Units = 'minutes' if DeltaMinutes > 1 else 'minute'
@@ -813,10 +813,10 @@ class cSked:
             ZuluTime = time.strftime('%H%MZ', GMT)
             ZuluDate = time.strftime('%Y-%m-%d', GMT)
 
-            if cls.FirstPass:
+            if cls._FirstPass:
                 NewLogins = []
             else:
-                NewLogins = list(set(SkedHit)-set(cls.PreviousLogins))
+                NewLogins = list(set(SkedHit)-set(cls._PreviousLogins))
 
             cDisplay.print('=========== '+Heading+' Sked Page '+'=' * (16-len(Heading)))
 
@@ -857,8 +857,8 @@ class cSked:
 
                     print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
-            cls.PreviousLogins = Hits
-            cls.FirstPass = False
+            cls._PreviousLogins = Hits
+            cls._FirstPass = False
 
             if Hits:
                 cDisplay.print('=======================================')
@@ -905,11 +905,11 @@ class cSked:
             print(f"Unexpected error in RunForever: {e}")
 
 class cSPOTS:
-    LastSpotted: dict[str, tuple[float, float]] = {}
-    Notified: dict[str, float] = {}
+    _LastSpotted: ClassVar[dict[str, tuple[float, float]]] = {}
+    _Notified:    ClassVar[dict[str, float]] = {}
 
-    Zulu_RegEx = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
-    dB_RegEx   = re.compile(r'^\s{0,1}\d{1,2} dB$')
+    _Zulu_RegEx:  ClassVar[re.Pattern[str]] = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
+    _dB_RegEx:    ClassVar[re.Pattern[str]] = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
     @classmethod
     async def handle_spots_task(cls):
@@ -974,11 +974,11 @@ class cSPOTS:
         if Beacon == 'BEACON':
             return None
 
-        if not cSPOTS.Zulu_RegEx.match(Zulu):
+        if not cSPOTS._Zulu_RegEx.match(Zulu):
             cUtil.log_error(Line)
             return None
 
-        if not cSPOTS.dB_RegEx.match(Line[47:52]):
+        if not cSPOTS._dB_RegEx.match(Line[47:52]):
             cUtil.log_error(Line)
             return None
 
@@ -1008,17 +1008,17 @@ class cSPOTS:
 
         Now = time.time()
 
-        for Call in dict(cls.Notified):
-            if Now > cls.Notified[Call]:
-                del cls.Notified[Call]
+        for Call in dict(cls._Notified):
+            if Now > cls._Notified[Call]:
+                del cls._Notified[Call]
 
-        if CallSign not in cls.Notified:
+        if CallSign not in cls._Notified:
             if config.NOTIFICATION.ENABLED:
                 if (CallSign in config.FRIENDS and 'friends' in config.NOTIFICATION.CONDITION) or (GoalList and 'goals' in config.NOTIFICATION.CONDITION) or (TargetList and 'targets' in config.NOTIFICATION.CONDITION):
                     cUtil.beep()
 
             NotificationFlag = '+'
-            cls.Notified[CallSign] = Now + config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
+            cls._Notified[CallSign] = Now + config.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
 
         return NotificationFlag
 
@@ -1057,7 +1057,7 @@ class cSPOTS:
         SpottedNearby = Spotter in SPOTTERS_NEARBY
 
         if SpottedNearby or CallSign == config.MY_CALLSIGN:
-            if Spotter in Spotters.Spotters:
+            if Spotter in Spotters._spotters:
                 Miles = Spotters.get_distance(Spotter)
 
                 MilesDisplay      = f'{Miles}mi'
@@ -1130,7 +1130,7 @@ class cSPOTS:
         #-------------
 
         if (SpottedNearby and (GoalList or TargetList)) or You or IsFriend:
-            cSPOTS.LastSpotted[CallSign] = (FrequencyKHz, time.time())
+            cSPOTS._LastSpotted[CallSign] = (FrequencyKHz, time.time())
 
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
 
@@ -1203,7 +1203,7 @@ class cQSO:
 
         cls.read_qsos()
 
-        MyMemberEntry      = cSKCC.Members[config.MY_CALLSIGN]
+        MyMemberEntry      = cSKCC._members[config.MY_CALLSIGN]
         cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
         cls.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
         cls.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
@@ -1266,7 +1266,7 @@ class cQSO:
         ### C ###
 
         if cls.MyC_Date:
-            Award_C_Level = cSKCC.CenturionLevel[cls.MyMemberNumber]
+            Award_C_Level = cSKCC._centurion_level[cls.MyMemberNumber]
 
             while (C_Level > 10) and (C_Level % 5):
                 C_Level -= 1
@@ -1275,13 +1275,13 @@ class cQSO:
                 C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
                 print(f'FYI: You qualify for Cx{C_Level} but have only applied for {C_or_Cx}.')
         else:
-            if C_Level == 1 and cls.MyMemberNumber not in cSKCC.CenturionLevel:
+            if C_Level == 1 and cls.MyMemberNumber not in cSKCC._centurion_level:
                 print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
 
         if cls.MyT_Date:
-            Award_T_Level = cSKCC.TribuneLevel[cls.MyMemberNumber]
+            Award_T_Level = cSKCC._tribune_level[cls.MyMemberNumber]
 
             while (T_Level > 10) and (T_Level % 5):
                 T_Level -= 1
@@ -1290,42 +1290,42 @@ class cQSO:
                 T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
                 print(f'FYI: You qualify for Tx{T_Level} but have only applied for {T_or_Tx}.')
         else:
-            if T_Level == 1 and cls.MyMemberNumber not in cSKCC.TribuneLevel:
+            if T_Level == 1 and cls.MyMemberNumber not in cSKCC._tribune_level:
                 print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
 
         if cls.MyS_Date:
-            Award_S_Level = cSKCC.SenatorLevel[cls.MyMemberNumber]
+            Award_S_Level = cSKCC._senator_level[cls.MyMemberNumber]
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
                 print(f'FYI: You qualify for Sx{S_Level} but have only applied for {S_or_Sx}.')
         else:
-            if S_Level == 1 and cls.MyMemberNumber not in cSKCC.SenatorLevel:
+            if S_Level == 1 and cls.MyMemberNumber not in cSKCC._senator_level:
                 print('FYI: You qualify for S but have not yet applied for it.')
 
         ### WAS and WAS-C and WAS-T and WAS-S ###
 
         if 'WAS' in config.GOALS:
-            if len(cls.ContactsForWAS) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasLevel:
+            if len(cls.ContactsForWAS) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC._was_level:
                 print('FYI: You qualify for WAS but have not yet applied for it.')
 
         if 'WAS-C' in config.GOALS:
-            if len(cls.ContactsForWAS_C) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasCLevel:
+            if len(cls.ContactsForWAS_C) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC._was_c_level:
                 print('FYI: You qualify for WAS-C but have not yet applied for it.')
 
         if 'WAS-T' in config.GOALS:
-            if len(cls.ContactsForWAS_T) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasTLevel:
+            if len(cls.ContactsForWAS_T) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC._was_t_level:
                 print('FYI: You qualify for WAS-T but have not yet applied for it.')
 
         if 'WAS-S' in config.GOALS:
-            if len(cls.ContactsForWAS_S) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC.WasSLevel:
+            if len(cls.ContactsForWAS_S) == len(US_STATES) and config.MY_CALLSIGN not in cSKCC._was_s_level:
                 print('FYI: You qualify for WAS-S but have not yet applied for it.')
 
         if 'P' in config.GOALS:
-            if config.MY_CALLSIGN in cSKCC.PrefixLevel:
-                Award_P_Level = cSKCC.PrefixLevel[config.MY_CALLSIGN]
+            if config.MY_CALLSIGN in cSKCC._prefix_level:
+                Award_P_Level = cSKCC._prefix_level[config.MY_CALLSIGN]
 
                 if P_Level > Award_P_Level:
                     print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}')
@@ -1389,7 +1389,7 @@ class cQSO:
             if not call_sign or call_sign == 'K3Y':
                 continue
 
-            member_number = cSKCC.Members.get(call_sign, {}).get('plain_number')
+            member_number = cSKCC._members.get(call_sign, {}).get('plain_number')
             if member_number:
                 cls.QSOsByMemberNumber.setdefault(member_number, []).append(qso_date)
 
@@ -1460,10 +1460,10 @@ class cQSO:
 
     @classmethod
     def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
-        if TheirCallSign not in cSKCC.Members or TheirCallSign == config.MY_CALLSIGN:
+        if TheirCallSign not in cSKCC._members or TheirCallSign == config.MY_CALLSIGN:
             return []
 
-        TheirMemberEntry  = cSKCC.Members[TheirCallSign]
+        TheirMemberEntry  = cSKCC._members[TheirCallSign]
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
         TheirS_Date       = cUtil.effective(TheirMemberEntry['s_date'])
@@ -1523,10 +1523,10 @@ class cQSO:
 
     @classmethod
     def get_target_hits(cls, TheirCallSign: str) -> list[str]:
-        if TheirCallSign not in cSKCC.Members or TheirCallSign == config.MY_CALLSIGN:
+        if TheirCallSign not in cSKCC._members or TheirCallSign == config.MY_CALLSIGN:
             return []
 
-        TheirMemberEntry  = cSKCC.Members[TheirCallSign]
+        TheirMemberEntry  = cSKCC._members[TheirCallSign]
         TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
@@ -1544,7 +1544,7 @@ class cQSO:
                 TargetHitList.append('C')
 
         if 'CXN' in config.TARGETS and TheirC_Date:
-            NextLevel = cSKCC.CenturionLevel[TheirMemberNumber] + 1
+            NextLevel = cSKCC._centurion_level[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
                 TheirMemberNumber not in cls.QSOsByMemberNumber or all(
@@ -1563,7 +1563,7 @@ class cQSO:
                 TargetHitList.append('T')
 
         if 'TXN' in config.TARGETS and TheirT_Date and cls.MyC_Date:
-            NextLevel = cSKCC.TribuneLevel[TheirMemberNumber] + 1
+            NextLevel = cSKCC._tribune_level[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
                 TheirMemberNumber not in cls.QSOsByMemberNumber or all(
@@ -1581,7 +1581,7 @@ class cQSO:
                 TargetHitList.append('S')
 
         if 'SXN' in config.TARGETS and TheirS_Date and cls.MyT_Date:
-            NextLevel = cSKCC.SenatorLevel[TheirMemberNumber] + 1
+            NextLevel = cSKCC._senator_level[TheirMemberNumber] + 1
 
             if NextLevel <= 10 and (
                 TheirMemberNumber not in cls.QSOsByMemberNumber or all(
@@ -1634,9 +1634,9 @@ class cQSO:
             if not QsoCallSign or QsoCallSign == 'K3Y':
                 continue
 
-            MainCallSign = cSKCC.Members[QsoCallSign]['main_call']
+            MainCallSign = cSKCC._members[QsoCallSign]['main_call']
 
-            TheirMemberEntry  = cSKCC.Members[MainCallSign]
+            TheirMemberEntry  = cSKCC._members[MainCallSign]
             TheirMemberNumber = TheirMemberEntry['plain_number']
 
             fastQsoDate = cFastDateTime(QsoDate)
@@ -1709,9 +1709,9 @@ class cQSO:
             if not QsoCallSign:
                 continue
 
-            MainCallSign = cSKCC.Members[QsoCallSign]['main_call']
+            MainCallSign = cSKCC._members[QsoCallSign]['main_call']
 
-            TheirMemberEntry  = cSKCC.Members[MainCallSign]
+            TheirMemberEntry  = cSKCC._members[MainCallSign]
             TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
             TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
             TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
@@ -1753,7 +1753,7 @@ class cQSO:
                         iTheirMemberNumber = int(TheirMemberNumber)
 
                         if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
-                            FirstName = cSKCC.Members[QsoCallSign]['name']
+                            FirstName = cSKCC._members[QsoCallSign]['name']
                             cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
 
             # Centurion
@@ -1917,7 +1917,7 @@ class cQSO:
             print_k3y_contacts()
 
 class cSpotters:
-    Spotters: dict[str, tuple[int, list[int]]] = {}
+    _spotters: ClassVar[dict[str, tuple[int, list[int]]]] = {}
 
     @staticmethod
     def locator_to_latlong(locator: str) -> tuple[float, float]:
@@ -2000,38 +2000,38 @@ class cSpotters:
 
                 try:
                     miles = int(cSpotters.calculate_distance(config.MY_GRIDSQUARE, grid) * 0.62137)
-                    cls.Spotters[spotter] = (miles, parse_bands(csv_bands))
+                    cls._spotters[spotter] = (miles, parse_bands(csv_bands))
                 except ValueError:
                     continue
 
     @classmethod
     def get_nearby_spotters(cls) -> list[tuple[str, int]]:
-        spotters_sorted = sorted(cls.Spotters.items(), key=lambda item: item[1][0])
+        spotters_sorted = sorted(cls._spotters.items(), key=lambda item: item[1][0])
         nearbySpotters = [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= config.SPOTTER_RADIUS]
         return nearbySpotters
 
     @classmethod
     def get_distance(cls, Spotter: str) -> int:
-        Miles, _ = cls.Spotters[Spotter]
+        Miles, _ = cls._spotters[Spotter]
         return Miles
 
 class cSKCC:
-    CenturionLevel: dict[str, int] = {}
-    TribuneLevel: dict[str, int] = {}
-    SenatorLevel: dict[str, int] = {}
-    Members: dict[str, dict[str, str]] = {}
-    WasLevel: dict[str, int] = {}
-    WasCLevel: dict[str, int] = {}
-    WasTLevel: dict[str, int] = {}
-    WasSLevel: dict[str, int] = {}
-    PrefixLevel: dict[str, int] = {}
+    _centurion_level: ClassVar[dict[str, int]] = {}
+    _tribune_level:   ClassVar[dict[str, int]] = {}
+    _senator_level:   ClassVar[dict[str, int]] = {}
+    _members:         ClassVar[dict[str, dict[str, str]]] = {}
+    _was_level:       ClassVar[dict[str, int]] = {}
+    _was_c_level:     ClassVar[dict[str, int]] = {}
+    _was_t_level:     ClassVar[dict[str, int]] = {}
+    _was_s_level:     ClassVar[dict[str, int]] = {}
+    _prefix_level:    ClassVar[dict[str, int]] = {}
 
-    MonthAbbreviations: dict[str, int] = {
+    _month_abbreviations: ClassVar[dict[str, int]] = {
         'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4,  'May':5,  'Jun':6,
         'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12
     }
 
-    CallingFrequenciesKHz: dict[int, list[float]] = {
+    _calling_frequencies_khz: ClassVar[dict[int, list[float]]] = {
         160 : [1813.5],
         80  : [3530,  3550],
         60  : [],
@@ -2048,14 +2048,14 @@ class cSKCC:
     @classmethod
     def initialize(cls):
         cls.read_skcc_data()
-        cls.CenturionLevel = cls.read_level_list('Centurion', 'centurionlist.txt')
-        cls.TribuneLevel = cls.read_level_list('Tribune', 'tribunelist.txt')
-        cls.SenatorLevel = cls.read_level_list('Senator', 'senator.txt')
-        cls.WasLevel = cls.read_roster('WAS', 'operating_awards/was/was_roster.php')
-        cls.WasCLevel = cls.read_roster('WAS-C', 'operating_awards/was-c/was-c_roster.php')
-        cls.WasTLevel = cls.read_roster('WAS-T', 'operating_awards/was-t/was-t_roster.php')
-        cls.WasSLevel = cls.read_roster('WAS-S', 'operating_awards/was-s/was-s_roster.php')
-        cls.PrefixLevel = cls.read_roster('PFX', 'operating_awards/pfx/prefix_roster.php')
+        cls._centurion_level = cls.read_level_list('Centurion', 'centurionlist.txt')
+        cls._tribune_level = cls.read_level_list('Tribune', 'tribunelist.txt')
+        cls._senator_level = cls.read_level_list('Senator', 'senator.txt')
+        cls._was_level = cls.read_roster('WAS', 'operating_awards/was/was_roster.php')
+        cls._was_c_level = cls.read_roster('WAS-C', 'operating_awards/was-c/was-c_roster.php')
+        cls._was_t_level = cls.read_roster('WAS-T', 'operating_awards/was-t/was-t_roster.php')
+        cls._was_s_level = cls.read_roster('WAS-S', 'operating_awards/was-s/was-s_roster.php')
+        cls._prefix_level = cls.read_roster('PFX', 'operating_awards/pfx/prefix_roster.php')
 
     @staticmethod
     def wes(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
@@ -2118,21 +2118,21 @@ class cSKCC:
             return ""
 
         sDay, sMonthAbbrev, sYear = Date.split()
-        return f"{int(sYear):04}{cSKCC.MonthAbbreviations[sMonthAbbrev]:02}{int(sDay):02}000000"
+        return f"{int(sYear):04}{cSKCC._month_abbreviations[sMonthAbbrev]:02}{int(sDay):02}000000"
 
     @classmethod
     def extract_callsign(cls, CallSign: str) -> str | None:
         # Strip punctuation except '/'
         CallSign = CallSign.strip(string.punctuation.replace("/", ""))
 
-        if CallSign in cls.Members or CallSign == "K3Y":
+        if CallSign in cls._members or CallSign == "K3Y":
             return CallSign
 
         if "/" in CallSign:
             parts = CallSign.split("/")
             if len(parts) in {2, 3}:  # Valid cases
                 prefix, suffix = parts[:2]
-                return prefix if prefix in cls.Members else suffix if suffix in cls.Members else None
+                return prefix if prefix in cls._members else suffix if suffix in cls._members else None
 
         return None
 
@@ -2219,7 +2219,7 @@ class cSKCC:
             all_calls = [current_call] + [x.strip() for x in other_calls.split(",")] if other_calls else [current_call]
 
             for call in all_calls:
-                cls.Members[call] = {
+                cls._members[call] = {
                     'name'         : name,
                     'plain_number' : plain_number,
                     'spc'          : spc,
@@ -2236,13 +2236,13 @@ class cSKCC:
         return any(
             ((Band == 60) and ((5332 - 1.5) <= frequency_khz <= (5405 + 1.5))) or
             any((((MidPoint - tolerance_khz) <= frequency_khz) and (frequency_khz <= (MidPoint + tolerance_khz))) for MidPoint in MidPoints)
-            for Band, MidPoints in cSKCC.CallingFrequenciesKHz.items()
+            for Band, MidPoints in cSKCC._calling_frequencies_khz.items()
         )
 
     @staticmethod
     def which_band(frequency_khz: float, tolerance_khz: float = 10) -> int | None:
         return next(
-            (Band for Band, MidPointsKHz in cSKCC.CallingFrequenciesKHz.items()
+            (Band for Band, MidPointsKHz in cSKCC._calling_frequencies_khz.items()
             for MidPointKHz in MidPointsKHz
             if (MidPointKHz - tolerance_khz) <= frequency_khz <= (MidPointKHz + tolerance_khz)),
             None
@@ -2272,12 +2272,12 @@ class cSKCC:
         return any(
             (CallingFrequencyKHz - tolerance_khz) <= frequency_khz <= (CallingFrequencyKHz + tolerance_khz)
             for Band in (30, 17, 12)
-            for CallingFrequencyKHz in cSKCC.CallingFrequenciesKHz[Band]
+            for CallingFrequencyKHz in cSKCC._calling_frequencies_khz[Band]
         )
 
     @classmethod
     def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
-        Entry = cls.Members[CallSign]
+        Entry = cls._members[CallSign]
 
         MemberNumber = Entry['plain_number']
 
@@ -2286,16 +2286,16 @@ class cSKCC:
 
         if cUtil.effective(Entry['s_date']):
             Suffix = 'S'
-            Level = cls.SenatorLevel[MemberNumber]
+            Level = cls._senator_level[MemberNumber]
         elif cUtil.effective(Entry['t_date']):
             Suffix = 'T'
-            Level = cls.TribuneLevel[MemberNumber]
+            Level = cls._tribune_level[MemberNumber]
 
             if Level == 8 and not cUtil.effective(Entry['tx8_date']):
                 Level = 7
         elif cUtil.effective(Entry['c_date']):
             Suffix = 'C'
-            Level = cls.CenturionLevel[MemberNumber]
+            Level = cls._centurion_level[MemberNumber]
 
         if Level > 1:
             Suffix += f'x{Level}'
@@ -2305,9 +2305,9 @@ class cSKCC:
     @classmethod
     def lookups(cls, LookupString: str) -> None:
         def print_callsign(CallSign: str):
-            Entry = cSKCC.Members[CallSign]
+            Entry = cSKCC._members[CallSign]
 
-            MyNumber = cSKCC.Members[config.MY_CALLSIGN]['plain_number']
+            MyNumber = cSKCC._members[config.MY_CALLSIGN]['plain_number']
 
             Report = [cUtil.build_member_info(CallSign)]
 
@@ -2343,7 +2343,7 @@ class cSKCC:
             if Match:
                 Number = Match.group(1)
 
-                for CallSign, Value in cSKCC.Members.items():
+                for CallSign, Value in cSKCC._members.items():
                     Entry = Value
 
                     if Entry['plain_number'] == Number:
@@ -2477,14 +2477,14 @@ def get_version() -> str:
     if os.path.isfile('GenerateVersionStamp.py'):
         subprocess.run([sys.executable, "GenerateVersionStamp.py"], check=True)
 
-    version = "<development>"
+    VERSION = "<development>"
 
     try:
-        from cVersion import version
+        from cVersion import VERSION
     except ImportError:
         pass
 
-    return version
+    return VERSION
 
 shutdown_event = asyncio.Event()
 
@@ -2516,7 +2516,7 @@ async def main_loop():
 
     cSKCC.initialize()
 
-    if config.MY_CALLSIGN not in cSKCC.Members:
+    if config.MY_CALLSIGN not in cSKCC._members:
         print(f"'{config.MY_CALLSIGN}' is not a member of SKCC.")
         sys.exit()
 
