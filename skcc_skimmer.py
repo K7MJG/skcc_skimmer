@@ -67,7 +67,7 @@
 #
 # Portability:
 #
-#   Requires Python version 3.11 or better. Also requires the following imports
+#   Requires Python version 3.13 or better. Also requires the following imports
 #   which may require a pip install.
 #
 
@@ -198,7 +198,7 @@ class cUtil:
         os._exit(0)
 
     @staticmethod
-    async def watch_for_ctrl_c_async():
+    async def watch_for_ctrl_c_async() -> NoReturn:
         """Runs in the event loop to detect Ctrl+C on Windows."""
         try:
             # Just wait indefinitely until KeyboardInterrupt
@@ -214,7 +214,7 @@ class cConfig:
         DISPLAY_SECONDS: int  = 10
         DOTS_PER_LINE:   int  = 30
     @classmethod
-    def init_progress_dots(cls):
+    def init_progress_dots(cls) -> None:
         progress_config = cls.configFile.get("PROGRESS_DOTS", {})
         cls.PROGRESS_DOTS = cConfig.cProgressDots(
             ENABLED         = bool(progress_config.get("ENABLED", cConfig.cProgressDots.ENABLED)),
@@ -229,7 +229,7 @@ class cConfig:
         LOG_FILE:          str | None = None
         DELETE_ON_STARTUP: bool = False
     @classmethod
-    def init_logfile(cls):
+    def init_logfile(cls) -> None:
         log_file_config = cls.configFile.get("LOG_FILE", {})
         cls.LOG_FILE = cConfig.cLogFile(
             ENABLED           = bool(log_file_config.get("ENABLED", cConfig.cLogFile.ENABLED)),
@@ -243,7 +243,7 @@ class cConfig:
         ACTION: tAction = 'always-display'
         THRESHOLD: int = 15
     @classmethod
-    def init_high_wpm(cls):
+    def init_high_wpm(cls) -> None:
         high_wpm_config = cls.configFile.get("HIGH_WPM", {})
         action: cConfig.cHighWpm.tAction = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
         if action not in get_args(cConfig.cHighWpm.tAction):
@@ -260,7 +260,7 @@ class cConfig:
         ACTION:    Literal['suppress', 'warn'] = 'suppress'
         TOLERANCE: int = 0
     @classmethod
-    def init_off_frequency(cls):
+    def init_off_frequency(cls) -> None:
         off_frequency_config = cls.configFile.get("OFF_FREQUENCY", {})
         cls.OFF_FREQUENCY = cConfig.cOffFrequency(
             ACTION    =     off_frequency_config.get("ACTION",    cConfig.cOffFrequency.ACTION),
@@ -272,7 +272,7 @@ class cConfig:
         ENABLED:       bool = True
         CHECK_SECONDS: int  = 60
     @classmethod
-    def init_sked(cls):
+    def init_sked(cls) -> None:
         sked_config = cls.configFile.get("SKED", {})
         cls.SKED = cConfig.cSked(
             ENABLED       = sked_config.get("ENABLED",       cConfig.cSked.ENABLED),
@@ -286,7 +286,7 @@ class cConfig:
         CONDITION: list[str] = field(default_factory=lambda: cConfig.cNotification.DEFAULT_CONDITION)
         RENOTIFICATION_DELAY_SECONDS: int = 30
     @classmethod
-    def init_notifications(cls):
+    def init_notifications(cls) -> None:
         notification_config = cls.configFile.get("NOTIFICATION", {})
         conditions = cUtil.split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # Use DEFAULT_CONDITION
         invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
@@ -317,7 +317,7 @@ class cConfig:
     configFile:               dict[str, Any]
 
     @classmethod
-    async def init(cls, ArgV: list[str]):
+    async def init(cls, ArgV: list[str]) -> None:
         async def read_skcc_skimmer_cfg_async() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
@@ -429,7 +429,7 @@ class cConfig:
             cls.TARGETS = cls.parse_goals(args.targets, "C CXN T TXN S SXN", "target")
 
     @classmethod
-    def _ValidateConfig(cls):
+    def _ValidateConfig(cls) -> None:
         #
         # MY_CALLSIGN can be defined in skcc_skimmer.cfg.  It is not required
         # that it be supplied on the command line.
@@ -683,7 +683,7 @@ class cFastDateTime:
 
 class cDisplay:
     @staticmethod
-    def print(text: str):
+    def print(text: str) -> None:
         if cRBN.dot_count > 0:
             print()
 
@@ -698,7 +698,7 @@ class cSked:
     _FirstPass:      ClassVar[bool] = True
 
     @classmethod
-    async def handle_logins_async(cls, SkedLogins: list[tuple[str, str]], Heading: str):
+    async def handle_logins_async(cls, SkedLogins: list[tuple[str, str]], Heading: str) -> dict[str, list[str]]:
         SkedHit: dict[str, list[str]] = {}
 
         # Create tasks for processing all logins in parallel
@@ -859,7 +859,7 @@ class cSked:
             print(f"\nProblem retrieving information from the Sked Page: {e}. Skipping...")
 
     @classmethod
-    async def sked_page_scraper_task_async(cls):
+    async def sked_page_scraper_task_async(cls) -> NoReturn:
         """Updated async task for the sked page scraper."""
         while True:
             try:
@@ -877,7 +877,7 @@ class cSPOTS:
     _dB_RegEx:    ClassVar[re.Pattern[str]] = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
     @classmethod
-    async def handle_spots_task(cls):
+    async def handle_spots_task(cls) -> None:
         generator = cRBN.feed_generator(cConfig.MY_CALLSIGN)
 
         async for data in generator:
@@ -975,8 +975,8 @@ class cSPOTS:
         # Process spotter information
         SpottedNearby = Spotter in SPOTTERS_NEARBY
         if SpottedNearby or CallSign == cConfig.MY_CALLSIGN:
-            if Spotter in Spotters.spotters:
-                Miles = Spotters.get_distance(Spotter)
+            if Spotter in cSpotters.spotters:
+                Miles = cSpotters.get_distance(Spotter)
                 Distance = cUtil.format_distance(Miles)
                 Report.append(f'by {Spotter}({Distance}, {int(dB)}dB)')
             else:
@@ -1066,7 +1066,7 @@ class cQSO:
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
     @classmethod
-    async def initialize_async(cls):
+    async def initialize_async(cls) -> None:
         cls.QSOs = []
 
         cls.Brag               = {}
@@ -1093,7 +1093,7 @@ class cQSO:
         cls.MyMemberNumber = MyMemberEntry['plain_number']
 
     @classmethod
-    async def watch_logfile_task(cls):
+    async def watch_logfile_task(cls) -> NoReturn:
         while True:
             try:
                 if await aiofiles.os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
@@ -1290,7 +1290,7 @@ class cQSO:
 
     @classmethod
     def print_progress(cls) -> None:
-        def print_remaining(Class: str, Total: int):
+        def print_remaining(Class: str, Total: int) -> None:
             Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
             if Class in cConfig.GOALS:
@@ -1564,7 +1564,7 @@ class cQSO:
     async def get_goal_qsos_async(cls) -> None:
         """Optimized goal QSO processing with batched operations."""
         # Helper function to check date criteria
-        def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None):
+        def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
             if MemberDate == '' or MyDate == '':
                 return False
 
@@ -1782,10 +1782,10 @@ class cQSO:
         print(f'{"6m": ^7}|', end = '')
         print()
 
-        def print_station(Station: str):
+        def print_station(Station: str) -> None:
             _Prefix, Suffix = re.split('[/-]', Station)
 
-            def print_band(Band: int):
+            def print_band(Band: int) -> None:
                 if (Suffix in cls.ContactsForK3Y) and (Band in cls.ContactsForK3Y[Suffix]):
                     print(f'{" " + cls.ContactsForK3Y[Suffix][Band]: <7}|', end = '')
                 else:
@@ -1908,7 +1908,7 @@ class cSpotters:
 
         for row in rows:
             for spotter, csv_bands, grid in columns_regex.findall(row):
-                if grid == "XX88LL":
+                if grid in ["XX88LL"]:
                     continue
 
                 processing_tasks.append(cls._process_spotter(spotter, csv_bands, grid))
@@ -1940,7 +1940,6 @@ class cSpotters:
     def get_distance(cls, Spotter: str) -> int:
         Miles, _ = cls.spotters[Spotter]
         return Miles
-
 
 class cSKCC:
     class cMemberEntry(TypedDict):
@@ -1988,7 +1987,7 @@ class cSKCC:
     }
 
     @classmethod
-    async def initialize_async(cls):
+    async def initialize_async(cls) -> None:
         """Initialize SKCC data using parallel downloads for rosters."""
         # First, read the main SKCC data
         await cls.read_skcc_data_async()
@@ -2068,7 +2067,7 @@ class cSKCC:
 
     @staticmethod
     async def block_during_update_window_async() -> None:
-        def time_now_gmt():
+        def time_now_gmt() -> int:
             TimeNowGMT = time.strftime('%H%M00', time.gmtime())
             return int(TimeNowGMT)
 
@@ -2308,7 +2307,7 @@ class cSKCC:
     @classmethod
     async def lookups_async(cls, LookupString: str) -> None:
         """Async version of lookups to allow for concurrent processing."""
-        async def print_callsign_async(CallSign: str):
+        async def print_callsign_async(CallSign: str) -> None:
             Entry = cls.members[CallSign]
             MyNumber = cls.members[cConfig.MY_CALLSIGN]['plain_number']
             Report = [await cls.build_member_info_async(CallSign)]
@@ -2441,7 +2440,7 @@ class cRBN:
             await asyncio.sleep(5)
 
     @classmethod
-    async def write_dots_task(cls):
+    async def write_dots_task(cls) -> NoReturn:
         while True:
             await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)
 
@@ -2453,7 +2452,7 @@ class cRBN:
                     print('', flush=True)
 
     @classmethod
-    def dot_count_reset(cls):
+    def dot_count_reset(cls) -> None:
         cls.dot_count = 0
 
 async def get_version_async() -> str:
@@ -2483,7 +2482,7 @@ async def get_version_async() -> str:
 
     return VERSION
 
-async def main_loop():
+async def main_loop() -> None:
     global config, SPOTTERS_NEARBY, Spotters
 
     print(f'SKCC Skimmer version {await get_version_async()}\n')
@@ -2543,14 +2542,12 @@ async def main_loop():
                         print('')
                         await cSKCC.lookups_async(cmd)
             except KeyboardInterrupt:
-                print("\nExiting immediately...")
                 os._exit(0)
 
     # Get nearby spotters
-    Spotters = cSpotters()
-    await Spotters.get_spotters_async()
+    await cSpotters.get_spotters_async()
 
-    nearby_list_with_distance = Spotters.get_nearby_spotters()
+    nearby_list_with_distance = cSpotters.get_nearby_spotters()
     formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
     SPOTTERS_NEARBY = [Spotter for Spotter, _ in nearby_list_with_distance]
 
