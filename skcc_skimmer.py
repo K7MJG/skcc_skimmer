@@ -207,6 +207,18 @@ class cUtil:
         except KeyboardInterrupt:
             os._exit(0)
 
+    @staticmethod
+    def calculate_next_award_name(Class: str, current_x_factor: int) -> str:
+        next_x_factor = current_x_factor + 1
+
+        # Handle special cases for X_Factor progression
+        if current_x_factor == 10:
+            next_x_factor = 15
+        elif current_x_factor > 10 and current_x_factor % 5 == 0:
+            next_x_factor = current_x_factor + 5
+
+        return cUtil.abbreviate_class(Class, next_x_factor)
+
 class cConfig:
     @dataclass
     class cProgressDots:
@@ -1291,11 +1303,49 @@ class cQSO:
     @classmethod
     def print_progress(cls) -> None:
         def print_remaining(Class: str, Total: int) -> None:
-            Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
+            """
+            Print progress information for a specific award class.
+            Shows current qualification, next level, and remaining contacts needed.
 
-            if Class in cConfig.GOALS:
-                Abbrev = cUtil.abbreviate_class(Class, X_Factor)
-                print(f'{Class}: Have {Total:,} which qualifies for {Abbrev}. NEXT requires zzz ({Remaining:,} more)')
+            This function matches the expected output format for award progress display.
+            """
+            if Class not in cConfig.GOALS:
+                return
+
+            # Get the increment for this class
+            increment = Levels[Class]
+
+            # Calculate the current level (without rounding up)
+            current_level_base = Total // increment
+
+            if current_level_base >= 10:
+                # For levels 10+, use multiples of 5
+                current_level = 5 * (current_level_base // 5)
+            else:
+                current_level = current_level_base
+
+            # Calculate the next level
+            # For Senator ('S'), always increment by 1 regardless of level
+            if Class == 'S':
+                next_level = current_level + 1
+            # For other awards, increment by 5 for levels 10+, by 1 otherwise
+            elif current_level >= 10:
+                next_level = current_level + 5
+            else:
+                next_level = current_level + 1
+
+            # Format the award abbreviations
+            current_abbrev = cUtil.abbreviate_class(Class, current_level)
+            next_abbrev = cUtil.abbreviate_class(Class, next_level)
+
+            # Calculate the total required for the next level
+            next_required = increment * next_level
+
+            # Calculate how many more needed
+            more_needed = next_required - Total
+
+            # Print the formatted output
+            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {next_required:,} ({more_needed:,} more)')
 
         print('')
 
