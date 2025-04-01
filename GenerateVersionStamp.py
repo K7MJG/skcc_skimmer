@@ -1,25 +1,47 @@
 import subprocess
-import sys
 
-def Main() -> None:
-    ArgV = sys.argv[1:]
-
-    if len(ArgV) != 1:
-        print('Requires a version number argument.')
-        sys.exit()
-
-    version = ArgV[0]
-
+def create_version_file():
     try:
-        gitSha = subprocess.check_output(['git', 'rev-list', '-n', '1', version]).strip().decode('utf-8')
-    except:
-        sys.exit()
+        version = subprocess.check_output(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            stderr=subprocess.DEVNULL
+        ).decode().strip()
+        # If we have a tag, we'll get its commit
+        gitSha = subprocess.check_output(
+            ["git", "rev-list", "-n", "1", version]
+        ).strip().decode('utf-8')
+    except subprocess.CalledProcessError:
+        # No tag, use the current commit SHA
+        gitSha = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"]
+        ).decode().strip()
+        version = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"]
+        ).decode().strip()
 
-    versionDetail = subprocess.check_output(['git', 'show', '-s', '--oneline', '--format=%as (%h)', gitSha]).strip().decode('utf-8')
-    versionStamp = f'{version} / {versionDetail}'
+    # Check if there are modified files in the worktree
+    status_output = subprocess.check_output(
+        ["git", "status", "--porcelain"]
+    ).decode().strip()
 
-    with open(rf'Lib/cVersion.py', 'w', encoding='utf-8') as file:
+    if status_output:
+        version += "-"
+
+    commit_date = subprocess.check_output(
+        ['git', 'show', '-s', '--format=%as', gitSha]
+    ).strip().decode('utf-8')
+
+    short_sha = subprocess.check_output(
+        ['git', 'rev-parse', '--short', gitSha]
+    ).strip().decode('utf-8')
+
+    if version == short_sha:
+        versionStamp = f'{version} / {commit_date}'
+    else:
+        versionStamp = f'{version} / {commit_date} ({short_sha})'
+
+    with open(rf'cVersion.py', 'w', encoding='utf-8') as file:
         file.write(f"VERSION = '{versionStamp}'\n")
 
-if __name__ == '__main__':
-    Main()
+if __name__ == "__main__":
+    create_version_file()

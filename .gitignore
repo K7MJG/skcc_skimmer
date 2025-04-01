@@ -1,5 +1,6 @@
 QSOs
-.vscode
 __pycache__
 
 cVersion.py
+venv/**
+*.egg-info/
