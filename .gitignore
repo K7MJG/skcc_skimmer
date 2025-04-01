@@ -2,5 +2,5 @@ QSOs
 __pycache__
 
 cVersion.py
-venv/**
+**/.venv/**
 *.egg-info/
