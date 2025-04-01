@@ -27,11 +27,18 @@ def create_version_file():
     if status_output:
         version += "-"
 
-    versionDetail = subprocess.check_output(
-        ['git', 'show', '-s', '--oneline', '--format=%as (%h)', gitSha]
+    commit_date = subprocess.check_output(
+        ['git', 'show', '-s', '--format=%as', gitSha]
     ).strip().decode('utf-8')
 
-    versionStamp = f'{version} / {versionDetail}'
+    short_sha = subprocess.check_output(
+        ['git', 'rev-parse', '--short', gitSha]
+    ).strip().decode('utf-8')
+
+    if version == short_sha:
+        versionStamp = f'{version} / {commit_date}'
+    else:
+        versionStamp = f'{version} / {commit_date} ({short_sha})'
 
     with open(rf'cVersion.py', 'w', encoding='utf-8') as file:
         file.write(f"VERSION = '{versionStamp}'\n")
