@@ -56,7 +56,7 @@ async def install_all_async() -> None:
         print("No pyproject.toml or setup.py found. Skipping editable install.")
 
     if REQUIREMENTS.exists():
-        await run_async([python, "-m", "pip", "install", "-r", str(REQUIREMENTS)])
+        await run_async([python, "-m", "pip", "install", "--requirement", str(REQUIREMENTS)])
 
 async def main_async() -> None:
     ensure_venv_exists()

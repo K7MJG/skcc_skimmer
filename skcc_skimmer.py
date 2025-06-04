@@ -1205,14 +1205,11 @@ class cQSO:
 
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
-        increment = Levels[Class]
-
-        # Adjust increments after x10
-        level = (Total // increment) + 1
-        if level > 10:
-            if level % 5 != 0:
-                level -= (level % 5)
-        return increment - (Total % increment), level
+        Increment = Levels[Class]
+        SinceLastAchievement = Total % Increment
+        Remaining = Increment - SinceLastAchievement
+        X_Factor = (Total + Increment) // Increment
+        return Remaining, X_Factor
 
     @classmethod
     async def read_qsos_async(cls) -> None:
@@ -1300,52 +1297,15 @@ class cQSO:
     def calc_prefix_points(cls) -> int:
         return sum(value[2] for value in cls.ContactsForP.values())
 
+
     @classmethod
     def print_progress(cls) -> None:
         def print_remaining(Class: str, Total: int) -> None:
-            """
-            Print progress information for a specific award class.
-            Shows current qualification, next level, and remaining contacts needed.
+            Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
-            This function matches the expected output format for award progress display.
-            """
-            if Class not in cConfig.GOALS:
-                return
-
-            # Get the increment for this class
-            increment = Levels[Class]
-
-            # Calculate the current level (without rounding up)
-            current_level_base = Total // increment
-
-            if current_level_base >= 10:
-                # For levels 10+, use multiples of 5
-                current_level = 5 * (current_level_base // 5)
-            else:
-                current_level = current_level_base
-
-            # Calculate the next level
-            # For Senator ('S'), always increment by 1 regardless of level
-            if Class == 'S':
-                next_level = current_level + 1
-            # For other awards, increment by 5 for levels 10+, by 1 otherwise
-            elif current_level >= 10:
-                next_level = current_level + 5
-            else:
-                next_level = current_level + 1
-
-            # Format the award abbreviations
-            current_abbrev = cUtil.abbreviate_class(Class, current_level)
-            next_abbrev = cUtil.abbreviate_class(Class, next_level)
-
-            # Calculate the total required for the next level
-            next_required = increment * next_level
-
-            # Calculate how many more needed
-            more_needed = next_required - Total
-
-            # Print the formatted output
-            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {next_required:,} ({more_needed:,} more)')
+            if Class in cConfig.GOALS:
+                Abbrev = cUtil.abbreviate_class(Class, X_Factor)
+                print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
 
         print('')
 
@@ -1355,15 +1315,14 @@ class cQSO:
         if cConfig.TARGETS:
             print(f'TARGET{"S" if len(cConfig.TARGETS) > 1 else ""}: {", ".join(cConfig.TARGETS)}')
 
-        print(f'BANDS: {", ".join(str(Band)  for Band in cConfig.BANDS)}')
-
+        print(f'BANDS: {", ".join(str(Band) for Band in cConfig.BANDS)}')
 
         print_remaining('C', len(cls.ContactsForC))
 
-        if cQSO.MyC_Date:
+        if cls.MyC_Date:
             print_remaining('T', len(cls.ContactsForT))
 
-        if cQSO.MyTX8_Date:
+        if cls.MyTX8_Date:
             print_remaining('S', len(cls.ContactsForS))
 
         print_remaining('P', cls.calc_prefix_points())
@@ -1399,6 +1358,7 @@ class cQSO:
             MonthName = cFastDateTime.MONTH_NAMES[MonthIndex]
             print(f'Total worked towards {MonthName} Brag: {len(cls.Brag)}')
 
+
     @classmethod
     def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
         if TheirCallSign not in cSKCC.members or TheirCallSign == cConfig.MY_CALLSIGN:
@@ -1427,15 +1387,15 @@ class cQSO:
             GoalHitList.append('T')
 
         if 'TXN' in cConfig.GOALS and cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            _, x_factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
-            GoalHitList.append(cUtil.abbreviate_class('T', x_factor))
+            _, X_Factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
+            GoalHitList.append(cUtil.abbreviate_class('T', X_Factor))
 
         if 'S' in cConfig.GOALS and cls.MyTX8_Date and not cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
             GoalHitList.append('S')
 
         if 'SXN' in cConfig.GOALS and cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            _, x_factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
-            GoalHitList.append(cUtil.abbreviate_class('S', x_factor))
+            _, X_Factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
+            GoalHitList.append(cUtil.abbreviate_class('S', X_Factor))
 
         if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
             GoalHitList.append('WAS')
