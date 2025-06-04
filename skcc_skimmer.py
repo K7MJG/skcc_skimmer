@@ -1128,56 +1128,84 @@ class cQSO:
             await asyncio.sleep(3)
 
     @classmethod
+    def calculate_current_award_level(cls, Class: str, Total: int) -> int:
+        """
+        Calculate what award level someone currently qualifies for.
+        """
+        if Class == 'C':
+            if Total < 100:
+                return 0  # No award yet
+            elif Total < 1000:
+                return Total // 100
+            elif Total < 1500:
+                return 10  # Cx10
+            else:
+                # Cx15, Cx20, Cx25, etc.
+                increments_past_1500 = (Total - 1500) // 500
+                return 15 + (increments_past_1500 * 5)
+
+        elif Class == 'T':
+            if Total < 50:
+                return 0  # No award yet
+            elif Total < 500:
+                return Total // 50
+            elif Total < 750:
+                return 10  # Tx10
+            else:
+                # Tx15, Tx20, Tx25, etc.
+                increments_past_750 = (Total - 750) // 250
+                return 15 + (increments_past_750 * 5)
+
+        else:
+            # S and P use simple division
+            return Total // Levels[Class]
+
+    @classmethod
     def awards_check(cls) -> None:
-        C_Level = len(cls.ContactsForC)  // Levels['C']
-        T_Level = len(cls.ContactsForT)  // Levels['T']
-        S_Level = len(cls.ContactsForS)  // Levels['S']
-        P_Level = cls.calc_prefix_points() // Levels['P']
+        """
+        Updated awards check that properly handles the special C and T progression rules.
+        """
+        C_Level = cls.calculate_current_award_level('C', len(cls.ContactsForC))
+        T_Level = cls.calculate_current_award_level('T', len(cls.ContactsForT))
+        S_Level = cls.calculate_current_award_level('S', len(cls.ContactsForS))
+        P_Level = cls.calculate_current_award_level('P', cls.calc_prefix_points())
 
         ### C ###
-
         if cls.MyC_Date:
-            Award_C_Level = cSKCC.centurion_level[cls.MyMemberNumber]
-
-            while (C_Level > 10) and (C_Level % 5):
-                C_Level -= 1
+            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 1)
 
             if C_Level > Award_C_Level:
                 C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
-                print(f'FYI: You qualify for Cx{C_Level} but have only applied for {C_or_Cx}.')
+                next_level_name = 'C' if C_Level == 1 else f'Cx{C_Level}'
+                print(f'FYI: You qualify for {next_level_name} but have only applied for {C_or_Cx}.')
         else:
-            if C_Level == 1 and cls.MyMemberNumber not in cSKCC.centurion_level:
+            if C_Level >= 1 and cls.MyMemberNumber not in cSKCC.centurion_level:
                 print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
-
         if cls.MyT_Date:
-            Award_T_Level = cSKCC.tribune_level[cls.MyMemberNumber]
-
-            while (T_Level > 10) and (T_Level % 5):
-                T_Level -= 1
+            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
 
             if T_Level > Award_T_Level:
                 T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
-                print(f'FYI: You qualify for Tx{T_Level} but have only applied for {T_or_Tx}.')
+                next_level_name = 'T' if T_Level == 1 else f'Tx{T_Level}'
+                print(f'FYI: You qualify for {next_level_name} but have only applied for {T_or_Tx}.')
         else:
-            if T_Level == 1 and cls.MyMemberNumber not in cSKCC.tribune_level:
+            if T_Level >= 1 and cls.MyMemberNumber not in cSKCC.tribune_level:
                 print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
-
         if cls.MyS_Date:
-            Award_S_Level = cSKCC.senator_level[cls.MyMemberNumber]
+            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
                 print(f'FYI: You qualify for Sx{S_Level} but have only applied for {S_or_Sx}.')
         else:
-            if S_Level == 1 and cls.MyMemberNumber not in cSKCC.senator_level:
+            if S_Level >= 1 and cls.MyMemberNumber not in cSKCC.senator_level:
                 print('FYI: You qualify for S but have not yet applied for it.')
 
         ### WAS and WAS-C and WAS-T and WAS-S ###
-
         if 'WAS' in cConfig.GOALS:
             if len(cls.ContactsForWAS) == len(US_STATES) and cConfig.MY_CALLSIGN not in cSKCC.was_level:
                 print('FYI: You qualify for WAS but have not yet applied for it.')
@@ -1205,11 +1233,75 @@ class cQSO:
 
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
-        Increment = Levels[Class]
-        SinceLastAchievement = Total % Increment
-        Remaining = Increment - SinceLastAchievement
-        X_Factor = (Total + Increment) // Increment
-        return Remaining, X_Factor
+        """
+        Calculate remaining contacts needed and X-factor for next award level.
+        Now correctly handles the special progression rules for C and T after level 10.
+        """
+        base_increment = Levels[Class]
+
+        if Class == 'C':
+            # Centurion: 100, 200, 300... up to 1000 (Cx10)
+            # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
+            if Total < 1000:  # Cx1 through Cx10
+                since_last = Total % base_increment
+                remaining = base_increment - since_last
+                x_factor = (Total + base_increment) // base_increment
+            else:  # Cx15, Cx20, Cx25, etc.
+                # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
+                # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
+
+                # Calculate current level
+                if Total >= 1500:
+                    # How many 500-increments past 1500?
+                    increments_past_1500 = (Total - 1500) // 500
+                    current_x_factor = 15 + (increments_past_1500 * 5)
+
+                    # Next level
+                    next_x_factor = current_x_factor + 5
+                    next_target = 1000 + ((next_x_factor - 10) // 5) * 500
+                else:
+                    # Between 1000 and 1500, working toward Cx15
+                    next_x_factor = 15
+                    next_target = 1500
+
+                remaining = next_target - Total
+                x_factor = next_x_factor
+
+        elif Class == 'T':
+            # Tribune: 50, 100, 150... up to 500 (Tx10)
+            # Then Tx15 (750), Tx20 (1000), Tx25 (1250), etc. in increments of 250
+            if Total < 500:  # Tx1 through Tx10
+                since_last = Total % base_increment
+                remaining = base_increment - since_last
+                x_factor = (Total + base_increment) // base_increment
+            else:  # Tx15, Tx20, Tx25, etc.
+                # After 500: Tx15=750, Tx20=1000, Tx25=1250, Tx30=1500, Tx35=1750, Tx40=2000...
+                # Pattern: Tx(10+5n) = 500 + 250n where n >= 1
+
+                # Calculate current level
+                if Total >= 750:
+                    # How many 250-increments past 750?
+                    increments_past_750 = (Total - 750) // 250
+                    current_x_factor = 15 + (increments_past_750 * 5)
+
+                    # Next level
+                    next_x_factor = current_x_factor + 5
+                    next_target = 500 + ((next_x_factor - 10) // 5) * 250
+                else:
+                    # Between 500 and 750, working toward Tx15
+                    next_x_factor = 15
+                    next_target = 750
+
+                remaining = next_target - Total
+                x_factor = next_x_factor
+
+        else:
+            # S and P use original simple logic
+            since_last = Total % base_increment
+            remaining = base_increment - since_last
+            x_factor = (Total + base_increment) // base_increment
+
+        return remaining, x_factor
 
     @classmethod
     async def read_qsos_async(cls) -> None:
