@@ -144,13 +144,13 @@ class cUtil:
     @staticmethod
     async def log_async(Line: str) -> None:
         if cConfig.LOG_FILE.ENABLED and cConfig.LOG_FILE.FILE_NAME is not None:
-            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
+            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, mode='a', encoding='utf-8') as File:  # type: ignore
                 await File.write(Line + '\n')
 
     @staticmethod
     async def log_error_async(Line: str) -> None:
         if cConfig.LOG_BAD_SPOTS:
-            async with aiofiles.open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
+            async with aiofiles.open('Bad_RBN_Spots.log', mode='a', encoding='utf-8') as File:  # type: ignore
                 await File.write(Line + '\n')
 
     @staticmethod
@@ -236,9 +236,8 @@ class cConfig:
 
     @dataclass
     class cLogFile:
+        ENABLED:           bool = False
         FILE_NAME:         str | None = None
-        ENABLED:           bool = True
-        LOG_FILE:          str | None = None
         DELETE_ON_STARTUP: bool = False
     @classmethod
     def init_logfile(cls) -> None:
@@ -325,6 +324,7 @@ class cConfig:
     LOG_BAD_SPOTS:            bool
     SPOTTER_RADIUS:           int
     K3Y_YEAR:                 int
+    HTTP_TIMEOUT:             int
 
     configFile:               dict[str, Any]
 
@@ -336,9 +336,17 @@ class cConfig:
             ConfigFileAbsolute = os.path.abspath('skcc_skimmer.cfg')
             cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
 
-            async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as configFile:
-                ConfigFileString = await configFile.read()
-                exec(ConfigFileString, {}, config_vars)
+            try:
+                async with aiofiles.open(ConfigFileAbsolute, mode='r', encoding='utf-8') as configFile:  # type: ignore
+                    ConfigFileString = await configFile.read()
+                    exec(ConfigFileString, {}, config_vars)
+                    
+            except FileNotFoundError:
+                print("Error: skcc_skimmer.cfg file not found")
+                sys.exit(1)
+            except Exception as e:
+                print(f"Error reading configuration file: {e}")
+                sys.exit(1)
 
             return config_vars
 
@@ -349,7 +357,11 @@ class cConfig:
         cls.MY_GRIDSQUARE = cls.configFile.get('MY_GRIDSQUARE', '')
 
         if 'SPOTTER_RADIUS' in cls.configFile:
-            cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
+            try:
+                cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
+            except (ValueError, TypeError) as e:
+                print(f"Error: SPOTTER_RADIUS must be a valid integer, got '{cls.configFile['SPOTTER_RADIUS']}': {e}")
+                sys.exit(1)
 
         if 'GOALS' in cls.configFile:
             cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
@@ -384,6 +396,9 @@ class cConfig:
             cls.K3Y_YEAR = cls.configFile['K3Y_YEAR']
         else:
             cls.K3Y_YEAR = datetime.now().year
+
+        # Set HTTP timeout with default
+        cls.HTTP_TIMEOUT = cls.configFile.get('HTTP_TIMEOUT', 30)
 
         cls._ParseArgs(ArgV)
         cls._ValidateConfig()
@@ -847,7 +862,7 @@ class cSked:
     async def display_logins_async(cls) -> None:
         """Async version of display_logins."""
         try:
-            async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession(timeout=ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
                 async with session.get('http://sked.skccgroup.com/get-status.php') as response:
                     if response.status != 200:
                         return
@@ -860,7 +875,7 @@ class cSked:
                             SkedLogins: list[tuple[str, str]] = json.loads(Content)
                             Hits = await cls.handle_logins_async(SkedLogins, 'SKCC')
                         except Exception as ex:
-                            async with aiofiles.open('DEBUG.txt', 'a', encoding='utf-8') as File:
+                            async with aiofiles.open('DEBUG.txt', mode='a', encoding='utf-8') as File:  # type: ignore
                                 await File.write(Content + '\n')
 
                             print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
@@ -1111,12 +1126,30 @@ class cQSO:
                 if await aiofiles.os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
                     cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                    # Wait until file size stabilizes
+                    # Wait until file size and modification time stabilize
+                    prev_size = 0
+                    prev_mtime = 0
+                    stable_count = 0
+                    
                     while True:
-                        Size = os.path.getsize(cConfig.ADI_FILE)
-                        await asyncio.sleep(1)
-                        if os.path.getsize(cConfig.ADI_FILE) == Size:
-                            break
+                        try:
+                            current_size = os.path.getsize(cConfig.ADI_FILE)
+                            current_mtime = os.path.getmtime(cConfig.ADI_FILE)
+                            
+                            if current_size == prev_size and current_mtime == prev_mtime:
+                                stable_count += 1
+                                if stable_count >= 2:  # Require 2 stable checks
+                                    break
+                            else:
+                                stable_count = 0
+                                
+                            prev_size = current_size
+                            prev_mtime = current_mtime
+                            await asyncio.sleep(1)
+                        except (OSError, FileNotFoundError):
+                            # File might be temporarily unavailable during write
+                            await asyncio.sleep(1)
+                            continue
 
                     await cls.refresh_async()
 
@@ -1172,7 +1205,10 @@ class cQSO:
 
         ### C ###
         if cls.MyC_Date:
-            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 1)
+            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 0)
+            # If 0, they have the award but haven't achieved any level beyond basic C
+            if Award_C_Level == 0:
+                Award_C_Level = 1
 
             if C_Level > Award_C_Level:
                 C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
@@ -1184,7 +1220,10 @@ class cQSO:
 
         ### T ###
         if cls.MyT_Date:
-            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
+            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 0)
+            # If 0, they have the award but haven't achieved any level beyond basic T
+            if Award_T_Level == 0:
+                Award_T_Level = 1
 
             if T_Level > Award_T_Level:
                 T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
@@ -1196,7 +1235,10 @@ class cQSO:
 
         ### S ###
         if cls.MyS_Date:
-            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
+            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 0)
+            # If 0, they have the award but haven't achieved any level beyond basic S
+            if Award_S_Level == 0:
+                Award_S_Level = 1
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
@@ -1258,7 +1300,10 @@ class cQSO:
 
                     # Next level
                     next_x_factor = current_x_factor + 5
-                    next_target = 1000 + ((next_x_factor - 10) // 5) * 500
+                    # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
+                    # For next_x_factor, calculate n: n = (next_x_factor - 10) / 5
+                    n = (next_x_factor - 10) // 5
+                    next_target = 1000 + (n * 500)
                 else:
                     # Between 1000 and 1500, working toward Cx15
                     next_x_factor = 15
@@ -1286,7 +1331,10 @@ class cQSO:
 
                     # Next level
                     next_x_factor = current_x_factor + 5
-                    next_target = 500 + ((next_x_factor - 10) // 5) * 250
+                    # Pattern: Tx(10+5n) = 500 + 250n where n >= 1
+                    # For next_x_factor, calculate n: n = (next_x_factor - 10) / 5
+                    n = (next_x_factor - 10) // 5
+                    next_target = 500 + (n * 250)
                 else:
                     # Between 500 and 750, working toward Tx15
                     next_x_factor = 15
@@ -1297,6 +1345,8 @@ class cQSO:
 
         else:
             # S and P use original simple logic
+            if base_increment == 0:
+                raise ValueError(f"Invalid base increment (0) for class {Class}")
             since_last = Total % base_increment
             remaining = base_increment - since_last
             x_factor = (Total + base_increment) // base_increment
@@ -1312,13 +1362,17 @@ class cQSO:
         cls.QSOs = []
         cls.AdiFileReadTimeStamp = os.path.getmtime(cConfig.ADI_FILE)
 
-        # Compile regex patterns once
-        eoh_pattern = re.compile(r'<eoh>', re.I)
-        eor_pattern = re.compile(r'<eor>', re.I)
-        field_pattern = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+        # Compile regex patterns once with error handling
+        try:
+            eoh_pattern = re.compile(r'<eoh>', re.I)
+            eor_pattern = re.compile(r'<eor>', re.I)
+            field_pattern = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+        except re.error as e:
+            print(f"Error compiling regex patterns: {e}")
+            return
 
         try:
-            async with aiofiles.open(AdiFileAbsolute, 'rb') as file:
+            async with aiofiles.open(AdiFileAbsolute, 'rb') as file:  # type: ignore
                 # Read the file in chunks for better memory usage with large files
                 content = b''
                 chunk_size = 1024 * 1024  # 1MB chunks
@@ -1507,8 +1561,10 @@ class cQSO:
             _, x_factor = cQSO.calculate_numerics('P', cls.calc_prefix_points())
 
             if (contact := cls.ContactsForP.get(prefix)):
-                if i_their_member_number > contact[2]:
-                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact[2]})')
+                # Ensure both values are integers for comparison
+                contact_member_number = int(contact[2]) if isinstance(contact[2], str) else contact[2]
+                if i_their_member_number > contact_member_number:
+                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact_member_number})')
             else:
                 GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(new +{i_their_member_number})')
 
@@ -1627,7 +1683,15 @@ class cQSO:
             if not QsoCallSign or QsoCallSign == 'K3Y':
                 continue
 
+            # Check if callsign exists in members database
+            if QsoCallSign not in cSKCC.members:
+                continue
+
             MainCallSign = cSKCC.members[QsoCallSign]['main_call']
+
+            # Check if main callsign exists in members database
+            if MainCallSign not in cSKCC.members:
+                continue
 
             TheirMemberEntry  = cSKCC.members[MainCallSign]
             TheirMemberNumber = TheirMemberEntry['plain_number']
@@ -1723,8 +1787,17 @@ class cQSO:
             if not QsoCallSign:
                 continue
 
+            # Check if callsign exists in members database
+            if QsoCallSign not in cSKCC.members:
+                continue
+
             # Get member data once
             MainCallSign = cSKCC.members[QsoCallSign]['main_call']
+            
+            # Check if main callsign exists in members database
+            if MainCallSign not in cSKCC.members:
+                continue
+            
             TheirMemberEntry = cSKCC.members[MainCallSign]
 
             TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
@@ -1814,7 +1887,7 @@ class cQSO:
         """Async version of award_p to write files using aiofiles"""
         import aiofiles  # You'll need to add this to your imports
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', mode='w', encoding='utf-8') as file:  # type: ignore
             iPoints = 0
             for index, (_qso_date, prefix, member_number, first_name) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
@@ -1830,7 +1903,7 @@ class cQSO:
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', mode='w', encoding='utf-8') as File:  # type: ignore
             for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
                 Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
                 await File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
@@ -1842,7 +1915,7 @@ class cQSO:
 
         QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', mode='w', encoding='utf-8') as file:  # type: ignore
             for state in US_STATES:
                 if state in QSOsByState:
                     spc, date, callsign = QSOsByState[state]
@@ -1855,7 +1928,7 @@ class cQSO:
         """Async version of track_brag to write files using aiofiles"""
         import aiofiles
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', mode='w', encoding='utf-8') as file:  # type: ignore
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
                 sorted(QSOs.values()), start=1
             ):
@@ -1987,7 +2060,7 @@ class cSpotters:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession(timeout=ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
                 async with session.get('https://reversebeacon.net/cont_includes/status.php?t=skt') as response:
                     if response.status != 200:
                         print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
@@ -2218,7 +2291,7 @@ class cSKCC:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
                 async with session.get(f"https://www.skccgroup.com/{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving award info: HTTP {response.status}")
@@ -2237,7 +2310,18 @@ class cSKCC:
             except ValueError:
                 continue  # Skip malformed lines
 
-            x_factor = int(cert_number.split()[1][1:]) if " " in cert_number else 1
+            # Parse x_factor safely with bounds checking
+            if " " in cert_number:
+                parts = cert_number.split()
+                if len(parts) > 1 and len(parts[1]) > 1:
+                    try:
+                        x_factor = int(parts[1][1:])
+                    except (ValueError, IndexError):
+                        x_factor = 1
+                else:
+                    x_factor = 1
+            else:
+                x_factor = 1
             level[member_number] = x_factor
 
             skcc_effective_date = cSKCC.normalize_skcc_date(effective_date)
@@ -2258,7 +2342,7 @@ class cSKCC:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
                 async with session.get(f"https://www.skccgroup.com/{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving {Name} roster: HTTP {response.status}")
@@ -2271,11 +2355,29 @@ class cSKCC:
         rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
         columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
 
-        return {
-            (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
-            for row in rows[1:]
-            if (cols := columns_regex.findall(row)) and len(cols) >= 2  # Ensure valid row data
-        }
+        result: dict[str, int] = {}
+        for row in rows[1:]:
+            cols = columns_regex.findall(row)
+            if cols and len(cols) >= 2:
+                member_number = cols[1]
+                cert_info = cols[0]
+                
+                # Parse x_factor safely with bounds checking
+                if " " in cert_info:
+                    parts = cert_info.split()
+                    if len(parts) > 1 and len(parts[1]) > 1:
+                        try:
+                            x_factor = int(parts[1][1:])
+                        except (ValueError, IndexError):
+                            x_factor = 1
+                    else:
+                        x_factor = 1
+                else:
+                    x_factor = 1
+                
+                result[member_number] = x_factor
+        
+        return result
 
     @classmethod
     async def read_skcc_data_async(cls) -> None | NoReturn:
@@ -2484,8 +2586,12 @@ class cRBN:
                 [(ai[0], ai[4][0]) for ai in addr_info],
                 key=lambda x: x[0] != socket.AF_INET6  # Prioritize IPv6
             )
-        except socket.gaierror:
-            return []  # Silently fail if DNS resolution fails
+        except socket.gaierror as e:
+            print(f"DNS resolution failed for {host}: {e}")
+            return []
+        except Exception as e:
+            print(f"Unexpected error during DNS resolution for {host}: {e}")
+            return []
 
     @classmethod
     async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
@@ -2526,12 +2632,20 @@ class cRBN:
                 except Exception:
                     pass  # Silently ignore unexpected errors
                 finally:
-                    # Cleanup connections properly
+                    # Cleanup connections properly with more robust error handling
                     if writer is not None:
-                        writer.close()
                         try:
+                            if not writer.is_closing():
+                                writer.close()
                             await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-                        except (asyncio.TimeoutError, Exception):
+                        except asyncio.TimeoutError:
+                            # Force close if timeout occurs
+                            try:
+                                writer.transport.abort()
+                            except Exception:
+                                pass
+                        except Exception:
+                            # Handle any other cleanup errors silently
                             pass
 
                 if reader and writer:  # If connection succeeds, stop trying
