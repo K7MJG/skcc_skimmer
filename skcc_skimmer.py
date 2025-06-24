@@ -340,7 +340,7 @@ class cConfig:
                 async with aiofiles.open(ConfigFileAbsolute, mode='r', encoding='utf-8') as configFile:  # type: ignore
                     ConfigFileString = await configFile.read()
                     exec(ConfigFileString, {}, config_vars)
-                    
+
             except FileNotFoundError:
                 print("Error: skcc_skimmer.cfg file not found")
                 sys.exit(1)
@@ -1130,19 +1130,19 @@ class cQSO:
                     prev_size = 0
                     prev_mtime = 0
                     stable_count = 0
-                    
+
                     while True:
                         try:
                             current_size = os.path.getsize(cConfig.ADI_FILE)
                             current_mtime = os.path.getmtime(cConfig.ADI_FILE)
-                            
+
                             if current_size == prev_size and current_mtime == prev_mtime:
                                 stable_count += 1
                                 if stable_count >= 2:  # Require 2 stable checks
                                     break
                             else:
                                 stable_count = 0
-                                
+
                             prev_size = current_size
                             prev_mtime = current_mtime
                             await asyncio.sleep(1)
@@ -1793,11 +1793,11 @@ class cQSO:
 
             # Get member data once
             MainCallSign = cSKCC.members[QsoCallSign]['main_call']
-            
+
             # Check if main callsign exists in members database
             if MainCallSign not in cSKCC.members:
                 continue
-            
+
             TheirMemberEntry = cSKCC.members[MainCallSign]
 
             TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
@@ -2361,7 +2361,7 @@ class cSKCC:
             if cols and len(cols) >= 2:
                 member_number = cols[1]
                 cert_info = cols[0]
-                
+
                 # Parse x_factor safely with bounds checking
                 if " " in cert_info:
                     parts = cert_info.split()
@@ -2374,9 +2374,9 @@ class cSKCC:
                         x_factor = 1
                 else:
                     x_factor = 1
-                
+
                 result[member_number] = x_factor
-        
+
         return result
 
     @classmethod
