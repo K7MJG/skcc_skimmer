@@ -1002,10 +1002,11 @@ class cSPOTS:
         if CallSign != 'K3Y':
             OnFrequency = cSKCC.is_on_skcc_frequency(FrequencyKHz, cConfig.OFF_FREQUENCY.TOLERANCE)
             if not OnFrequency:
-                if cConfig.OFF_FREQUENCY.ACTION == 'warn':
-                    Report.append('OFF SKCC FREQUENCY!')
-                elif cConfig.OFF_FREQUENCY.ACTION == 'suppress':
-                    return
+                match cConfig.OFF_FREQUENCY.ACTION:
+                    case 'warn':
+                        Report.append('OFF SKCC FREQUENCY!')
+                    case 'suppress':
+                        return
 
         # Handle WPM
         match cConfig.HIGH_WPM.ACTION:
@@ -1131,39 +1132,58 @@ class cQSO:
     def calculate_current_award_level(cls, Class: str, Total: int) -> int:
         """
         Calculate what award level someone currently qualifies for.
+        Updated to match official SKCC rules.
         """
-        if Class == 'C':
-            if Total < 100:
-                return 0  # No award yet
-            elif Total < 1000:
-                return Total // 100
-            elif Total < 1500:
-                return 10  # Cx10
-            else:
-                # Cx15, Cx20, Cx25, etc.
-                increments_past_1500 = (Total - 1500) // 500
-                return 15 + (increments_past_1500 * 5)
+        match Class:
+            case 'C':
+                if Total < 100:
+                    return 0  # No award yet
+                elif Total < 1000:
+                    return Total // 100
+                elif Total < 1500:
+                    return 10  # Cx10
+                else:
+                    # Cx15, Cx20, Cx25, etc.
+                    increments_past_1500 = (Total - 1500) // 500
+                    return 15 + (increments_past_1500 * 5)
 
-        elif Class == 'T':
-            if Total < 50:
-                return 0  # No award yet
-            elif Total < 500:
-                return Total // 50
-            elif Total < 750:
-                return 10  # Tx10
-            else:
-                # Tx15, Tx20, Tx25, etc.
-                increments_past_750 = (Total - 750) // 250
-                return 15 + (increments_past_750 * 5)
+            case 'T':
+                # Tribune: Must be Centurion first, then 50 contacts with C/T/S for Tx1
+                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
+                if not cls.MyC_Date:
+                    return 0  # Must be Centurion first
+                if Total < 50:
+                    return 0  # No Tribune award yet
+                elif Total < 500:
+                    return Total // 50  # Tx1 through Tx10
+                elif Total < 750:
+                    return 10  # Between Tx10 and Tx15
+                elif Total < 1000:
+                    return 15  # Tx15
+                else:
+                    # Tx20 and beyond (250-contact increments)
+                    increments_past_1000 = (Total - 1000) // 250
+                    return 20 + (increments_past_1000 * 5)
 
-        else:
-            # S and P use simple division
-            return Total // Levels[Class]
+            case 'S':
+                # Senator: Must have Tribune x8 (400 Tribune contacts) first, then 200 contacts with T/S for Sx1
+                tribune_contacts = len(cls.ContactsForT)
+                if tribune_contacts < 400:
+                    return 0  # Must have Tribune x8 (400 contacts) first
+                if Total < 200:
+                    return 0  # No Senator award yet
+                else:
+                    # Sx1, Sx2, etc. - each level requires 200 more contacts
+                    return min(Total // 200, 10)  # Cap at Sx10 per official rules
+
+            case _:
+                # P uses simple division
+                return Total // Levels[Class]
 
     @classmethod
     def awards_check(cls) -> None:
         """
-        Updated awards check that properly handles the special C and T progression rules.
+        Updated awards check that properly handles official SKCC award requirements.
         """
         C_Level = cls.calculate_current_award_level('C', len(cls.ContactsForC))
         T_Level = cls.calculate_current_award_level('T', len(cls.ContactsForT))
@@ -1183,7 +1203,10 @@ class cQSO:
                 print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
-        if cls.MyT_Date:
+        if not cls.MyC_Date:
+            if T_Level > 0:
+                print('NOTE: Tribune award requires Centurion first. Apply for C before T.')
+        elif cls.MyT_Date:
             Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
 
             if T_Level > Award_T_Level:
@@ -1195,12 +1218,17 @@ class cQSO:
                 print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
-        if cls.MyS_Date:
+        tribune_contacts = len(cls.ContactsForT)
+        if tribune_contacts < 400:
+            if S_Level > 0:
+                print(f'NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+        elif cls.MyS_Date:
             Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
-                print(f'FYI: You qualify for Sx{S_Level} but have only applied for {S_or_Sx}.')
+                next_level_name = 'S' if S_Level == 1 else f'Sx{S_Level}'
+                print(f'FYI: You qualify for {next_level_name} but have only applied for {S_or_Sx}.')
         else:
             if S_Level >= 1 and cls.MyMemberNumber not in cSKCC.senator_level:
                 print('FYI: You qualify for S but have not yet applied for it.')
@@ -1239,67 +1267,100 @@ class cQSO:
         """
         base_increment = Levels[Class]
 
-        if Class == 'C':
-            # Centurion: 100, 200, 300... up to 1000 (Cx10)
-            # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
-            if Total < 1000:  # Cx1 through Cx10
+        match Class:
+            case 'C':
+                # Centurion: 100, 200, 300... up to 1000 (Cx10)
+                # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
+                if Total < 1000:  # Cx1 through Cx10
+                    since_last = Total % base_increment
+                    remaining = base_increment - since_last
+                    x_factor = (Total + base_increment) // base_increment
+                else:  # Cx15, Cx20, Cx25, etc.
+                    # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
+                    # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
+
+                    # Calculate current level
+                    if Total >= 1500:
+                        # How many 500-increments past 1500?
+                        increments_past_1500 = (Total - 1500) // 500
+                        current_x_factor = 15 + (increments_past_1500 * 5)
+
+                        # Next level
+                        next_x_factor = current_x_factor + 5
+                        next_target = 1000 + ((next_x_factor - 10) // 5) * 500
+                    else:
+                        # Between 1000 and 1500, working toward Cx15
+                        next_x_factor = 15
+                        next_target = 1500
+
+                    remaining = next_target - Total
+                    x_factor = next_x_factor
+
+            case 'T':
+                # Tribune: Must be Centurion first
+                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
+                if not cQSO.MyC_Date:
+                    # Must be Centurion first
+                    remaining = 999999  # Large number to indicate not eligible
+                    x_factor = 0
+                elif Total < 50:
+                    # Working toward Tx1
+                    remaining = 50 - Total
+                    x_factor = 1
+                elif Total < 500:
+                    # Tx1 through Tx10 (each level requires 50 contacts)
+                    current_level = Total // 50
+                    next_level = current_level + 1
+                    next_target = next_level * 50
+                    remaining = next_target - Total
+                    x_factor = next_level
+                elif Total < 750:
+                    # Between Tx10 and Tx15
+                    remaining = 750 - Total
+                    x_factor = 15
+                elif Total < 1000:
+                    # At Tx15, working toward Tx20
+                    remaining = 1000 - Total
+                    x_factor = 20
+                else:
+                    # Tx20 and beyond (250-contact increments)
+                    increments_past_1000 = (Total - 1000) // 250
+                    current_x_factor = 20 + (increments_past_1000 * 5)
+                    next_x_factor = current_x_factor + 5
+                    next_target = 1000 + ((next_x_factor - 20) // 5) * 250
+                    remaining = next_target - Total
+                    x_factor = next_x_factor
+
+            case 'S':
+                # Senator: Must have Tribune x8 (400 Tribune contacts) first
+                # Sx1=200, Sx2=400, Sx3=600, ..., Sx10=2000 (each requires 200 contacts)
+                tribune_contacts = len(cQSO.ContactsForT)
+                if tribune_contacts < 400:
+                    # Must have Tribune x8 (400 contacts) first
+                    remaining = 999999  # Large number to indicate not eligible
+                    x_factor = 0
+                elif Total < 200:
+                    # Working toward Sx1
+                    remaining = 200 - Total
+                    x_factor = 1
+                else:
+                    # Sx1 through Sx10 (each level requires 200 contacts)
+                    current_level = min(Total // 200, 10)
+                    if current_level >= 10:
+                        # Already at max Senator level
+                        remaining = 0
+                        x_factor = 10
+                    else:
+                        next_level = current_level + 1
+                        next_target = next_level * 200
+                        remaining = next_target - Total
+                        x_factor = next_level
+
+            case _:
+                # P uses original simple logic
                 since_last = Total % base_increment
                 remaining = base_increment - since_last
                 x_factor = (Total + base_increment) // base_increment
-            else:  # Cx15, Cx20, Cx25, etc.
-                # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
-                # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
-
-                # Calculate current level
-                if Total >= 1500:
-                    # How many 500-increments past 1500?
-                    increments_past_1500 = (Total - 1500) // 500
-                    current_x_factor = 15 + (increments_past_1500 * 5)
-
-                    # Next level
-                    next_x_factor = current_x_factor + 5
-                    next_target = 1000 + ((next_x_factor - 10) // 5) * 500
-                else:
-                    # Between 1000 and 1500, working toward Cx15
-                    next_x_factor = 15
-                    next_target = 1500
-
-                remaining = next_target - Total
-                x_factor = next_x_factor
-
-        elif Class == 'T':
-            # Tribune: 50, 100, 150... up to 500 (Tx10)
-            # Then Tx15 (750), Tx20 (1000), Tx25 (1250), etc. in increments of 250
-            if Total < 500:  # Tx1 through Tx10
-                since_last = Total % base_increment
-                remaining = base_increment - since_last
-                x_factor = (Total + base_increment) // base_increment
-            else:  # Tx15, Tx20, Tx25, etc.
-                # After 500: Tx15=750, Tx20=1000, Tx25=1250, Tx30=1500, Tx35=1750, Tx40=2000...
-                # Pattern: Tx(10+5n) = 500 + 250n where n >= 1
-
-                # Calculate current level
-                if Total >= 750:
-                    # How many 250-increments past 750?
-                    increments_past_750 = (Total - 750) // 250
-                    current_x_factor = 15 + (increments_past_750 * 5)
-
-                    # Next level
-                    next_x_factor = current_x_factor + 5
-                    next_target = 500 + ((next_x_factor - 10) // 5) * 250
-                else:
-                    # Between 500 and 750, working toward Tx15
-                    next_x_factor = 15
-                    next_target = 750
-
-                remaining = next_target - Total
-                x_factor = next_x_factor
-
-        else:
-            # S and P use original simple logic
-            since_last = Total % base_increment
-            remaining = base_increment - since_last
-            x_factor = (Total + base_increment) // base_increment
 
         return remaining, x_factor
 
@@ -1397,7 +1458,26 @@ class cQSO:
 
             if Class in cConfig.GOALS:
                 Abbrev = cUtil.abbreviate_class(Class, X_Factor)
-                print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+
+                # Enhanced progress display with correct requirements
+                match Class:
+                    case 'C':
+                        print(f'Total SKCC members worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                    case 'T':
+                        if not cls.MyC_Date:
+                            print(f'Tribune award requires Centurion first. Apply for C before working toward T.')
+                        else:
+                            print(f'Total Centurions/Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                    case 'S':
+                        tribune_contacts = len(cls.ContactsForT)
+                        if tribune_contacts < 400:
+                            print(f'Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                        else:
+                            print(f'Total Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                    case 'P':
+                        print(f'Total prefix points towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                    case _:
+                        print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
 
         print('')
 
@@ -1408,6 +1488,9 @@ class cQSO:
             print(f'TARGET{"S" if len(cConfig.TARGETS) > 1 else ""}: {", ".join(cConfig.TARGETS)}')
 
         print(f'BANDS: {", ".join(str(Band) for Band in cConfig.BANDS)}')
+
+        print('')
+        print('*** Awards Progress ***')
 
         print_remaining('C', len(cls.ContactsForC))
 
@@ -2326,7 +2409,7 @@ class cSKCC:
                     'main_call'    : current_call,
                 }
 
-        print(f"Successfully loaded data for {len(cls.members)} member callsigns")
+        print(f"Successfully loaded data for {len(cls.members):,} member callsigns")
 
     @classmethod
     def is_on_skcc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
@@ -2489,44 +2572,104 @@ class cRBN:
 
     @classmethod
     async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
-        """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4."""
+        """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4.
+        Includes robust connection handling with keepalive and timeout management."""
 
         reader: asyncio.StreamReader | None = None
         writer: asyncio.StreamWriter | None = None
+        retry_count = 0
+        last_data_time = time.time()
 
         while True:
             # Resolve the hostname dynamically
             addresses: list[tuple[socket.AddressFamily, str]] = await cRBN.resolve_host(RBN_SERVER, RBN_PORT)
             if not addresses:
-                print(f"Error: No valid IP addresses found for {RBN_SERVER}. Retrying in 5 seconds...")
-                await asyncio.sleep(5)
+                retry_count += 1
+                backoff_time = min(5 * (2 ** min(retry_count - 1, 4)), 60)  # Exponential backoff, max 60s
+                print(f"Error: No valid IP addresses found for {RBN_SERVER}. Retrying in {backoff_time} seconds...")
+                await asyncio.sleep(backoff_time)
                 continue
 
             cls._connected = False
+            connection_succeeded = False
+            attempted_protocols = []
+            error_messages = []
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
+                attempted_protocols.append(protocol)
+
                 try:
-                    reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
+                    # Add connection timeout
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(ip, RBN_PORT, family=family),
+                        timeout=30.0  # 30 second connection timeout
+                    )
+
+                    # Enable TCP keepalive
+                    sock = writer.get_extra_info('socket')
+                    if sock:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        # Set keepalive parameters if available (Linux/Unix)
+                        if hasattr(socket, 'TCP_KEEPIDLE'):
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 300)  # 5 minutes
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 60)  # 1 minute
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)    # 3 probes
+
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")
                     cls._connected = True
+                    retry_count = 0  # Reset retry count on successful connection
+                    last_data_time = time.time()
 
                     # Authenticate with the RBN server
-                    await reader.readuntil(b"call: ")
+                    await asyncio.wait_for(reader.readuntil(b"call: "), timeout=10.0)
                     writer.write(f"{callsign}\r\n".encode("ascii"))
                     await writer.drain()
-                    await reader.readuntil(b">\r\n\r\n")
+                    await asyncio.wait_for(reader.readuntil(b">\r\n\r\n"), timeout=10.0)
 
-                    async for data in reader:
-                        yield data
-                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-                    pass  # Silently ignore & retry
+                    # Main data reading loop with connection health monitoring
+                    while True:
+                        try:
+                            # Read data with timeout to detect stale connections
+                            data = await asyncio.wait_for(reader.read(8192), timeout=600.0)  # 10 minute timeout
+                            if not data:  # EOF received
+                                print("RBN connection closed by server.")
+                                break
+
+                            last_data_time = time.time()
+                            yield data
+
+                        except asyncio.TimeoutError:
+                            print("No data received from RBN for 10 minutes. Connection may be stale.")
+                            # Send a simple keepalive (empty line) to test connection
+                            try:
+                                writer.write(b"\r\n")
+                                await asyncio.wait_for(writer.drain(), timeout=5.0)
+                                print("Sent keepalive to RBN server.")
+                                continue
+                            except Exception:
+                                print("Keepalive failed. Reconnecting...")
+                                break
+
+                    connection_succeeded = True
+
+                except asyncio.TimeoutError:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Connection timeout ({protocol})")
+                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Connection error ({protocol}): {type(e).__name__}")
                 except asyncio.CancelledError:
                     raise  # Ensure proper cancellation handling
-                except Exception:
-                    pass  # Silently ignore unexpected errors
+                except Exception as e:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Unexpected error ({protocol}): {e}")
                 finally:
                     # Cleanup connections properly
+                    cls._connected = False
                     if writer is not None:
                         writer.close()
                         try:
@@ -2534,12 +2677,24 @@ class cRBN:
                         except (asyncio.TimeoutError, Exception):
                             pass
 
-                if reader and writer:  # If connection succeeds, stop trying
+                if connection_succeeded:  # If connection worked, stop trying other IPs
                     break
 
-            if not cls._connected:
-                print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
-            await asyncio.sleep(5)
+            if not connection_succeeded:
+                retry_count += 1
+                backoff_time = min(5 * (2 ** min(retry_count - 1, 4)), 60)  # Exponential backoff, max 60s
+
+                # Show specific error messages, or generic message if no IPv4 errors
+                if error_messages:
+                    error_detail = "; ".join(error_messages)
+                    protocols_tried = " and ".join(attempted_protocols)
+                    print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. {error_detail}. Retrying in {backoff_time} seconds...")
+                else:
+                    # Only IPv6 was attempted and failed silently, or no specific errors
+                    protocols_tried = " and ".join(attempted_protocols)
+                    print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. Retrying in {backoff_time} seconds...")
+
+                await asyncio.sleep(backoff_time)
 
     @classmethod
     async def write_dots_task(cls) -> NoReturn:
