@@ -1466,25 +1466,63 @@ class cQSO:
             if Class in cConfig.GOALS:
                 Abbrev = cUtil.abbreviate_class(Class, X_Factor)
 
-                # Enhanced progress display with correct requirements
+                # Enhanced progress display with new format
+                # Calculate the target requirement for the next level
+                target_requirement = Total + Remaining
+                
+                # Determine current qualification level based on Total
+                current_level = 0
+                base_increment = Levels[Class]
+                
+                if Class == 'C':
+                    if Total >= 1000:  # Cx15, Cx20, etc.
+                        current_level = 10 + ((Total - 1000) // 500) * 5
+                    else:  # Cx1 through Cx10
+                        current_level = Total // base_increment
+                elif Class == 'T':
+                    if Total >= 500:  # Tx15, Tx20, etc.
+                        current_level = 10 + ((Total - 500) // 250) * 5  
+                    else:  # Tx1 through Tx10
+                        current_level = Total // base_increment
+                elif Class in ('S', 'P'):
+                    current_level = Total // base_increment
+                
+                # Format current qualification
+                current_qualification = f'{Class}x{current_level}' if current_level > 0 else None
+                
                 match Class:
                     case 'C':
-                        print(f'Total SKCC members worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        if current_qualification:
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        else:
+                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
                     case 'T':
                         if not cls.MyC_Date:
-                            print(f'Tribune award requires Centurion first. Apply for C before working toward T.')
+                            print(f'{Class}: Tribune award requires Centurion first. Apply for C before working toward T.')
                         else:
-                            print(f'Total Centurions/Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                            if current_qualification:
+                                print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                            else:
+                                print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
                     case 'S':
                         tribune_contacts = len(cls.ContactsForT)
                         if tribune_contacts < 400:
-                            print(f'Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                            print(f'{Class}: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
                         else:
-                            print(f'Total Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                            if current_qualification:
+                                print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                            else:
+                                print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
                     case 'P':
-                        print(f'Total prefix points towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        if current_qualification:
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        else:
+                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
                     case _:
-                        print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        if current_qualification:
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        else:
+                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
 
         print('')
 
