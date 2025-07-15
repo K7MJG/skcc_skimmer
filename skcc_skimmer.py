@@ -75,13 +75,9 @@
 from datetime import timedelta, datetime
 from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict
 
-try:
-    from typing import Self
-except ImportError:
-    try:
-        from typing_extensions import Self
-    except ImportError:
-        Self = Any
+
+from typing import Self
+
 
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
@@ -1814,12 +1810,6 @@ class cQSO:
                 return False
 
             return QsoDate >= MemberDate and QsoDate >= MyDate
-        
-        # Special function for C award - only requires basic member validation (no award level needed)
-        def good_for_c(QsoDate: str, MemberJoinDate: str, MyJoinDate: str) -> bool:
-            if MemberJoinDate == '' or MyJoinDate == '':
-                return False
-            return QsoDate >= MemberJoinDate and QsoDate >= MyJoinDate
 
         # Initialize collections
         collections: dict[str, dict[str, Any]] = {
@@ -1844,15 +1834,6 @@ class cQSO:
 
         # Process current month as well
         cQSO.get_brag_qsos(PrevMonth=0, Print=False)
-
-        # Define key dates once for efficiency
-        eligible_dates = {
-            'prefix': '20130101000000',
-            'tribune': '20070301000000',
-            'senator': '20130801000000',
-            'was_c': '20110612000000',
-            'was_ts': '20160201000000'
-        }
 
         # Create reverse lookup for SKCC numbers to callsigns (for GetSKCCFromCall efficiency)
         skcc_number_to_call = {}
@@ -1946,21 +1927,21 @@ class cQSO:
 
 
                 # Process awards exactly like Xojo AwardProcessorThreadWindow.xojo_window
-                
+
                 # Centurion Award: All valid SKCC member QSOs (basic validation already passed)
                 cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
                 # Tribune Award: Both must be Centurions, QSO >= both C dates, QSO >= 20070301
                 if (cls.MyC_Date != "" and TheirC_Date != ""):
-                    if (QsoDate >= cls.MyC_Date and 
-                        QsoDate >= TheirC_Date and 
+                    if (QsoDate >= cls.MyC_Date and
+                        QsoDate >= TheirC_Date and
                         QsoDate >= "20070301000000"):
                         cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
                 # Senator Award: QSO >= 20130801, you have TX8, they have Tribune, QSO >= both dates
                 if QsoDate >= "20130801000000":
                     if (cls.MyTX8_Date != "" and TheirT_Date != ""):
-                        if (QsoDate >= cls.MyTX8_Date and 
+                        if (QsoDate >= cls.MyTX8_Date and
                             QsoDate >= TheirT_Date):
                             cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
@@ -1968,7 +1949,7 @@ class cQSO:
                 # Treat "DC" as "MD" for WAS Awards (Xojo lines 364-367)
                 if QsoSPC == "DC":
                     QsoSPC = "MD"
-                
+
                 if QsoSPC in US_STATES:
                     # Base WAS Award - all states qualify
                     if QsoSPC not in cls.ContactsForWAS:
