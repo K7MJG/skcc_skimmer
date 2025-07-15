@@ -75,7 +75,13 @@
 from datetime import timedelta, datetime
 from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict
 
-from typing import Self
+try:
+    from typing import Self
+except ImportError:
+    try:
+        from typing_extensions import Self
+    except ImportError:
+        Self = Any
 
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
@@ -1100,7 +1106,7 @@ class cQSO:
         await cls.read_qsos_async()
 
         MyMemberEntry      = cSKCC.members[cConfig.MY_CALLSIGN]
-        cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
+        cls.MyJoin_Date    = MyMemberEntry['join_date']  # Don't filter join dates with effective()
         cls.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
         cls.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
         cls.MyS_Date       = cUtil.effective(MyMemberEntry['s_date'])
@@ -1652,7 +1658,7 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
-        TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
+        TheirJoin_Date    = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
         TheirTX8_Date     = cUtil.effective(TheirMemberEntry['tx8_date'])
@@ -1767,7 +1773,7 @@ class cQSO:
             fastQsoDate = cFastDateTime(QsoDate)
 
             if fastStartOfMonth < fastQsoDate < fastEndOfMonth:
-                TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
+                TheirJoin_Date = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
 
                 if TheirJoin_Date and TheirJoin_Date < QsoDate:
                     DuringSprint = cSKCC.is_during_sprint(fastQsoDate)
@@ -1799,6 +1805,8 @@ class cQSO:
         """Optimized goal QSO processing with batched operations."""
         # Helper function to check date criteria
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
+            # For award eligibility, empty dates mean "not yet achieved"
+            # Only check if both have the required award level
             if MemberDate == '' or MyDate == '':
                 return False
 
@@ -1806,6 +1814,12 @@ class cQSO:
                 return False
 
             return QsoDate >= MemberDate and QsoDate >= MyDate
+        
+        # Special function for C award - only requires basic member validation (no award level needed)
+        def good_for_c(QsoDate: str, MemberJoinDate: str, MyJoinDate: str) -> bool:
+            if MemberJoinDate == '' or MyJoinDate == '':
+                return False
+            return QsoDate >= MemberJoinDate and QsoDate >= MyJoinDate
 
         # Initialize collections
         collections: dict[str, dict[str, Any]] = {
@@ -1883,7 +1897,7 @@ class cQSO:
             if not TheirMemberEntry:
                 continue
 
-            TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
+            TheirJoin_Date = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
             TheirC_Date = cUtil.effective(TheirMemberEntry['c_date'])
             TheirT_Date = cUtil.effective(TheirMemberEntry['t_date'])
             TheirS_Date = cUtil.effective(TheirMemberEntry['s_date'])
@@ -1903,26 +1917,25 @@ class cQSO:
                                 cls.ContactsForK3Y[Suffix] = {}
                             cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
-                # Prefix processing - exact Xojo logic from lines 481-496
-                # Only process if QSO date >= 20130101 (prefix award started)
+                # Prefix processing - exact Xojo logic from lines 485-500
+                # Save the Prefix, Callsign, and SKCC Number Value for the PFX Award - Prefix award started on 20130101
                 if QsoDate >= "20130101000000":
-                    # Split callsign by "/" like Xojo: call_segs = Split(log_call, "/")
-                    call_segments = QsoCallSign.split('/')
-                    for pfx_call in call_segments:
-                        # Check if this segment is a valid SKCC member like Xojo: GetSKCCFromCall(pfx_call, mbr_skcc_nr)
-                        # Note: Xojo passes mbr_skcc_nr (the SKCC number from the log) as the second parameter
-                        pfx_skcc_nr = cSKCC.get_skcc_from_call(pfx_call, QsoSKCC)
-                        if pfx_skcc_nr != "":  # Xojo checks for not empty string
-                            # Extract prefix like Xojo: If IsNumeric(Mid(pfx_call, 3, 1)) Then Left(pfx_call, 3) Else Left(pfx_call, 2)
+                    call_segs = QsoCallSign.split('/')  # Xojo: call_segs = Split(log_call, "/")
+                    for pfx_call in call_segs:
+                        # Xojo: pfx_skcc_nr = GetSKCCFromCall(pfx_call, mbr_skcc_nr)
+                        # Note: Xojo passes mbr_skcc_nr (the resolved SKCC number) NOT the log SKCC
+                        pfx_skcc_nr = cSKCC.get_skcc_from_call(pfx_call, mbr_skcc_nr)
+                        if pfx_skcc_nr != "":
+                            # Xojo prefix extraction logic
                             if len(pfx_call) >= 3 and pfx_call[2].isdigit():
-                                Prefix = pfx_call[:3]
+                                Prefix = pfx_call[:3]  # Left(pfx_call, 3)
                             else:
-                                Prefix = pfx_call[:2]
+                                Prefix = pfx_call[:2]  # Left(pfx_call, 2)
 
-                            # Convert only the numeric part of the SKCC number to integer
+                            # Convert SKCC number to integer for points
                             iTheirMemberNumber = int(''.join(c for c in pfx_skcc_nr if c.isdigit()))
 
-                            # Use the name from the ADI file, not from the member database (matching Xojo behavior)
+                            # Use the name from the ADI file (Xojo behavior)
                             FirstName = QsoName
 
                             # Store this prefix - Xojo uses "Exit" so first valid segment wins per QSO
@@ -1932,37 +1945,55 @@ class cQSO:
                             break  # Exit after first valid segment (matches Xojo "Exit")
 
 
-                # Process C, T, S in one batch
-                # For Centurion award: basic validation already done above
-                # Always update (last QSO wins, matching potential reference behavior)
+                # Process awards exactly like Xojo AwardProcessorThreadWindow.xojo_window
+                
+                # Centurion Award: All valid SKCC member QSOs (basic validation already passed)
                 cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                if good(QsoDate, TheirC_Date, cls.MyC_Date, eligible_dates['tribune']):
-                    cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                # Tribune Award: Both must be Centurions, QSO >= both C dates, QSO >= 20070301
+                if (cls.MyC_Date != "" and TheirC_Date != ""):
+                    if (QsoDate >= cls.MyC_Date and 
+                        QsoDate >= TheirC_Date and 
+                        QsoDate >= "20070301000000"):
+                        cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                if good(QsoDate, TheirT_Date, cls.MyTX8_Date, eligible_dates['senator']):
-                    cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                # Senator Award: QSO >= 20130801, you have TX8, they have Tribune, QSO >= both dates
+                if QsoDate >= "20130801000000":
+                    if (cls.MyTX8_Date != "" and TheirT_Date != ""):
+                        if (QsoDate >= cls.MyTX8_Date and 
+                            QsoDate >= TheirT_Date):
+                            cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                # Process WAS entries for states
+                # Process WAS entries exactly like Xojo lines 378-412
+                # Treat "DC" as "MD" for WAS Awards (Xojo lines 364-367)
+                if QsoSPC == "DC":
+                    QsoSPC = "MD"
+                
                 if QsoSPC in US_STATES:
-                    # Base WAS - basic validation already done above
+                    # Base WAS Award - all states qualify
                     if QsoSPC not in cls.ContactsForWAS:
                         cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    # WAS variants
-                    if QsoDate >= eligible_dates['was_c']:
-                        if TheirC_Date and QsoDate >= TheirC_Date:
-                            if QsoSPC not in cls.ContactsForWAS_C:
-                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    # WAS-C Started on 12 Jun 2011 - Member worked must have been a Centurion as of the date of the QSO
+                    if TheirC_Date != "":
+                        if QsoDate >= "20110612000000":
+                            if QsoDate >= TheirC_Date:
+                                if QsoSPC not in cls.ContactsForWAS_C:
+                                    cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    if QsoDate >= eligible_dates['was_ts']:
-                        if TheirT_Date and QsoDate >= TheirT_Date:
-                            if QsoSPC not in cls.ContactsForWAS_T:
-                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    # WAS-T Started on 1 Feb 2016 - Member worked must have been a Tribune as of the date of the QSO
+                    if TheirT_Date != "":
+                        if QsoDate >= "20160201000000":
+                            if QsoDate >= TheirT_Date:
+                                if QsoSPC not in cls.ContactsForWAS_T:
+                                    cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                        if TheirS_Date and QsoDate >= TheirS_Date:
-                            if QsoSPC not in cls.ContactsForWAS_S:
-                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    # WAS-S Started on 1 Feb 2016 - Member worked must have been a Senator as of the date of the QSO
+                    if TheirS_Date != "":
+                        if QsoDate >= "20160201000000":
+                            if QsoDate >= TheirS_Date:
+                                if QsoSPC not in cls.ContactsForWAS_S:
+                                    cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
         # Generate output files
         QSOs_Dir = 'QSOs'
@@ -2439,10 +2470,12 @@ class cSKCC:
         else:
             # There was an SKCC Number in the log
             # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
+            # Extract base number from log SKCC as well for comparison
+            base_log_skcc = ''.join(c for c in log_skcc if c.isdigit())
             for skcc_nr in skcc_list.keys():
-                # Compare base numbers (strip letters from original number)
+                # Compare base numbers (strip letters from both numbers)
                 base_skcc_nr = ''.join(c for c in skcc_nr if c.isdigit())
-                if log_skcc == base_skcc_nr:
+                if base_log_skcc == base_skcc_nr:
                     return_skcc = skcc_nr
                     break
 
