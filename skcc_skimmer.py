@@ -1812,6 +1812,7 @@ class cQSO:
 
         for Contact in cls.QSOs:
             QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC = Contact
+            
 
             # Skip invalid callsigns
             if QsoCallSign in ('K9SKC', 'K3Y'):
@@ -1821,6 +1822,7 @@ class cQSO:
             mbr_skcc_nr: str | None = None
             found_call: str | None = None
             is_historical_member = False
+            
             
             if QsoSKCC and QsoSKCC != "NONE":
                 # Try to find member by SKCC number first
@@ -1847,18 +1849,19 @@ class cQSO:
             # Type assertion and assignment - we know found_call is valid here  
             assert found_call is not None
             assert mbr_skcc_nr is not None
-            # Use cast to ensure proper string typing
-            QsoCallSign = cast(str, found_call)
+            # For prefix processing, we need to use the ORIGINAL logged callsign, not the main_call
+            # Store the found_call for member data lookup but keep QsoCallSign as logged
+            MemberLookupCall = found_call
 
             # Get member data using the determined SKCC number (matches Xojo line 315)
             # For member number lookup matches, use the found call's data directly
-            if QsoCallSign in cSKCC.members and cSKCC.members[QsoCallSign]['plain_number'] == mbr_skcc_nr:
+            if MemberLookupCall in cSKCC.members and cSKCC.members[MemberLookupCall]['plain_number'] == mbr_skcc_nr:
                 # Direct member number match - use this member's data
-                TheirMemberEntry = cSKCC.members[QsoCallSign]
-                MainCallSign = QsoCallSign
+                TheirMemberEntry = cSKCC.members[MemberLookupCall]
+                MainCallSign = MemberLookupCall
             else:
                 # Fall back to main_call lookup
-                MainCallSign = cSKCC.members[QsoCallSign]['main_call']
+                MainCallSign = cSKCC.members[MemberLookupCall]['main_call']
                 TheirMemberEntry = cSKCC.members[MainCallSign]
 
             TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
@@ -1871,6 +1874,7 @@ class cQSO:
             # Main validation: QSO date >= member join date AND not working yourself (matches Xojo line 318)
             # For historical members, we assume join date validation passes since QSO explicitly references that member
             date_validation_passes = (is_historical_member or good(QsoDate, TheirJoin_Date, cls.MyJoin_Date))
+            
             if date_validation_passes and TheirMemberNumber != cls.MyMemberNumber:
                 
                 # K3Y processing
@@ -1883,15 +1887,39 @@ class cQSO:
                                 cls.ContactsForK3Y[Suffix] = {}
                             cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
-                # Prefix processing
-                if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date, eligible_dates['prefix']):
-                    if prefix_match := cQSO.Prefix_RegEx.match(QsoCallSign):
-                        Prefix = prefix_match.group(1)
-                        iTheirMemberNumber = int(TheirMemberNumber)
-
-                        if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
-                            FirstName = cSKCC.members[QsoCallSign]['name']
-                            cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
+                # Prefix processing - exact Xojo logic from AwardProcessorThreadWindow lines 485-511
+                # Xojo only checks if QSO date >= 20130101 (line 485)
+                if QsoDate >= eligible_dates['prefix']:
+                    # Split callsign by "/" and process each segment (Xojo logic)
+                    call_segments = QsoCallSign.split('/')
+                    
+                    for pfx_call in call_segments:
+                        # GetSKCCFromCall(pfx_call, mbr_skcc_nr) logic from Xojo
+                        # Returns mbr_skcc_nr if pfx_call is found in member database, else empty string
+                        pfx_skcc_nr = ""  # Default to empty string like Xojo
+                        
+                        # Check if this segment exists in the member database
+                        if pfx_call in cSKCC.members:
+                            # Segment found in database - return the logged SKCC number
+                            pfx_skcc_nr = TheirMemberNumber
+                        
+                        # Xojo only processes if GetSKCCFromCall returned non-empty string
+                        if pfx_skcc_nr != "":
+                            # Extract prefix using exact Xojo logic from line 493-497
+                            if len(pfx_call) >= 3 and pfx_call[2].isdigit():
+                                Prefix = pfx_call[:3]  # First 3 characters
+                            else:
+                                Prefix = pfx_call[:2]  # First 2 characters
+                            
+                            iTheirMemberNumber = int(TheirMemberNumber)
+                            
+                            # Update if this is a new prefix or higher SKCC number (line 499-503)
+                            if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
+                                # Use the name from the segment's member data if found
+                                seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
+                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name)
+                            
+                            break  # Only process first valid segment (line 510)
 
                 # Process C, T, S in one batch  
                 # For Centurion award: basic validation already done above
