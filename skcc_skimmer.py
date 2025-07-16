@@ -73,12 +73,7 @@
 
 
 from datetime import timedelta, datetime
-from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict
-
-
-from typing import Self
-
-
+from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict, Self, cast
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
 
@@ -1079,7 +1074,7 @@ class cQSO:
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str]]
+    QSOs: list[tuple[str, str, str, float, str, str]]
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1102,7 +1097,7 @@ class cQSO:
         await cls.read_qsos_async()
 
         MyMemberEntry      = cSKCC.members[cConfig.MY_CALLSIGN]
-        cls.MyJoin_Date    = MyMemberEntry['join_date']  # Don't filter join dates with effective()
+        cls.MyJoin_Date    = cUtil.effective(MyMemberEntry['join_date'])
         cls.MyC_Date       = cUtil.effective(MyMemberEntry['c_date'])
         cls.MyT_Date       = cUtil.effective(MyMemberEntry['t_date'])
         cls.MyS_Date       = cUtil.effective(MyMemberEntry['s_date'])
@@ -1427,16 +1422,15 @@ class cQSO:
                     if skcc_number:
                         # Remove any trailing letters (C, T, S, etc.)
                         skcc_number = ''.join(c for c in skcc_number if c.isdigit())
-
-                    # Append QSO data (ensure all 7 fields are present)
+                    
+                    # Append QSO data
                     cls.QSOs.append((
                         record['QSO_DATE'] + record['TIME_ON'],
                         record['CALL'],
                         record.get('STATE', ''),
                         fFrequency,
                         record.get('COMMENT', ''),
-                        skcc_number if skcc_number else '',  # Ensure not None
-                        record.get('NAME', '')  # Add name from ADI file
+                        skcc_number  # Add cleaned SKCC number
                     ))
 
         except Exception as e:
@@ -1448,7 +1442,7 @@ class cQSO:
 
         # Process and map QSOs by member number with batched operations
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1472,63 +1466,25 @@ class cQSO:
             if Class in cConfig.GOALS:
                 Abbrev = cUtil.abbreviate_class(Class, X_Factor)
 
-                # Enhanced progress display with new format
-                # Calculate the target requirement for the next level
-                target_requirement = Total + Remaining
-
-                # Determine current qualification level based on Total
-                current_level = 0
-                base_increment = Levels[Class]
-
-                if Class == 'C':
-                    if Total >= 1000:  # Cx15, Cx20, etc.
-                        current_level = 10 + ((Total - 1000) // 500) * 5
-                    else:  # Cx1 through Cx10
-                        current_level = Total // base_increment
-                elif Class == 'T':
-                    if Total >= 500:  # Tx15, Tx20, etc.
-                        current_level = 10 + ((Total - 500) // 250) * 5
-                    else:  # Tx1 through Tx10
-                        current_level = Total // base_increment
-                elif Class in ('S', 'P'):
-                    current_level = Total // base_increment
-
-                # Format current qualification
-                current_qualification = f'{Class}x{current_level}' if current_level > 0 else None
-
+                # Enhanced progress display with correct requirements
                 match Class:
                     case 'C':
-                        if current_qualification:
-                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
-                        else:
-                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        print(f'Total SKCC members worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
                     case 'T':
                         if not cls.MyC_Date:
-                            print(f'{Class}: Tribune award requires Centurion first. Apply for C before working toward T.')
+                            print(f'Tribune award requires Centurion first. Apply for C before working toward T.')
                         else:
-                            if current_qualification:
-                                print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
-                            else:
-                                print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                            print(f'Total Centurions/Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
                     case 'S':
                         tribune_contacts = len(cls.ContactsForT)
                         if tribune_contacts < 400:
-                            print(f'{Class}: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                            print(f'Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
                         else:
-                            if current_qualification:
-                                print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
-                            else:
-                                print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                            print(f'Total Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
                     case 'P':
-                        if current_qualification:
-                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
-                        else:
-                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        print(f'Total prefix points towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
                     case _:
-                        if current_qualification:
-                            print(f'{Class}: Have {Total:,} which qualifies for {current_qualification}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
-                        else:
-                            print(f'{Class}: Have {Total:,}. {Abbrev} requires {target_requirement:,} ({Remaining:,} more)')
+                        print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
 
         print('')
 
@@ -1654,7 +1610,7 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
-        TheirJoin_Date    = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
+        TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
         TheirTX8_Date     = cUtil.effective(TheirMemberEntry['tx8_date'])
@@ -1751,7 +1707,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoName = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -1769,7 +1725,7 @@ class cQSO:
             fastQsoDate = cFastDateTime(QsoDate)
 
             if fastStartOfMonth < fastQsoDate < fastEndOfMonth:
-                TheirJoin_Date = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
+                TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
 
                 if TheirJoin_Date and TheirJoin_Date < QsoDate:
                     DuringSprint = cSKCC.is_during_sprint(fastQsoDate)
@@ -1801,8 +1757,6 @@ class cQSO:
         """Optimized goal QSO processing with batched operations."""
         # Helper function to check date criteria
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
-            # For award eligibility, empty dates mean "not yet achieved"
-            # Only check if both have the required award level
             if MemberDate == '' or MyDate == '':
                 return False
 
@@ -1835,6 +1789,15 @@ class cQSO:
         # Process current month as well
         cQSO.get_brag_qsos(PrevMonth=0, Print=False)
 
+        # Define key dates once for efficiency
+        eligible_dates = {
+            'prefix': '20130101000000',
+            'tribune': '20070301000000',
+            'senator': '20130801000000',
+            'was_c': '20110612000000',
+            'was_ts': '20160201000000'
+        }
+
         # Create reverse lookup for SKCC numbers to callsigns (for GetSKCCFromCall efficiency)
         skcc_number_to_call = {}
         for call, member_data in cSKCC.members.items():
@@ -1848,46 +1811,68 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoName = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC = Contact
 
             # Skip invalid callsigns
             if QsoCallSign in ('K9SKC', 'K3Y'):
                 continue
 
-            # Use exact Xojo GetSKCCFromCall logic (matches Xojo line 304)
-            # GetSKCCFromCall(log_call, log_skcc_pre) where log_skcc_pre is the SKCC from the log
-            mbr_skcc_nr = cSKCC.get_skcc_from_call(QsoCallSign, QsoSKCC or "")
+            # Implement GetSKCCFromCall() logic (matches Xojo line 304)
+            mbr_skcc_nr: str | None = None
+            found_call: str | None = None
+            is_historical_member = False
+            
+            if QsoSKCC and QsoSKCC != "NONE":
+                # Try to find member by SKCC number first
+                if QsoSKCC in skcc_number_to_call:
+                    mbr_skcc_nr = QsoSKCC
+                    found_call = cast(str, skcc_number_to_call[QsoSKCC])  # Use the callsign from member database
+                else:
+                    # Historical member number case: SKCC number not in current database
+                    # but QSO callsign might exist with different current number
+                    extracted_call = cSKCC.extract_callsign(QsoCallSign)
+                    if extracted_call and extracted_call in cSKCC.members:
+                        # Accept historical member number but use current member data for validation
+                        mbr_skcc_nr = QsoSKCC  # Keep the historical number from QSO
+                        found_call = extracted_call  # Use current callsign for member data lookup
+                        is_historical_member = True
+            
+            if not mbr_skcc_nr:
+                # Fall back to callsign lookup
+                found_call = cSKCC.extract_callsign(QsoCallSign)
+                if not found_call or found_call not in cSKCC.members:
+                    continue
+                mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
+            
+            # Type assertion and assignment - we know found_call is valid here  
+            assert found_call is not None
+            assert mbr_skcc_nr is not None
+            # Use cast to ensure proper string typing
+            QsoCallSign = cast(str, found_call)
 
-            # Skip if no valid SKCC member found (matches Xojo logic)
-            if not mbr_skcc_nr or mbr_skcc_nr == "NONE":
-                continue
+            # Get member data using the determined SKCC number (matches Xojo line 315)
+            # For member number lookup matches, use the found call's data directly
+            if QsoCallSign in cSKCC.members and cSKCC.members[QsoCallSign]['plain_number'] == mbr_skcc_nr:
+                # Direct member number match - use this member's data
+                TheirMemberEntry = cSKCC.members[QsoCallSign]
+                MainCallSign = QsoCallSign
+            else:
+                # Fall back to main_call lookup
+                MainCallSign = cSKCC.members[QsoCallSign]['main_call']
+                TheirMemberEntry = cSKCC.members[MainCallSign]
 
-            # Find the member data using the returned SKCC number (matches Xojo line 315)
-            # mbr_rs = G_SKCCData_DB.SQLSelect("Select * From SKCCData_DB WHERE Mbr_SKCC_Nr = '" + mbr_skcc_nr + "'")
-            TheirMemberEntry = None
-            MainCallSign = ""
-
-            # Find member by SKCC number (compare original numbers with letters)
-            for call, member in cSKCC.members.items():
-                if member['original_number'] == mbr_skcc_nr:
-                    TheirMemberEntry = member
-                    MainCallSign = call
-                    break
-
-            # Skip if member not found by SKCC number
-            if not TheirMemberEntry:
-                continue
-
-            TheirJoin_Date = TheirMemberEntry['join_date']  # Don't filter join dates with effective()
+            TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
             TheirC_Date = cUtil.effective(TheirMemberEntry['c_date'])
             TheirT_Date = cUtil.effective(TheirMemberEntry['t_date'])
             TheirS_Date = cUtil.effective(TheirMemberEntry['s_date'])
+            # Use the determined member number from GetSKCCFromCall, not recalculated
             TheirMemberNumber = mbr_skcc_nr
 
             # Main validation: QSO date >= member join date AND not working yourself (matches Xojo line 318)
-            date_validation_passes = good(QsoDate, TheirJoin_Date, cls.MyJoin_Date)
+            # For historical members, we assume join date validation passes since QSO explicitly references that member
+            date_validation_passes = (is_historical_member or good(QsoDate, TheirJoin_Date, cls.MyJoin_Date))
             if date_validation_passes and TheirMemberNumber != cls.MyMemberNumber:
-
+                
                 # K3Y processing
                 if 'K3Y' in cConfig.GOALS and QsoDate >= k3y_start and QsoDate < k3y_end:
                     if k3y_match := re.match(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', QsoComment, re.IGNORECASE):
@@ -1898,83 +1883,47 @@ class cQSO:
                                 cls.ContactsForK3Y[Suffix] = {}
                             cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
-                # Prefix processing - exact Xojo logic from lines 485-500
-                # Save the Prefix, Callsign, and SKCC Number Value for the PFX Award - Prefix award started on 20130101
-                if QsoDate >= "20130101000000":
-                    call_segs = QsoCallSign.split('/')  # Xojo: call_segs = Split(log_call, "/")
-                    for pfx_call in call_segs:
-                        # Xojo: pfx_skcc_nr = GetSKCCFromCall(pfx_call, mbr_skcc_nr)
-                        # Note: Xojo passes mbr_skcc_nr (the resolved SKCC number) NOT the log SKCC
-                        pfx_skcc_nr = cSKCC.get_skcc_from_call(pfx_call, mbr_skcc_nr)
-                        if pfx_skcc_nr != "":
-                            # Xojo prefix extraction logic
-                            if len(pfx_call) >= 3 and pfx_call[2].isdigit():
-                                Prefix = pfx_call[:3]  # Left(pfx_call, 3)
-                            else:
-                                Prefix = pfx_call[:2]  # Left(pfx_call, 2)
+                # Prefix processing
+                if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date, eligible_dates['prefix']):
+                    if prefix_match := cQSO.Prefix_RegEx.match(QsoCallSign):
+                        Prefix = prefix_match.group(1)
+                        iTheirMemberNumber = int(TheirMemberNumber)
 
-                            # Convert SKCC number to integer for points
-                            iTheirMemberNumber = int(''.join(c for c in pfx_skcc_nr if c.isdigit()))
+                        if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
+                            FirstName = cSKCC.members[QsoCallSign]['name']
+                            cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
 
-                            # Use the name from the ADI file (Xojo behavior)
-                            FirstName = QsoName
-
-                            # Store this prefix - Xojo uses "Exit" so first valid segment wins per QSO
-                            # Highest member number wins for each prefix (matching Xojo behavior)
-                            if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
-                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
-                            break  # Exit after first valid segment (matches Xojo "Exit")
-
-
-                # Process awards exactly like Xojo AwardProcessorThreadWindow.xojo_window
-
-                # Centurion Award: All valid SKCC member QSOs (basic validation already passed)
+                # Process C, T, S in one batch  
+                # For Centurion award: basic validation already done above
+                # Always update (last QSO wins, matching potential reference behavior)
                 cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                # Tribune Award: Both must be Centurions, QSO >= both C dates, QSO >= 20070301
-                if (cls.MyC_Date != "" and TheirC_Date != ""):
-                    if (QsoDate >= cls.MyC_Date and
-                        QsoDate >= TheirC_Date and
-                        QsoDate >= "20070301000000"):
-                        cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                if good(QsoDate, TheirC_Date, cls.MyC_Date, eligible_dates['tribune']):
+                    cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                # Senator Award: QSO >= 20130801, you have TX8, they have Tribune, QSO >= both dates
-                if QsoDate >= "20130801000000":
-                    if (cls.MyTX8_Date != "" and TheirT_Date != ""):
-                        if (QsoDate >= cls.MyTX8_Date and
-                            QsoDate >= TheirT_Date):
-                            cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                if good(QsoDate, TheirT_Date, cls.MyTX8_Date, eligible_dates['senator']):
+                    cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-                # Process WAS entries exactly like Xojo lines 378-412
-                # Treat "DC" as "MD" for WAS Awards (Xojo lines 364-367)
-                if QsoSPC == "DC":
-                    QsoSPC = "MD"
-
+                # Process WAS entries for states
                 if QsoSPC in US_STATES:
-                    # Base WAS Award - all states qualify
+                    # Base WAS - basic validation already done above
                     if QsoSPC not in cls.ContactsForWAS:
                         cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    # WAS-C Started on 12 Jun 2011 - Member worked must have been a Centurion as of the date of the QSO
-                    if TheirC_Date != "":
-                        if QsoDate >= "20110612000000":
-                            if QsoDate >= TheirC_Date:
-                                if QsoSPC not in cls.ContactsForWAS_C:
-                                    cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    # WAS variants
+                    if QsoDate >= eligible_dates['was_c']:
+                        if TheirC_Date and QsoDate >= TheirC_Date:
+                            if QsoSPC not in cls.ContactsForWAS_C:
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    # WAS-T Started on 1 Feb 2016 - Member worked must have been a Tribune as of the date of the QSO
-                    if TheirT_Date != "":
-                        if QsoDate >= "20160201000000":
-                            if QsoDate >= TheirT_Date:
-                                if QsoSPC not in cls.ContactsForWAS_T:
-                                    cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    if QsoDate >= eligible_dates['was_ts']:
+                        if TheirT_Date and QsoDate >= TheirT_Date:
+                            if QsoSPC not in cls.ContactsForWAS_T:
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    # WAS-S Started on 1 Feb 2016 - Member worked must have been a Senator as of the date of the QSO
-                    if TheirS_Date != "":
-                        if QsoDate >= "20160201000000":
-                            if QsoDate >= TheirS_Date:
-                                if QsoSPC not in cls.ContactsForWAS_S:
-                                    cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        if TheirS_Date and QsoDate >= TheirS_Date:
+                            if QsoSPC not in cls.ContactsForWAS_S:
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
         # Generate output files
         QSOs_Dir = 'QSOs'
@@ -2233,7 +2182,6 @@ class cSpotters:
 class cSKCC:
     class cMemberEntry(TypedDict):
         name: str
-        original_number: str
         plain_number: str
         spc: str
         join_date: str
@@ -2399,69 +2347,6 @@ class cSKCC:
 
         return None
 
-    @classmethod
-    def get_skcc_from_call(cls, log_call: str, log_skcc: str) -> str:
-        """
-        Exact implementation of Xojo GetSKCCFromCall() function from Globals.xojo_code lines 927-1042.
-
-        Args:
-            log_call: Callsign from the log
-            log_skcc: SKCC number from the log (can be empty string)
-
-        Returns:
-            SKCC member number if found, empty string otherwise
-        """
-        # Version v03.01.01C - Modified GetSKCCFromCall to leave SKCC of "NONE" unchanged
-        if log_skcc == "NONE":
-            return log_skcc
-
-        skcc_list: dict[str, int] = {}  # Dictionary to store found SKCC numbers
-        return_skcc = ""
-
-        if "/" in log_call:
-            # Log_Call has slants - Call may either exist "as-is", or may need to be broken into call segments
-            # First try to find the complete callsign with slashes
-            matching_members = [member for call, member in cls.members.items()
-                              if call.upper() == log_call.upper()]
-
-            if matching_members:
-                # Call exists "as-is" - Add ALL matching member SKCC Numbers to the SKCC Number List
-                for member in matching_members:
-                    skcc_list[member['original_number']] = 1
-            else:
-                # No matches for Log_Call with slants - Look for matches of any call segments
-                tmp_calls = log_call.split("/")
-                for tmp_call in tmp_calls:
-                    segment_members = [member for call, member in cls.members.items()
-                                     if call.upper() == tmp_call.upper()]
-                    for member in segment_members:
-                        skcc_list[member['original_number']] = 1
-        else:
-            # Log_Call does not have slants in it - Add ALL matching member SKCC Numbers to the SKCC Number List
-            matching_members = [member for call, member in cls.members.items()
-                              if call.upper() == log_call.upper()]
-            for member in matching_members:
-                skcc_list[member['original_number']] = 1
-
-        # At this point ALL SKCC Numbers that match the Log_Call have been added to the SKCC List Dictionary
-        if log_skcc == "":
-            # There is no SKCC Number in the Log - If there is only one SKCC Number in the SKCC List, then return it
-            if len(skcc_list) == 1:
-                return_skcc = list(skcc_list.keys())[0]
-        else:
-            # There was an SKCC Number in the log
-            # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
-            # Extract base number from log SKCC as well for comparison
-            base_log_skcc = ''.join(c for c in log_skcc if c.isdigit())
-            for skcc_nr in skcc_list.keys():
-                # Compare base numbers (strip letters from both numbers)
-                base_skcc_nr = ''.join(c for c in skcc_nr if c.isdigit())
-                if base_log_skcc == base_skcc_nr:
-                    return_skcc = skcc_nr
-                    break
-
-        return return_skcc
-
     @staticmethod
     async def read_level_list_async(Type: str, URL: str) -> dict[str, int] | NoReturn:
         """Read award level list with async HTTP request."""
@@ -2556,7 +2441,7 @@ class cSKCC:
             try:
                 fields = line.split("|")
                 (
-                    original_number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country, *_
+                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country, *_
                 ) = fields
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
@@ -2567,7 +2452,6 @@ class cSKCC:
             for call in all_calls:
                 cls.members[call] = {
                     'name'         : name,
-                    'original_number': original_number,
                     'plain_number' : plain_number,
                     'spc'          : spc,
                     'join_date'    : cls.normalize_skcc_date(join_date),
@@ -2787,7 +2671,7 @@ class cRBN:
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")
                     cls._connected = True
                     retry_count = 0  # Reset retry count on successful connection
-
+            
                     # Authenticate with the RBN server
                     await asyncio.wait_for(reader.readuntil(b"call: "), timeout=10.0)
                     writer.write(f"{callsign}\r\n".encode("ascii"))
@@ -2802,7 +2686,7 @@ class cRBN:
                             if not data:  # EOF received
                                 print("RBN connection closed by server.")
                                 break
-
+                            
                             yield data
 
                         except asyncio.TimeoutError:
