@@ -1569,20 +1569,6 @@ class cQSO:
             Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
             if Class in cConfig.GOALS:
-                # Get awarded level from rosters
-                awarded_level = 0
-                match Class:
-                    case 'C':
-                        awarded_level = cSKCC.centurion_level.get(cls.MyMemberNumber, 0)
-                    case 'T':
-                        awarded_level = cSKCC.tribune_level.get(cls.MyMemberNumber, 0)
-                    case 'S':
-                        awarded_level = cSKCC.senator_level.get(cls.MyMemberNumber, 0)
-                    case 'P':
-                        awarded_level = cSKCC.prefix_level.get(cConfig.MY_CALLSIGN, 0)
-                    case _:
-                        awarded_level = 0
-                
                 # Calculate current qualifying level
                 current_level = cls.calculate_current_award_level(Class, Total)
                 next_x_factor = X_Factor
