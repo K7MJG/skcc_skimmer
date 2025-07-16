@@ -73,7 +73,7 @@
 
 
 from datetime import timedelta, datetime
-from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict, Self, cast
+from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict, Self
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
 
@@ -98,6 +98,9 @@ import platform
 RBN_SERVER = 'telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
+# Global state for progress dot display
+_progress_dot_count: int = 0
+
 US_STATES: Final[list[str]] = [
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
@@ -106,12 +109,30 @@ US_STATES: Final[list[str]] = [
     'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
 ]
 
+# Award level requirements
 Levels: Final[dict[str, int]] = {
     'C'  :    100,
     'T'  :     50,
     'S'  :    200,
     'P'  : 250000,
 }
+
+# Award dates - when each award started
+class AwardDates:
+    PREFIX_START: Final[str] = '20130101000000'
+    TRIBUNE_START: Final[str] = '20070301000000'
+    SENATOR_START: Final[str] = '20130801000000'
+    WAS_C_START: Final[str] = '20110612000000'
+    WAS_TS_START: Final[str] = '20160201000000'
+    
+# Prefix award thresholds
+class PrefixThresholds:
+    LEVEL_1: Final[int] = 500_000
+    LEVEL_5: Final[int] = 1_000_000
+    LEVEL_10: Final[int] = 1_500_000
+    LEVEL_15: Final[int] = 2_000_000
+    INCREMENT: Final[int] = 500_000
+    MILESTONE_10M: Final[int] = 10_000_000
 
 class cUtil:
     @staticmethod
@@ -696,11 +717,12 @@ class cFastDateTime:
 class cDisplay:
     @staticmethod
     def print(text: str) -> None:
-        if cRBN.dot_count > 0:
+        global _progress_dot_count
+        if _progress_dot_count > 0:
             print()
 
         print(text)
-        cRBN.dot_count_reset()
+        _progress_dot_count = 0
 
 class cSked:
     _RegEx:          ClassVar[re.Pattern[str]] = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
@@ -772,7 +794,7 @@ class cSked:
     @classmethod
     async def _process_login_async(cls, CallSign: str, Status: str, SkedHit: dict[str, list[str]]) -> None:
         """Process a single sked login asynchronously and add to SkedHit if relevant."""
-        Report: list[str] = [await cSKCC.build_member_info_async(CallSign)]
+        Report: list[str] = [cSKCC.build_member_info(CallSign)]
 
         if CallSign in cSPOTS.last_spotted:
             FrequencyKHz, StartTime = cSPOTS.last_spotted[CallSign]
@@ -1049,7 +1071,7 @@ class cSPOTS:
                 NotificationFlag = cls.handle_notification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
-                MemberInfo = await cSKCC.build_member_info_async(CallSign)
+                MemberInfo = cSKCC.build_member_info(CallSign)
                 NotificationFlag = cls.handle_notification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
@@ -1077,6 +1099,37 @@ class cQSO:
     QSOs: list[tuple[str, str, str, float, str, str]]
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
+
+    @classmethod
+    def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
+        """Helper to lookup member information from QSO data.
+        
+        Returns: (member_skcc_number, found_callsign, is_historical_member)
+        """
+        mbr_skcc_nr: str | None = None
+        found_call: str | None = None
+        is_historical_member = False
+        
+        if qso_skcc and qso_skcc != "NONE":
+            # Try to find member by SKCC number first
+            if qso_skcc in skcc_number_to_call:
+                mbr_skcc_nr = qso_skcc
+                found_call = skcc_number_to_call[qso_skcc]
+            else:
+                # Historical member number case
+                extracted_call = cSKCC.extract_callsign(qso_callsign)
+                if extracted_call and extracted_call in cSKCC.members:
+                    mbr_skcc_nr = qso_skcc  # Keep historical number
+                    found_call = extracted_call
+                    is_historical_member = True
+        
+        if not mbr_skcc_nr:
+            # Fall back to callsign lookup
+            found_call = cSKCC.extract_callsign(qso_callsign)
+            if found_call and found_call in cSKCC.members:
+                mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
+                
+        return mbr_skcc_nr, found_call, is_historical_member
 
     @classmethod
     async def initialize_async(cls) -> None:
@@ -1180,17 +1233,17 @@ class cQSO:
                 # Prefix has unique progression:
                 # Px1: >500,000, Px5: >1,000,000, Px10: >1,500,000
                 # Then Px15, Px20, Px25... (every 500,000 points)
-                if Total <= 500000:
+                if Total <= PrefixThresholds.LEVEL_1:
                     return 0  # No P award yet
-                elif Total <= 1000000:
+                elif Total <= PrefixThresholds.LEVEL_5:
                     return 1  # Px1
-                elif Total <= 1500000:
+                elif Total <= PrefixThresholds.LEVEL_10:
                     return 5  # Px5
-                elif Total <= 2000000:
+                elif Total <= PrefixThresholds.LEVEL_15:
                     return 10  # Px10
                 else:
                     # After 2M: Px15, Px20, Px25... (500k increments, 5 levels each)
-                    increments_past_2m = (Total - 2000000) // 500000
+                    increments_past_2m = (Total - PrefixThresholds.LEVEL_15) // PrefixThresholds.INCREMENT
                     return 15 + (increments_past_2m * 5)
             
             case _:
@@ -1375,25 +1428,25 @@ class cQSO:
 
             case 'P':
                 # Prefix has unique progression
-                if Total <= 500000:
-                    remaining = 500001 - Total  # Need >500,000
+                if Total <= PrefixThresholds.LEVEL_1:
+                    remaining = PrefixThresholds.LEVEL_1 + 1 - Total  # Need >500,000
                     x_factor = 1
-                elif Total <= 1000000:
-                    remaining = 1000001 - Total  # Need >1,000,000
+                elif Total <= PrefixThresholds.LEVEL_5:
+                    remaining = PrefixThresholds.LEVEL_5 + 1 - Total  # Need >1,000,000
                     x_factor = 5
-                elif Total <= 1500000:
-                    remaining = 1500001 - Total  # Need >1,500,000
+                elif Total <= PrefixThresholds.LEVEL_10:
+                    remaining = PrefixThresholds.LEVEL_10 + 1 - Total  # Need >1,500,000
                     x_factor = 10
-                elif Total <= 2000000:
-                    remaining = 2000001 - Total  # Need >2,000,000
+                elif Total <= PrefixThresholds.LEVEL_15:
+                    remaining = PrefixThresholds.LEVEL_15 + 1 - Total  # Need >2,000,000
                     x_factor = 15
                 else:
                     # After 2M: next level at 500k increments
-                    current_level = 15 + ((Total - 2000000) // 500000) * 5
+                    current_level = 15 + ((Total - PrefixThresholds.LEVEL_15) // PrefixThresholds.INCREMENT) * 5
                     next_level = current_level + 5
-                    next_threshold = 2000000 + ((next_level - 15) // 5) * 500000
+                    next_threshold = PrefixThresholds.LEVEL_15 + ((next_level - 15) // 5) * PrefixThresholds.INCREMENT
                     # For round numbers (10M, 15M, etc), don't add 1
-                    if next_threshold == 10000000:
+                    if next_threshold == PrefixThresholds.MILESTONE_10M:
                         remaining = next_threshold - Total
                     else:
                         remaining = next_threshold + 1 - Total
@@ -1518,6 +1571,8 @@ class cQSO:
                         awarded_level = cSKCC.senator_level.get(cls.MyMemberNumber, 0)
                     case 'P':
                         awarded_level = cSKCC.prefix_level.get(cConfig.MY_CALLSIGN, 0)
+                    case _:
+                        awarded_level = 0
                 
                 # Calculate current qualifying level
                 current_level = cls.calculate_current_award_level(Class, Total)
@@ -1571,10 +1626,10 @@ class cQSO:
                             # For P awards, show next milestone (round numbers)
                             if display_level >= 10:
                                 # After Px10, show round milestones
-                                if Total < 10000000:
+                                if Total < PrefixThresholds.MILESTONE_10M:
                                     # Show Px20 at 10M as next milestone
                                     # Note: We show "requires 10,000,000" but calculate based on >10,000,000
-                                    remaining_to_10m = 10000000 - Total
+                                    remaining_to_10m = PrefixThresholds.MILESTONE_10M - Total
                                     print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. Px20 requires 10,000,000 ({remaining_to_10m:,} more)')
                                 else:
                                     # Show next regular milestone
@@ -1894,15 +1949,15 @@ class cQSO:
 
         # Define key dates once for efficiency
         eligible_dates = {
-            'prefix': '20130101000000',
-            'tribune': '20070301000000',
-            'senator': '20130801000000',
-            'was_c': '20110612000000',
-            'was_ts': '20160201000000'
+            'prefix': AwardDates.PREFIX_START,
+            'tribune': AwardDates.TRIBUNE_START,
+            'senator': AwardDates.SENATOR_START,
+            'was_c': AwardDates.WAS_C_START,
+            'was_ts': AwardDates.WAS_TS_START
         }
 
         # Create reverse lookup for SKCC numbers to callsigns (for GetSKCCFromCall efficiency)
-        skcc_number_to_call = {}
+        skcc_number_to_call: dict[str, str] = {}
         for call, member_data in cSKCC.members.items():
             skcc_nr = member_data['plain_number']
             # Use the actual callsign (not main_call) for direct member number lookup
@@ -1921,37 +1976,11 @@ class cQSO:
             if QsoCallSign in ('K9SKC', 'K3Y'):
                 continue
 
-            # Implement GetSKCCFromCall() logic (matches Xojo line 304)
-            mbr_skcc_nr: str | None = None
-            found_call: str | None = None
-            is_historical_member = False
+            # Lookup member using helper method
+            mbr_skcc_nr, found_call, is_historical_member = cls._lookup_member_from_qso(QsoSKCC, QsoCallSign, skcc_number_to_call)
             
-            
-            if QsoSKCC and QsoSKCC != "NONE":
-                # Try to find member by SKCC number first
-                if QsoSKCC in skcc_number_to_call:
-                    mbr_skcc_nr = QsoSKCC
-                    found_call = cast(str, skcc_number_to_call[QsoSKCC])  # Use the callsign from member database
-                else:
-                    # Historical member number case: SKCC number not in current database
-                    # but QSO callsign might exist with different current number
-                    extracted_call = cSKCC.extract_callsign(QsoCallSign)
-                    if extracted_call and extracted_call in cSKCC.members:
-                        # Accept historical member number but use current member data for validation
-                        mbr_skcc_nr = QsoSKCC  # Keep the historical number from QSO
-                        found_call = extracted_call  # Use current callsign for member data lookup
-                        is_historical_member = True
-            
-            if not mbr_skcc_nr:
-                # Fall back to callsign lookup
-                found_call = cSKCC.extract_callsign(QsoCallSign)
-                if not found_call or found_call not in cSKCC.members:
-                    continue
-                mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
-            
-            # Type assertion and assignment - we know found_call is valid here  
-            assert found_call is not None
-            assert mbr_skcc_nr is not None
+            if not mbr_skcc_nr or not found_call:
+                continue
             # For prefix processing, we need to use the ORIGINAL logged callsign, not the main_call
             # Store the found_call for member data lookup but keep QsoCallSign as logged
             MemberLookupCall = found_call
@@ -2394,9 +2423,9 @@ class cSKCC:
             sys.exit(1)
 
     @classmethod
-    async def build_member_info_async(cls, CallSign: str) -> str:
+    def build_member_info(cls, CallSign: str) -> str:
         entry = cls.members[CallSign]
-        number, suffix = await cls.get_full_member_number_async(CallSign)
+        number, suffix = cls.get_full_member_number(CallSign)
 
         return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
@@ -2640,20 +2669,18 @@ class cSKCC:
         )
 
     @classmethod
-    async def get_full_member_number_async(cls, CallSign: str) -> tuple[str, str]:
-        """Async version to get a member's full number including suffix."""
+    def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
+        """Get a member's full number including suffix."""
         Entry = cls.members[CallSign]
         MemberNumber = Entry['plain_number']
 
         Suffix = ''
         Level = 1
 
-        # Use asyncio.gather to concurrently fetch member information
-        c_date, t_date, s_date = await asyncio.gather(
-            asyncio.to_thread(cUtil.effective, Entry['c_date']),
-            asyncio.to_thread(cUtil.effective, Entry['t_date']),
-            asyncio.to_thread(cUtil.effective, Entry['s_date'])
-        )
+        # Simple synchronous calls - no need for threading
+        c_date = cUtil.effective(Entry['c_date'])
+        t_date = cUtil.effective(Entry['t_date']) 
+        s_date = cUtil.effective(Entry['s_date'])
 
         if s_date:
             Suffix = 'S'
@@ -2679,7 +2706,7 @@ class cSKCC:
         async def print_callsign_async(CallSign: str) -> None:
             Entry = cls.members[CallSign]
             MyNumber = cls.members[cConfig.MY_CALLSIGN]['plain_number']
-            Report = [await cls.build_member_info_async(CallSign)]
+            Report = [cls.build_member_info(CallSign)]
 
             if Entry['plain_number'] == MyNumber:
                 Report.append('(you)')
@@ -2737,7 +2764,6 @@ class cSKCC:
         print('')
 
 class cRBN:
-    dot_count: int = 0
 
     _connected: ClassVar[bool] = False
 
@@ -2883,15 +2909,17 @@ class cRBN:
             await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)
 
             if cls._connected:
+                global _progress_dot_count
                 print('.', end='', flush=True)
-                cls.dot_count += 1
+                _progress_dot_count += 1
 
-                if cls.dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
+                if _progress_dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
                     print('', flush=True)
 
     @classmethod
     def dot_count_reset(cls) -> None:
-        cls.dot_count = 0
+        global _progress_dot_count
+        _progress_dot_count = 0
 
 async def get_version_async() -> str:
     """
