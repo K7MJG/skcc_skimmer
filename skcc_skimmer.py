@@ -110,7 +110,7 @@ Levels: Final[dict[str, int]] = {
     'C'  :    100,
     'T'  :     50,
     'S'  :    200,
-    'P'  : 500000,
+    'P'  : 250000,
 }
 
 class cUtil:
@@ -1176,8 +1176,25 @@ class cQSO:
                     # Sx1, Sx2, etc. - each level requires 200 more contacts
                     return min(Total // 200, 10)  # Cap at Sx10 per official rules
 
+            case 'P':
+                # Prefix has unique progression:
+                # Px1: >500,000, Px5: >1,000,000, Px10: >1,500,000
+                # Then Px15, Px20, Px25... (every 500,000 points)
+                if Total <= 500000:
+                    return 0  # No P award yet
+                elif Total <= 1000000:
+                    return 1  # Px1
+                elif Total <= 1500000:
+                    return 5  # Px5
+                elif Total <= 2000000:
+                    return 10  # Px10
+                else:
+                    # After 2M: Px15, Px20, Px25... (500k increments, 5 levels each)
+                    increments_past_2m = (Total - 2000000) // 500000
+                    return 15 + (increments_past_2m * 5)
+            
             case _:
-                # P uses simple division
+                # Default simple division
                 return Total // Levels[Class]
 
     @classmethod
@@ -1356,8 +1373,34 @@ class cQSO:
                         remaining = next_target - Total
                         x_factor = next_level
 
+            case 'P':
+                # Prefix has unique progression
+                if Total <= 500000:
+                    remaining = 500001 - Total  # Need >500,000
+                    x_factor = 1
+                elif Total <= 1000000:
+                    remaining = 1000001 - Total  # Need >1,000,000
+                    x_factor = 5
+                elif Total <= 1500000:
+                    remaining = 1500001 - Total  # Need >1,500,000
+                    x_factor = 10
+                elif Total <= 2000000:
+                    remaining = 2000001 - Total  # Need >2,000,000
+                    x_factor = 15
+                else:
+                    # After 2M: next level at 500k increments
+                    current_level = 15 + ((Total - 2000000) // 500000) * 5
+                    next_level = current_level + 5
+                    next_threshold = 2000000 + ((next_level - 15) // 5) * 500000
+                    # For round numbers (10M, 15M, etc), don't add 1
+                    if next_threshold == 10000000:
+                        remaining = next_threshold - Total
+                    else:
+                        remaining = next_threshold + 1 - Total
+                    x_factor = next_level
+                    
             case _:
-                # P uses original simple logic
+                # Default logic
                 since_last = Total % base_increment
                 remaining = base_increment - since_last
                 x_factor = (Total + base_increment) // base_increment
@@ -1464,27 +1507,87 @@ class cQSO:
             Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
             if Class in cConfig.GOALS:
-                Abbrev = cUtil.abbreviate_class(Class, X_Factor)
-
-                # Enhanced progress display with correct requirements
+                # Get awarded level from rosters
+                awarded_level = 0
                 match Class:
                     case 'C':
-                        print(f'Total SKCC members worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        awarded_level = cSKCC.centurion_level.get(cls.MyMemberNumber, 0)
+                    case 'T':
+                        awarded_level = cSKCC.tribune_level.get(cls.MyMemberNumber, 0)
+                    case 'S':
+                        awarded_level = cSKCC.senator_level.get(cls.MyMemberNumber, 0)
+                    case 'P':
+                        awarded_level = cSKCC.prefix_level.get(cConfig.MY_CALLSIGN, 0)
+                
+                # Calculate current qualifying level
+                current_level = cls.calculate_current_award_level(Class, Total)
+                next_x_factor = X_Factor
+                
+                # Format in requested style
+                # Use awarded level if they have one, otherwise show what they qualify for
+                # For P award, special handling to show reasonable milestones
+                if Class == 'P' and awarded_level > 0:
+                    # If they have Px10 awarded but qualify for much higher, show Px15
+                    if awarded_level == 10 and current_level >= 15:
+                        display_level = 15
+                    else:
+                        display_level = awarded_level
+                else:
+                    display_level = max(awarded_level, current_level) if awarded_level > 0 else current_level
+                
+                match Class:
+                    case 'C':
+                        if display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Not yet qualified for C
+                            print(f'{Class}: Have {Total:,}. C requires 100 ({Remaining:,} more)')
                     case 'T':
                         if not cls.MyC_Date:
-                            print(f'Tribune award requires Centurion first. Apply for C before working toward T.')
+                            print(f'{Class}: Tribune award requires Centurion first. Apply for C before working toward T.')
+                        elif display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
                         else:
-                            print(f'Total Centurions/Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                            # Working toward T
+                            print(f'{Class}: Have {Total:,}. T requires 50 ({Remaining:,} more)')
                     case 'S':
                         tribune_contacts = len(cls.ContactsForT)
                         if tribune_contacts < 400:
-                            print(f'Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                            print(f'{Class}: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                        elif display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
                         else:
-                            print(f'Total Tribunes/Senators worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                            # Working toward S
+                            print(f'{Class}: Have {Total:,}. S requires 200 ({Remaining:,} more)')
                     case 'P':
-                        print(f'Total prefix points towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        if display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            # For P awards, show next milestone (round numbers)
+                            if display_level >= 10:
+                                # After Px10, show round milestones
+                                if Total < 10000000:
+                                    # Show Px20 at 10M as next milestone
+                                    # Note: We show "requires 10,000,000" but calculate based on >10,000,000
+                                    remaining_to_10m = 10000000 - Total
+                                    print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. Px20 requires 10,000,000 ({remaining_to_10m:,} more)')
+                                else:
+                                    # Show next regular milestone
+                                    next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                                    print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                            else:
+                                next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                                print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Working toward P
+                            print(f'{Class}: Have {Total:,}. Px1 requires >500,000 ({Remaining:,} more)')
                     case _:
-                        print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                        print(f'{Class}: Have {Total:,}. Need {Remaining:,} more for next level.')
 
         print('')
 
