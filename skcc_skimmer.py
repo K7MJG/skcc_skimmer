@@ -124,7 +124,7 @@ class AwardDates:
     SENATOR_START: Final[str] = '20130801000000'
     WAS_C_START: Final[str] = '20110612000000'
     WAS_TS_START: Final[str] = '20160201000000'
-    
+
 # Prefix award thresholds
 class PrefixThresholds:
     INCREMENT: Final[int] = 500_000
@@ -1099,13 +1099,13 @@ class cQSO:
     @classmethod
     def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
         """Helper to lookup member information from QSO data.
-        
+
         Returns: (member_skcc_number, found_callsign, is_historical_member)
         """
         mbr_skcc_nr: str | None = None
         found_call: str | None = None
         is_historical_member = False
-        
+
         if qso_skcc and qso_skcc != "NONE":
             # Try to find member by SKCC number first
             if qso_skcc in skcc_number_to_call:
@@ -1118,13 +1118,13 @@ class cQSO:
                     mbr_skcc_nr = qso_skcc  # Keep historical number
                     found_call = extracted_call
                     is_historical_member = True
-        
+
         if not mbr_skcc_nr:
             # Fall back to callsign lookup
             found_call = cSKCC.extract_callsign(qso_callsign)
             if found_call and found_call in cSKCC.members:
                 mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
-                
+
         return mbr_skcc_nr, found_call, is_historical_member
 
     @classmethod
@@ -1244,7 +1244,7 @@ class cQSO:
                         # Calculate how many 2.5M increments past 7.5M
                         increments_past_7_5m = (Total - 7_500_001) // 2_500_000 + 1
                         return 10 + (increments_past_7_5m * 5)
-            
+
             case _:
                 # Default simple division
                 return Total // Levels[Class]
@@ -1448,19 +1448,19 @@ class cQSO:
                         increments_past_7_5m = (Total - 7_500_001) // 2_500_000 + 1
                         current_level = 10 + (increments_past_7_5m * 5)
                         next_level = current_level + 5
-                        
+
                         # Calculate threshold for next level
                         # Px15: >7.5M, Px20: >10M, Px25: >12.5M
                         levels_past_15 = (next_level - 15) // 5
                         next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
-                    
+
                     # For round numbers (10M, etc), don't add 1
                     if next_threshold == PrefixThresholds.MILESTONE_10M:
                         remaining = next_threshold - Total
                     else:
                         remaining = next_threshold + 1 - Total
                     x_factor = next_level
-                    
+
             case _:
                 # Default logic
                 since_last = Total % base_increment
@@ -1527,7 +1527,7 @@ class cQSO:
                     if skcc_number:
                         # Remove any trailing letters (C, T, S, etc.)
                         skcc_number = ''.join(c for c in skcc_number if c.isdigit())
-                    
+
                     # Append QSO data
                     cls.QSOs.append((
                         record['QSO_DATE'] + record['TIME_ON'],
@@ -1572,11 +1572,11 @@ class cQSO:
                 # Calculate current qualifying level
                 current_level = cls.calculate_current_award_level(Class, Total)
                 next_x_factor = X_Factor
-                
+
                 # Format in requested style
                 # Use current qualifying level for display
                 display_level = current_level
-                
+
                 match Class:
                     case 'C':
                         if display_level >= 1:
@@ -1679,6 +1679,10 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
+        
+        # Don't spot inactive members
+        if TheirMemberEntry.get('mbr_status') == 'IA':
+            return []
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
         TheirS_Date       = cUtil.effective(TheirMemberEntry['s_date'])
@@ -1742,6 +1746,10 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
+        
+        # Don't spot inactive members
+        if TheirMemberEntry.get('mbr_status') == 'IA':
+            return []
         TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
@@ -1944,7 +1952,7 @@ class cQSO:
 
         for Contact in cls.QSOs:
             QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC = Contact
-            
+
 
             # Skip invalid callsigns
             if QsoCallSign in ('K9SKC', 'K3Y'):
@@ -1952,7 +1960,7 @@ class cQSO:
 
             # Lookup member using helper method
             mbr_skcc_nr, found_call, is_historical_member = cls._lookup_member_from_qso(QsoSKCC, QsoCallSign, skcc_number_to_call)
-            
+
             if not mbr_skcc_nr or not found_call:
                 continue
             # For prefix processing, we need to use the ORIGINAL logged callsign, not the main_call
@@ -1980,9 +1988,9 @@ class cQSO:
             # Main validation: QSO date >= member join date AND not working yourself (matches Xojo line 318)
             # For historical members, we assume join date validation passes since QSO explicitly references that member
             date_validation_passes = (is_historical_member or good(QsoDate, TheirJoin_Date, cls.MyJoin_Date))
-            
+
             if date_validation_passes and TheirMemberNumber != cls.MyMemberNumber:
-                
+
                 # K3Y processing
                 if 'K3Y' in cConfig.GOALS and QsoDate >= k3y_start and QsoDate < k3y_end:
                     if k3y_match := re.match(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', QsoComment, re.IGNORECASE):
@@ -1998,17 +2006,17 @@ class cQSO:
                 if QsoDate >= eligible_dates['prefix']:
                     # Split callsign by "/" and process each segment (Xojo logic)
                     call_segments = QsoCallSign.split('/')
-                    
+
                     for pfx_call in call_segments:
                         # GetSKCCFromCall(pfx_call, mbr_skcc_nr) logic from Xojo
                         # Returns mbr_skcc_nr if pfx_call is found in member database, else empty string
                         pfx_skcc_nr = ""  # Default to empty string like Xojo
-                        
+
                         # Check if this segment exists in the member database
                         if pfx_call in cSKCC.members:
                             # Segment found in database - return the logged SKCC number
                             pfx_skcc_nr = TheirMemberNumber
-                        
+
                         # Xojo only processes if GetSKCCFromCall returned non-empty string
                         if pfx_skcc_nr != "":
                             # Extract prefix using exact Xojo logic from line 493-497
@@ -2016,18 +2024,18 @@ class cQSO:
                                 Prefix = pfx_call[:3]  # First 3 characters
                             else:
                                 Prefix = pfx_call[:2]  # First 2 characters
-                            
+
                             iTheirMemberNumber = int(TheirMemberNumber)
-                            
+
                             # Update if this is a new prefix or higher SKCC number (line 499-503)
                             if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
                                 # Use the name from the segment's member data if found
                                 seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
                                 cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name)
-                            
+
                             break  # Only process first valid segment (line 510)
 
-                # Process C, T, S in one batch  
+                # Process C, T, S in one batch
                 # For Centurion award: basic validation already done above
                 # Always update (last QSO wins, matching potential reference behavior)
                 cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
@@ -2324,6 +2332,7 @@ class cSKCC:
         tx8_date: str
         s_date: str
         main_call: str
+        mbr_status: str
 
     members:         ClassVar[dict[str, cMemberEntry]] = {}
 
@@ -2552,7 +2561,7 @@ class cSKCC:
         """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
-        url = 'https://www.skccgroup.com/checker'
+        url = 'https://skccgroup.com/checker'
 
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
@@ -2575,7 +2584,7 @@ class cSKCC:
             try:
                 fields = line.split("|")
                 (
-                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country, *_
+                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country, mbr_status, *_
                 ) = fields
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
@@ -2594,6 +2603,7 @@ class cSKCC:
                     'tx8_date'     : cls.normalize_skcc_date(tx8_date),
                     's_date'       : cls.normalize_skcc_date(s_date),
                     'main_call'    : current_call,
+                    'mbr_status'   : mbr_status,
                 }
 
         print(f"Successfully loaded data for {len(cls.members):,} member callsigns")
@@ -2653,7 +2663,7 @@ class cSKCC:
 
         # Simple synchronous calls - no need for threading
         c_date = cUtil.effective(Entry['c_date'])
-        t_date = cUtil.effective(Entry['t_date']) 
+        t_date = cUtil.effective(Entry['t_date'])
         s_date = cUtil.effective(Entry['s_date'])
 
         if s_date:
@@ -2802,7 +2812,7 @@ class cRBN:
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")
                     cls._connected = True
                     retry_count = 0  # Reset retry count on successful connection
-            
+
                     # Authenticate with the RBN server
                     await asyncio.wait_for(reader.readuntil(b"call: "), timeout=10.0)
                     writer.write(f"{callsign}\r\n".encode("ascii"))
@@ -2817,7 +2827,7 @@ class cRBN:
                             if not data:  # EOF received
                                 print("RBN connection closed by server.")
                                 break
-                            
+
                             yield data
 
                         except asyncio.TimeoutError:
