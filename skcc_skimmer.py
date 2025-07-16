@@ -2337,13 +2337,16 @@ class cSKCC:
     members:         ClassVar[dict[str, cMemberEntry]] = {}
 
     centurion_level: ClassVar[dict[str, int]] = {}
+
     tribune_level:   ClassVar[dict[str, int]] = {}
     senator_level:   ClassVar[dict[str, int]] = {}
     was_level:       ClassVar[dict[str, int]] = {}
     was_c_level:     ClassVar[dict[str, int]] = {}
+
     was_t_level:     ClassVar[dict[str, int]] = {}
     was_s_level:     ClassVar[dict[str, int]] = {}
     prefix_level:    ClassVar[dict[str, int]] = {}
+
 
     # Cache for frequently accessed member data
     _member_cache:   ClassVar[dict[str, dict[str, str]]] = {}
@@ -2561,7 +2564,7 @@ class cSKCC:
         """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
-        url = 'https://skccgroup.com/checker'
+        url = 'https://skccgroup.com/skimmer-data.txt'
 
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
@@ -2584,7 +2587,7 @@ class cSKCC:
             try:
                 fields = line.split("|")
                 (
-                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country, mbr_status, *_
+                    number, current_call, name, spc, other_calls, join_date, c_date, t_date, tx8_date, s_date, mbr_status, *_
                 ) = fields
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
@@ -2592,6 +2595,9 @@ class cSKCC:
 
             all_calls = [current_call] + [x.strip() for x in other_calls.split(",")] if other_calls else [current_call]
 
+            # Derive plain number by removing suffix letters from SKCCNR
+            plain_number = re.sub(r'[A-Z]+$', '', number)
+            
             for call in all_calls:
                 cls.members[call] = {
                     'name'         : name,
