@@ -57,9 +57,11 @@
 #
 #       The ADI file is required unless you've specified ADI_FILE in the skcc_skimmer.cfg file.
 #
-#       GoalString: Any or all of: C,T,S,CXN,TXN,SXN,WAS,WAS-C,WAS-T,WAS-S,ALL,K3Y,NONE.
+#       GoalString: Any or all of: C,T,S,WAS,WAS-C,WAS-T,WAS-S,ALL,K3Y,NONE.
+#                   (CXN,TXN,SXN are deprecated - use C,T,S instead)
 #
-#       TargetString: Any or all of: C,T,S,CXN,TXN,SXN,ALL,NONE.
+#       TargetString: Any or all of: C,T,S,ALL,NONE.
+#                     (CXN,TXN,SXN are deprecated - use C,T,S instead)
 #
 #         (You must specify at least one GOAL or TARGET.)
 #
@@ -610,11 +612,15 @@ class cConfig:
             case ['ALL']: return ALL
             case ['NONE']: return []
             case items:
-                # Add implied dependencies
-                for x in ['CXN', 'TXN', 'SXN']:
-                    base = x[0]
-                    if x in items and base not in items:
-                        items.append(base)
+                # Handle deprecation warnings and convert CXN/TXN/SXN to C/T/S
+                deprecated_mappings = {'CXN': 'C', 'TXN': 'T', 'SXN': 'S'}
+                for deprecated, replacement in deprecated_mappings.items():
+                    if deprecated in items:
+                        print(f"WARNING: '{deprecated}' is deprecated. Use '{replacement}' instead.")
+                        print(f"         The system will automatically handle both initial awards and multipliers.")
+                        items.remove(deprecated)
+                        if replacement not in items:
+                            items.append(replacement)
 
                 # Check for invalid items
                 invalid = [x for x in items if x not in ALL]
@@ -1694,26 +1700,35 @@ class cQSO:
             if (fFrequency and cSKCC.is_on_warc_frequency(fFrequency)) or not cSKCC.is_during_sprint(cFastDateTime.now_gmt()):
                 GoalHitList.append('BRAG')
 
-        if 'C' in cConfig.GOALS and not cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
-            GoalHitList.append('C')
+        # C award processing - handles both initial C and multipliers intelligently
+        if 'C' in cConfig.GOALS and TheirMemberNumber not in cls.ContactsForC:
+            if not cls.MyC_Date:
+                # Working toward initial C award
+                GoalHitList.append('C')
+            else:
+                # Already have C, working toward multipliers
+                _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
+                GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
 
-        if 'CXN' in cConfig.GOALS and cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
-            _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
-            GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
+        # T award processing - handles both initial T and multipliers intelligently  
+        if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
+            if not cls.MyT_Date:
+                # Working toward initial T award
+                GoalHitList.append('T')
+            else:
+                # Already have T, working toward multipliers
+                _, X_Factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
+                GoalHitList.append(cUtil.abbreviate_class('T', X_Factor))
 
-        if 'T' in cConfig.GOALS and cls.MyC_Date and not cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            GoalHitList.append('T')
-
-        if 'TXN' in cConfig.GOALS and cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            _, X_Factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
-            GoalHitList.append(cUtil.abbreviate_class('T', X_Factor))
-
-        if 'S' in cConfig.GOALS and cls.MyTX8_Date and not cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            GoalHitList.append('S')
-
-        if 'SXN' in cConfig.GOALS and cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            _, X_Factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
-            GoalHitList.append(cUtil.abbreviate_class('S', X_Factor))
+        # S award processing - handles both initial S and multipliers intelligently
+        if 'S' in cConfig.GOALS and cls.MyTX8_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
+            if not cls.MyS_Date:
+                # Working toward initial S award
+                GoalHitList.append('S')
+            else:
+                # Already have S, working toward multipliers
+                _, X_Factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
+                GoalHitList.append(cUtil.abbreviate_class('S', X_Factor))
 
         if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
             GoalHitList.append('WAS')
@@ -1759,60 +1774,65 @@ class cQSO:
 
         TargetHitList: list[str] = []
 
-        if 'C' in cConfig.TARGETS and not TheirC_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('C')
-
-        if 'CXN' in cConfig.TARGETS and TheirC_Date:
-            NextLevel = cSKCC.centurion_level[TheirMemberNumber] + 1
-
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+        # C target processing - handles both initial C and multipliers intelligently
+        if 'C' in cConfig.TARGETS:
+            if not TheirC_Date:
+                # They're working toward initial C award
+                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
                     qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
                     for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Cx{NextLevel}')
+                ):
+                    TargetHitList.append('C')
+            else:
+                # They already have C, working toward multipliers
+                NextLevel = cSKCC.centurion_level[TheirMemberNumber] + 1
+                if NextLevel <= 10 and (
+                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                        qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
+                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
+                    )
+                ):
+                    TargetHitList.append(f'Cx{NextLevel}')
 
-
-        if 'T' in cConfig.TARGETS and TheirC_Date and not TheirT_Date and cls.MyC_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('T')
-
-        if 'TXN' in cConfig.TARGETS and TheirT_Date and cls.MyC_Date:
-            NextLevel = cSKCC.tribune_level[TheirMemberNumber] + 1
-
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+        # T target processing - handles both initial T and multipliers intelligently
+        if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
+            if not TheirT_Date:
+                # They're working toward initial T award
+                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
                     qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
                     for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Tx{NextLevel}')
+                ):
+                    TargetHitList.append('T')
+            else:
+                # They already have T, working toward multipliers
+                NextLevel = cSKCC.tribune_level[TheirMemberNumber] + 1
+                if NextLevel <= 10 and (
+                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                        qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
+                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
+                    )
+                ):
+                    TargetHitList.append(f'Tx{NextLevel}')
 
-        if 'S' in cConfig.TARGETS and TheirTX8_Date and not TheirS_Date and cls.MyT_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('S')
-
-        if 'SXN' in cConfig.TARGETS and TheirS_Date and cls.MyT_Date:
-            NextLevel = cSKCC.senator_level[TheirMemberNumber] + 1
-
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+        # S target processing - handles both initial S and multipliers intelligently
+        if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
+            if not TheirS_Date:
+                # They're working toward initial S award
+                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
                     qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
                     for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Sx{NextLevel}')
+                ):
+                    TargetHitList.append('S')
+            else:
+                # They already have S, working toward multipliers
+                NextLevel = cSKCC.senator_level[TheirMemberNumber] + 1
+                if NextLevel <= 10 and (
+                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
+                        qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
+                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
+                    )
+                ):
+                    TargetHitList.append(f'Sx{NextLevel}')
 
         return TargetHitList
 
