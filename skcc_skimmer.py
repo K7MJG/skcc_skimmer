@@ -57,7 +57,7 @@
 #
 #       The ADI file is required unless you've specified ADI_FILE in the skcc_skimmer.cfg file.
 #
-#       GoalString: Any or all of: C,T,S,WAS,WAS-C,WAS-T,WAS-S,ALL,K3Y,NONE.
+#       GoalString: Any or all of: C,T,S,WAS,WAS-C,WAS-T,WAS-S,P,BRAG,K3Y,ALL,NONE.
 #                   (CXN,TXN,SXN are deprecated - use C,T,S instead)
 #
 #       TargetString: Any or all of: C,T,S,ALL,NONE.
