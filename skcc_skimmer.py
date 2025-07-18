@@ -604,8 +604,8 @@ class cConfig:
 
     @staticmethod
     def parse_goals(String: str, ALL_str: str, Type: str) -> list[str]:
-        ALL    = ALL_str.split()
-        parsed = cUtil.split(String.upper())
+        ALL: list[str] = ALL_str.split()
+        parsed: list[str] = cUtil.split(String.upper())
 
         # Using pattern matching simplifies the logic
         match parsed:
@@ -622,13 +622,44 @@ class cConfig:
                         if replacement not in items:
                             items.append(replacement)
 
-                # Check for invalid items
-                invalid = [x for x in items if x not in ALL]
-                if invalid:
-                    print(f"Unrecognized {Type} '{invalid[0]}'.")
+                # Handle negation syntax (e.g., ALL,-BRAG)
+                # Negation only applies when ALL is specified
+                result: list[str] = []
+                negated: list[str] = []
+                has_all: bool = False
+
+                for item in items:
+                    if item.startswith('-'):
+                        # Remove the '-' prefix and add to negated list
+                        negated_item: str = item[1:]
+                        if negated_item in ALL:
+                            negated.append(negated_item)
+                        else:
+                            print(f"Unrecognized {Type} '{item}' (negated item '{negated_item}' not found).")
+                            sys.exit()
+                    else:
+                        # Regular item
+                        if item == 'ALL':
+                            has_all = True
+                            result.extend(ALL)
+                        elif item in ALL:
+                            result.append(item)
+                        else:
+                            print(f"Unrecognized {Type} '{item}'.")
+                            sys.exit()
+
+                # Check if negation was used without ALL
+                if negated and not has_all:
+                    print(f"Negation syntax (e.g., '-BRAG') can only be used with 'ALL'. Example: 'ALL,-BRAG'")
                     sys.exit()
 
-                return items
+                # Remove duplicates and apply negations
+                result = list(set(result))  # Remove duplicates
+                for negated_item in negated:
+                    if negated_item in result:
+                        result.remove(negated_item)
+
+                return result
 
 class cFastDateTime:
     FastDateTime: str
@@ -1685,7 +1716,7 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
-        
+
         # Don't spot inactive members
         if TheirMemberEntry.get('mbr_status') == 'IA':
             return []
@@ -1710,7 +1741,7 @@ class cQSO:
                 _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
                 GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
 
-        # T award processing - handles both initial T and multipliers intelligently  
+        # T award processing - handles both initial T and multipliers intelligently
         if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
             if not cls.MyT_Date:
                 # Working toward initial T award
@@ -1761,7 +1792,7 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
-        
+
         # Don't spot inactive members
         if TheirMemberEntry.get('mbr_status') == 'IA':
             return []
@@ -2412,8 +2443,11 @@ class cSKCC:
                 cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php')
             ]
 
-            async with asyncio.timeout(30):  # 30 second timeout
-                results = await asyncio.gather(*tasks)
+            try:
+                results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+            except asyncio.TimeoutError:
+                print("Timeout loading rosters")
+                return
 
             # Unpack results
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
@@ -2617,7 +2651,7 @@ class cSKCC:
 
             # Derive plain number by removing suffix letters from SKCCNR
             plain_number = re.sub(r'[A-Z]+$', '', number)
-            
+
             for call in all_calls:
                 cls.members[call] = {
                     'name'         : name,
@@ -3045,13 +3079,19 @@ async def main_loop() -> None:
     print()
 
     try:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(cQSO.watch_logfile_task())
-            tg.create_task(cSPOTS.handle_spots_task())
-            if cConfig.PROGRESS_DOTS.ENABLED:
-                tg.create_task(cRBN.write_dots_task())
-            if cConfig.SKED.ENABLED:
-                tg.create_task(cSked.sked_page_scraper_task_async())
+        # Create tasks for concurrent execution
+        tasks: list[asyncio.Task[None]] = [
+            asyncio.create_task(cQSO.watch_logfile_task()),
+            asyncio.create_task(cSPOTS.handle_spots_task()),
+        ]
+
+        if cConfig.PROGRESS_DOTS.ENABLED:
+            tasks.append(asyncio.create_task(cRBN.write_dots_task()))
+        if cConfig.SKED.ENABLED:
+            tasks.append(asyncio.create_task(cSked.sked_page_scraper_task_async()))
+
+        # Run all tasks concurrently
+        await asyncio.gather(*tasks)
     except (KeyboardInterrupt, asyncio.CancelledError):
         return
     except Exception:
