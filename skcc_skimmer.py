@@ -371,7 +371,7 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.configFile:
-            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
+            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP', 'goal')
 
         if 'TARGETS' in cls.configFile:
             cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
@@ -443,7 +443,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y", "goal")
+            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP", "goal")
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -1124,14 +1124,45 @@ class cQSO:
     ContactsForWAS_S: dict[str, tuple[str, str, str]]
     ContactsForP:     dict[str, tuple[str, str, int, str]]
     ContactsForK3Y:   dict[str, dict[int, str]]
+    ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str]]
+    QSOs: list[tuple[str, str, str, float, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
+
+    @classmethod
+    def _frequency_to_band(cls, frequency_khz: float) -> str | None:
+        """Convert frequency in kHz to band name for QRP award calculations."""
+        if 1800 <= frequency_khz <= 2000:
+            return "160m"
+        elif 3500 <= frequency_khz <= 4000:
+            return "80m"
+        elif 5330.5 <= frequency_khz <= 5403.5:
+            return "60m"
+        elif 7000 <= frequency_khz <= 7300:
+            return "40m"
+        elif 10100 <= frequency_khz <= 10150:
+            return "30m"
+        elif 14000 <= frequency_khz <= 14350:
+            return "20m"
+        elif 18068 <= frequency_khz <= 18168:
+            return "17m"
+        elif 21000 <= frequency_khz <= 21450:
+            return "15m"
+        elif 24890 <= frequency_khz <= 24990:
+            return "12m"
+        elif 28000 <= frequency_khz <= 29700:
+            return "10m"
+        elif 50000 <= frequency_khz <= 50100:
+            return "6m"
+        elif 144000 <= frequency_khz <= 148000:
+            return "2m"
+        else:
+            return None
 
     @classmethod
     def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
@@ -1178,6 +1209,7 @@ class cQSO:
         cls.ContactsForWAS_S   = {}
         cls.ContactsForP       = {}
         cls.ContactsForK3Y     = {}
+        cls.ContactsForQRP     = {}
         cls.QSOsByMemberNumber = {}
 
         await cls.read_qsos_async()
@@ -1572,7 +1604,9 @@ class cQSO:
                         record.get('STATE', ''),
                         fFrequency,
                         record.get('COMMENT', ''),
-                        skcc_number  # Add cleaned SKCC number
+                        skcc_number,  # Add cleaned SKCC number
+                        record.get('TX_PWR', ''),  # Transmit power
+                        record.get('RX_PWR', '')   # Receive power
                     ))
 
         except Exception as e:
@@ -1584,7 +1618,7 @@ class cQSO:
 
         # Process and map QSOs by member number with batched operations
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1599,6 +1633,110 @@ class cQSO:
     def calc_prefix_points(cls) -> int:
         return sum(value[2] for value in cls.ContactsForP.values())
 
+
+    @classmethod
+    def print_qrp_awards_progress(cls) -> None:
+        """Print QRP award progress in the main awards progress section."""
+        if not cls.ContactsForQRP:
+            print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
+            return
+
+        # QRP point values by band
+        band_points: dict[str, float] = {
+            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
+            "6m": 0.5, "2m": 0.5
+        }
+
+        # Calculate points for ALL QRP contacts (both 1x and 2x count toward 1xQRP)
+        points_all: float = 0.0
+        points_2x_only: float = 0.0
+        count_all: int = 0
+        count_2x_only: int = 0
+
+        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
+            # Extract band from key format: "member_band_date"
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 3:
+                band: str = key_parts[1]
+            else:
+                band = ""
+            points: float = band_points.get(band, 0.0)
+            
+            # All QRP contacts count toward 1xQRP
+            points_all += points
+            count_all += 1
+            
+            # Only 2xQRP contacts count toward 2xQRP
+            if qrp_type == 2:
+                points_2x_only += points
+                count_2x_only += 1
+
+        # Display progress in awards progress format
+        # For 1xQRP: Show ALL QRP contacts (matching gold standard)
+        if count_all > 0:
+            remaining_1x: float = max(0.0, 300.0 - points_all)
+            if points_all >= 300.0:
+                print(f'QRP 1x: Have {count_all} contacts ({points_all:.1f} points) which qualifies for 1xQRP award.')
+            else:
+                print(f'QRP 1x: Have {count_all} contacts ({points_all:.1f} points). 1xQRP requires 300 points ({remaining_1x:.1f} more)')
+        
+        # For 2xQRP: Show only 2xQRP contacts
+        if count_2x_only > 0:
+            remaining_2x: float = max(0.0, 150.0 - points_2x_only)
+            if points_2x_only >= 150.0:
+                print(f'QRP 2x: Have {count_2x_only} contacts ({points_2x_only:.1f} points) which qualifies for 2xQRP award.')
+            else:
+                print(f'QRP 2x: Have {count_2x_only} contacts ({points_2x_only:.1f} points). 2xQRP requires 150 points ({remaining_2x:.1f} more)')
+        
+        # If we have no qualifying contacts, show what's needed
+        if count_all == 0:
+            print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
+
+    @classmethod
+    def print_qrp_progress(cls) -> None:
+        """Print QRP award progress."""
+        if not cls.ContactsForQRP:
+            print('QRP: No qualifying contacts found (TX power must be <= 5W)')
+            return
+
+        # QRP point values by band
+        band_points: dict[str, float] = {
+            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
+            "6m": 0.5, "2m": 0.5
+        }
+
+        # Calculate points for each QRP type
+        points_1x: float = 0.0
+        points_2x: float = 0.0
+        count_1x: int = 0
+        count_2x: int = 0
+
+        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
+            # Extract band from key format: "member_band_date"
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 3:
+                band: str = key_parts[1]
+            else:
+                band = ""
+            points: float = band_points.get(band, 0.0)
+            
+            if qrp_type == 1:
+                points_1x += points
+                count_1x += 1
+            else:
+                points_2x += points
+                count_2x += 1
+
+        # Display progress
+        if count_1x > 0:
+            progress_1x: float = (points_1x / 300.0) * 100.0
+            print(f'QRP 1x: {count_1x} contacts, {points_1x:.1f} points ({progress_1x:.1f}% of 300 required)')
+        
+        if count_2x > 0:
+            progress_2x: float = (points_2x / 150.0) * 100.0
+            print(f'QRP 2x: {count_2x} contacts, {points_2x:.1f} points ({progress_2x:.1f}% of 150 required)')
 
     @classmethod
     def print_progress(cls) -> None:
@@ -1677,6 +1815,9 @@ class cQSO:
             print_remaining('S', len(cls.ContactsForS))
 
         print_remaining('P', cls.calc_prefix_points())
+
+        if 'QRP' in cConfig.GOALS:
+            cls.print_qrp_awards_progress()
 
         def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
@@ -1898,7 +2039,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2002,7 +2143,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr = Contact
 
 
             # Skip invalid callsigns
@@ -2118,6 +2259,32 @@ class cQSO:
                             if QsoSPC not in cls.ContactsForWAS_S:
                                 cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
+                # Process QRP contacts if QRP is a goal
+                if 'QRP' in cConfig.GOALS and QsoTxPwr and QsoFreq > 0:
+                    # Parse power - ensure it's numeric and <= 5 watts
+                    try:
+                        tx_power = float(QsoTxPwr.strip())
+                        if tx_power <= 5.0:
+                            # Determine QRP type: 1xQRP (TX only) or 2xQRP (TX + RX)
+                            qrp_type = 1  # Default to 1xQRP
+                            if QsoRxPwr and QsoRxPwr.strip():
+                                try:
+                                    rx_power = float(QsoRxPwr.strip())
+                                    if rx_power <= 5.0:
+                                        qrp_type = 2  # 2xQRP: both TX and RX <= 5W
+                                except (ValueError, TypeError):
+                                    pass  # Keep as 1xQRP if RX power is invalid
+                            
+                            # Determine band from frequency
+                            band = cls._frequency_to_band(QsoFreq)
+                            if band:
+                                # Use unique key for each QRP contact - QRP allows multiple contacts per member/band
+                                qrp_key = f"{TheirMemberNumber}_{band}_{QsoDate}"
+                                if qrp_key not in cls.ContactsForQRP:
+                                    cls.ContactsForQRP[qrp_key] = (QsoDate, TheirMemberNumber, MainCallSign, qrp_type)
+                    except (ValueError, TypeError):
+                        pass  # Skip invalid power values
+
         # Generate output files
         QSOs_Dir = 'QSOs'
         if not await aiofiles.os.path.exists(QSOs_Dir):
@@ -2132,11 +2299,78 @@ class cQSO:
         await cls.award_was_async('WAS-T', cls.ContactsForWAS_T)
         await cls.award_was_async('WAS-S', cls.ContactsForWAS_S)
         await cls.award_p_async(cls.ContactsForP)
+        await cls.award_qrp_async(cls.ContactsForQRP)
         await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
         if 'K3Y' in cConfig.GOALS:
             cls.print_k3y_contacts()
+
+    @classmethod
+    async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
+        """Generate QRP award files with point calculations."""
+        import aiofiles
+
+        if not QSOs:
+            return
+
+        # QRP point values by band
+        band_points: dict[str, float] = {
+            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
+            "6m": 0.5, "2m": 0.5
+        }
+
+        # Separate contacts by QRP type
+        qrp_1x_contacts: list[tuple[str, str, str, str, float]] = []
+        qrp_2x_contacts: list[tuple[str, str, str, str, float]] = []
+        
+        for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
+            # Extract band from the key (format: "member_band_date")
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 3:
+                band: str = key_parts[1]
+            else:
+                band = ""
+            points: float = band_points.get(band, 0.0)
+            
+            contact_data: tuple[str, str, str, str, float] = (qso_date, member_number, callsign, band, points)
+            if qrp_type == 1:
+                qrp_1x_contacts.append(contact_data)
+            else:
+                qrp_2x_contacts.append(contact_data)
+
+        # Write 1xQRP file
+        if qrp_1x_contacts:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-1x.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"1xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                
+                total_points: float = 0.0
+                for index, (qso_date, member_number, callsign, band, points) in enumerate(
+                    sorted(qrp_1x_contacts, key=lambda x: x[0]), start=1
+                ):
+                    total_points += points
+                    await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                
+                await file.write(f"\nTotal Points: {total_points:.1f} (Need: 300)\n")
+                await file.write(f"Progress: {total_points/300.0*100.0:.1f}%\n")
+
+        # Write 2xQRP file
+        if qrp_2x_contacts:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-2x.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"2xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                
+                total_points: float = 0.0
+                for index, (qso_date, member_number, callsign, band, points) in enumerate(
+                    sorted(qrp_2x_contacts, key=lambda x: x[0]), start=1
+                ):
+                    total_points += points
+                    await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                
+                await file.write(f"\nTotal Points: {total_points:.1f} (Need: 150)\n")
+                await file.write(f"Progress: {total_points/150.0*100.0:.1f}%\n")
 
     @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
