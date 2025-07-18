@@ -100,6 +100,12 @@ import platform
 RBN_SERVER = 'telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
+# URL constants
+SKED_STATUS_URL = 'http://sked.skccgroup.com/get-status.php'
+RBN_STATUS_URL = 'https://reversebeacon.net/cont_includes/status.php?t=skt'
+SKCC_DATA_URL = 'https://skccgroup.com/skimmer-data.txt'
+SKCC_BASE_URL = 'https://www.skccgroup.com/'
+
 # Global state for progress dot display
 _progress_dot_count: int = 0
 
@@ -903,7 +909,7 @@ class cSked:
         """Async version of display_logins."""
         try:
             async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
-                async with session.get('http://sked.skccgroup.com/get-status.php') as response:
+                async with session.get(SKED_STATUS_URL) as response:
                     if response.status != 200:
                         return
 
@@ -1985,6 +1991,43 @@ class cQSO:
 
 
     @classmethod
+    def _check_cts_goal(cls, award_type: str, member_number: str, contacts_dict: dict[str, Any],
+                        my_award_date: str) -> str | None:
+        """Helper method to check C/T/S award goals - reduces code duplication."""
+        if member_number not in contacts_dict:
+            if not my_award_date:
+                # Working toward initial award
+                return award_type
+            else:
+                # Already have award, working toward multipliers
+                _, x_factor = cQSO.calculate_numerics(award_type, len(contacts_dict))
+                return cUtil.abbreviate_class(award_type, x_factor)
+        return None
+    
+    @classmethod
+    def _check_cts_target(cls, award_type: str, member_number: str, their_award_date: str,
+                          level_dict: dict[str, int], date1: str, date2: str) -> str | None:
+        """Helper method to check C/T/S target awards - reduces code duplication."""
+        if not their_award_date:
+            # They're working toward initial award
+            if member_number not in cls.QSOsByMemberNumber or all(
+                qso_date <= date1 or qso_date <= date2
+                for qso_date in cls.QSOsByMemberNumber[member_number]
+            ):
+                return award_type
+        else:
+            # They already have award, working toward multipliers
+            next_level = level_dict[member_number] + 1
+            if next_level <= 10 and (
+                member_number not in cls.QSOsByMemberNumber or all(
+                    qso_date <= date1 or qso_date <= date2
+                    for qso_date in cls.QSOsByMemberNumber[member_number]
+                )
+            ):
+                return f'{award_type}x{next_level}'
+        return None
+
+    @classmethod
     def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
         if TheirCallSign not in cSKCC.members or TheirCallSign == cConfig.MY_CALLSIGN:
             return []
@@ -2006,34 +2049,22 @@ class cQSO:
                 GoalHitList.append('BRAG')
 
         # C award processing - handles both initial C and multipliers intelligently
-        if 'C' in cConfig.GOALS and TheirMemberNumber not in cls.ContactsForC:
-            if not cls.MyC_Date:
-                # Working toward initial C award
-                GoalHitList.append('C')
-            else:
-                # Already have C, working toward multipliers
-                _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
-                GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
+        if 'C' in cConfig.GOALS:
+            result = cls._check_cts_goal('C', TheirMemberNumber, cls.ContactsForC, cls.MyC_Date)
+            if result:
+                GoalHitList.append(result)
 
         # T award processing - handles both initial T and multipliers intelligently
-        if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            if not cls.MyT_Date:
-                # Working toward initial T award
-                GoalHitList.append('T')
-            else:
-                # Already have T, working toward multipliers
-                _, X_Factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
-                GoalHitList.append(cUtil.abbreviate_class('T', X_Factor))
+        if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date:
+            result = cls._check_cts_goal('T', TheirMemberNumber, cls.ContactsForT, cls.MyT_Date)
+            if result:
+                GoalHitList.append(result)
 
         # S award processing - handles both initial S and multipliers intelligently
-        if 'S' in cConfig.GOALS and cls.MyTX8_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            if not cls.MyS_Date:
-                # Working toward initial S award
-                GoalHitList.append('S')
-            else:
-                # Already have S, working toward multipliers
-                _, X_Factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
-                GoalHitList.append(cUtil.abbreviate_class('S', X_Factor))
+        if 'S' in cConfig.GOALS and cls.MyTX8_Date and TheirT_Date:
+            result = cls._check_cts_goal('S', TheirMemberNumber, cls.ContactsForS, cls.MyS_Date)
+            if result:
+                GoalHitList.append(result)
 
         if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
             GoalHitList.append('WAS')
@@ -2095,63 +2126,24 @@ class cQSO:
 
         # C target processing - handles both initial C and multipliers intelligently
         if 'C' in cConfig.TARGETS:
-            if not TheirC_Date:
-                # They're working toward initial C award
-                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                ):
-                    TargetHitList.append('C')
-            else:
-                # They already have C, working toward multipliers
-                NextLevel = cSKCC.centurion_level[TheirMemberNumber] + 1
-                if NextLevel <= 10 and (
-                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                        qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
-                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                    )
-                ):
-                    TargetHitList.append(f'Cx{NextLevel}')
+            result = cls._check_cts_target('C', TheirMemberNumber, TheirC_Date, 
+                                         cSKCC.centurion_level, TheirJoin_Date, cls.MyJoin_Date)
+            if result:
+                TargetHitList.append(result)
 
         # T target processing - handles both initial T and multipliers intelligently
         if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
-            if not TheirT_Date:
-                # They're working toward initial T award
-                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                ):
-                    TargetHitList.append('T')
-            else:
-                # They already have T, working toward multipliers
-                NextLevel = cSKCC.tribune_level[TheirMemberNumber] + 1
-                if NextLevel <= 10 and (
-                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                        qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
-                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                    )
-                ):
-                    TargetHitList.append(f'Tx{NextLevel}')
+            result = cls._check_cts_target('T', TheirMemberNumber, TheirT_Date,
+                                         cSKCC.tribune_level, TheirC_Date, cls.MyC_Date)
+            if result:
+                TargetHitList.append(result)
 
         # S target processing - handles both initial S and multipliers intelligently
         if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
-            if not TheirS_Date:
-                # They're working toward initial S award
-                if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                ):
-                    TargetHitList.append('S')
-            else:
-                # They already have S, working toward multipliers
-                NextLevel = cSKCC.senator_level[TheirMemberNumber] + 1
-                if NextLevel <= 10 and (
-                    TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                        qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
-                        for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                    )
-                ):
-                    TargetHitList.append(f'Sx{NextLevel}')
+            result = cls._check_cts_target('S', TheirMemberNumber, TheirS_Date,
+                                         cSKCC.senator_level, TheirTX8_Date, cls.MyT_Date)
+            if result:
+                TargetHitList.append(result)
 
         return TargetHitList
 
@@ -2498,9 +2490,7 @@ class cQSO:
                 await file.write("DXCC  Date        CallSign     Member#\n")
                 await file.write("-" * 40 + "\n")
                 
-                for index, (dxcc_code, (qso_date, member_number, callsign)) in enumerate(
-                    sorted(cls.ContactsForDXC.items()), start=1
-                ):
+                for dxcc_code, (qso_date, member_number, callsign) in sorted(cls.ContactsForDXC.items()):
                     date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                     await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
                 
@@ -2515,9 +2505,7 @@ class cQSO:
                 await file.write("Date        CallSign     Member#\n")
                 await file.write("-" * 35 + "\n")
                 
-                for index, (member_number, (qso_date, _, callsign)) in enumerate(
-                    sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]), start=1
-                ):
+                for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]):
                     date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                     await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
                 
@@ -2769,7 +2757,7 @@ class cSpotters:
         try:
             # Use aiohttp instead of requests for async HTTP
             async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
-                async with session.get('https://reversebeacon.net/cont_includes/status.php?t=skt') as response:
+                async with session.get(RBN_STATUS_URL) as response:
                     if response.status != 200:
                         print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
                         sys.exit()
@@ -3017,7 +3005,7 @@ class cSKCC:
         try:
             # Use aiohttp instead of requests for async HTTP
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+                async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving award info: HTTP {response.status}")
                         return {}
@@ -3057,7 +3045,7 @@ class cSKCC:
         try:
             # Use aiohttp instead of requests for async HTTP
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+                async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving {Name} roster: HTTP {response.status}")
                         return {}
@@ -3089,7 +3077,7 @@ class cSKCC:
         """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
-        url = 'https://skccgroup.com/skimmer-data.txt'
+        url = SKCC_DATA_URL
 
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
