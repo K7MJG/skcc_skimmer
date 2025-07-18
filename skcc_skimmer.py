@@ -371,7 +371,7 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.configFile:
-            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP', 'goal')
+            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal')
 
         if 'TARGETS' in cls.configFile:
             cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
@@ -443,7 +443,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP", "goal")
+            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal")
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -1125,12 +1125,15 @@ class cQSO:
     ContactsForP:     dict[str, tuple[str, str, int, str]]
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
+    ContactsForDXC:   dict[str, tuple[str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call)
+    ContactsForDXQ:   dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call)
+    DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1210,6 +1213,9 @@ class cQSO:
         cls.ContactsForP       = {}
         cls.ContactsForK3Y     = {}
         cls.ContactsForQRP     = {}
+        cls.ContactsForDXC     = {}
+        cls.ContactsForDXQ     = {}
+        cls.DXC_HomeCountryUsed = False
         cls.QSOsByMemberNumber = {}
 
         await cls.read_qsos_async()
@@ -1396,6 +1402,72 @@ class cQSO:
                     print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}')
             elif P_Level >= 1:
                 print(f'FYI: You qualify for Px{P_Level} but have not yet applied for it.')
+        
+        ### DX ###
+        if 'DX' in cConfig.GOALS:
+            # DXC
+            DXC_count = len(cls.ContactsForDXC)
+            if DXC_count >= 100:
+                DXC_Level = DXC_count // 100
+                if cls.MyMemberNumber in cSKCC.dxc_level:
+                    Award_DXC_Level = cSKCC.dxc_level[cls.MyMemberNumber]
+                    if DXC_Level > Award_DXC_Level:
+                        print(f'FYI: You qualify for DXCx{DXC_Level} but have only applied for DXCx{Award_DXC_Level}')
+                else:
+                    print(f'FYI: You qualify for DXCx{DXC_Level} but have not yet applied for it.')
+            
+            # DXQ
+            DXQ_count = len(cls.ContactsForDXQ)
+            if DXQ_count >= 100:
+                DXQ_Level = DXQ_count // 100
+                if cls.MyMemberNumber in cSKCC.dxq_level:
+                    Award_DXQ_Level = cSKCC.dxq_level[cls.MyMemberNumber]
+                    if DXQ_Level > Award_DXQ_Level:
+                        print(f'FYI: You qualify for DXQx{DXQ_Level} but have only applied for DXQx{Award_DXQ_Level}')
+                else:
+                    print(f'FYI: You qualify for DXQx{DXQ_Level} but have not yet applied for it.')
+        
+        ### QRP ###
+        if 'QRP' in cConfig.GOALS:
+            # Calculate QRP points
+            band_points = {
+                "160m": 5.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+                "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 2.0, "10m": 2.0,
+                "6m": 3.0, "2m": 0.5
+            }
+            
+            # Calculate points for 1xQRP (all contacts) and 2xQRP (only 2x contacts)
+            points_1x = 0.0
+            points_2x = 0.0
+            
+            for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
+                key_parts = qso_key.split('_')
+                if len(key_parts) >= 3:
+                    band = key_parts[1]
+                    points = band_points.get(band, 0.0)
+                    points_1x += points  # All contacts count for 1xQRP
+                    if qrp_type == 2:
+                        points_2x += points  # Only 2xQRP contacts count for 2xQRP
+            
+            # Check 1xQRP
+            if points_1x >= 300:
+                QRP_1x_Level = int(points_1x // 300)
+                if cls.MyMemberNumber in cSKCC.qrp_1x_level:
+                    Award_QRP_1x_Level = cSKCC.qrp_1x_level[cls.MyMemberNumber]
+                    if QRP_1x_Level > Award_QRP_1x_Level:
+                        print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have only applied for 1xQRP x{Award_QRP_1x_Level}')
+                else:
+                    print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have not yet applied for it.')
+            
+            # Check 2xQRP
+            if points_2x >= 150:
+                QRP_2x_Level = int(points_2x // 150)
+                if cls.MyMemberNumber in cSKCC.qrp_2x_level:
+                    Award_QRP_2x_Level = cSKCC.qrp_2x_level[cls.MyMemberNumber]
+                    if QRP_2x_Level > Award_QRP_2x_Level:
+                        print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have only applied for 2xQRP x{Award_QRP_2x_Level}')
+                else:
+                    print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have not yet applied for it.')
 
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
@@ -1606,7 +1678,8 @@ class cQSO:
                         record.get('COMMENT', ''),
                         skcc_number,  # Add cleaned SKCC number
                         record.get('TX_PWR', ''),  # Transmit power
-                        record.get('RX_PWR', '')   # Receive power
+                        record.get('RX_PWR', ''),  # Receive power
+                        record.get('DXCC', '')  # DXCC entity code
                     ))
 
         except Exception as e:
@@ -1618,7 +1691,7 @@ class cQSO:
 
         # Process and map QSOs by member number with batched operations
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1634,6 +1707,55 @@ class cQSO:
         return sum(value[2] for value in cls.ContactsForP.values())
 
 
+    @classmethod
+    def print_dx_awards_progress(cls) -> None:
+        """Print DX award progress in the main awards progress section."""
+        # DXC: Unique countries (100 per level)
+        dxc_count = len(cls.ContactsForDXC)
+        if dxc_count == 0:
+            print('DXC: Have 0 countries. Need DXCC codes in ADI file or member data.')
+        else:
+            # Calculate current level and remaining for next level
+            if dxc_count < 100:
+                # Working toward initial DXC
+                remaining = 100 - dxc_count
+                print(f'DXC: Have {dxc_count}. DXC requires 100 ({remaining} more)')
+            else:
+                # Calculate multiplier level
+                current_level = dxc_count // 100
+                next_level = current_level + 1
+                next_target = next_level * 100
+                remaining = next_target - dxc_count
+                
+                if current_level >= 10:
+                    # Max level reached
+                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}.')
+                else:
+                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target:,} ({remaining:,} more)')
+        
+        # DXQ: Unique member QSOs from foreign countries (100 per level)
+        dxq_count = len(cls.ContactsForDXQ)
+        if dxq_count == 0:
+            print('DXQ: Have 0 foreign member QSOs.')
+        else:
+            # Calculate current level and remaining for next level
+            if dxq_count < 100:
+                # Working toward initial DXQ
+                remaining = 100 - dxq_count
+                print(f'DXQ: Have {dxq_count}. DXQ requires 100 ({remaining} more)')
+            else:
+                # Calculate multiplier level
+                current_level = dxq_count // 100
+                next_level = current_level + 1
+                next_target = next_level * 100
+                remaining = next_target - dxq_count
+                
+                if current_level >= 10:
+                    # Max level reached
+                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}.')
+                else:
+                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target:,} ({remaining:,} more)')
+    
     @classmethod
     def print_qrp_awards_progress(cls) -> None:
         """Print QRP award progress in the main awards progress section."""
@@ -1677,21 +1799,29 @@ class cQSO:
         if count_all > 0:
             remaining_1x: float = max(0.0, 300.0 - points_all)
             if points_all >= 300.0:
-                print(f'QRP 1x: Have {count_all} contacts ({points_all:.1f} points) which qualifies for 1xQRP award.')
+                current_level = int(points_all // 300)
+                next_level = current_level + 1
+                next_target = next_level * 300
+                remaining_next = next_target - points_all
+                print(f'QRP 1x: Have {count_all} which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
-                print(f'QRP 1x: Have {count_all} contacts ({points_all:.1f} points). 1xQRP requires 300 points ({remaining_1x:.1f} more)')
+                print(f'QRP 1x: Have {count_all}. 1xQRP requires 300 points ({remaining_1x:.0f} more)')
         
         # For 2xQRP: Show only 2xQRP contacts
         if count_2x_only > 0:
             remaining_2x: float = max(0.0, 150.0 - points_2x_only)
             if points_2x_only >= 150.0:
-                print(f'QRP 2x: Have {count_2x_only} contacts ({points_2x_only:.1f} points) which qualifies for 2xQRP award.')
+                current_level = int(points_2x_only // 150)
+                next_level = current_level + 1
+                next_target = next_level * 150
+                remaining_next = next_target - points_2x_only
+                print(f'QRP 2x: Have {count_2x_only} which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
-                print(f'QRP 2x: Have {count_2x_only} contacts ({points_2x_only:.1f} points). 2xQRP requires 150 points ({remaining_2x:.1f} more)')
+                print(f'QRP 2x: Have {count_2x_only}. 2xQRP requires 150 points ({remaining_2x:.0f} more)')
         
         # If we have no qualifying contacts, show what's needed
         if count_all == 0:
-            print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
+            print('QRP 1x: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
 
     @classmethod
     def print_qrp_progress(cls) -> None:
@@ -1818,6 +1948,9 @@ class cQSO:
 
         if 'QRP' in cConfig.GOALS:
             cls.print_qrp_awards_progress()
+        
+        if 'DX' in cConfig.GOALS:
+            cls.print_dx_awards_progress()
 
         def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
@@ -1830,7 +1963,7 @@ class cQSO:
                 else:
                     Need = f'only need {",".join(RemainingStates)}'
 
-            print(f'Total worked towards {Class}: {len(QSOs)}, {Need}.')
+            print(f'{Class}: Have {len(QSOs)}, {Need}')
 
         if 'WAS' in cConfig.GOALS:
             remaining_states('WAS', cls.ContactsForWAS)
@@ -1924,6 +2057,20 @@ class cQSO:
                     GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact[2]})')
             else:
                 GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(new +{i_their_member_number})')
+        
+        if 'DX' in cConfig.GOALS:
+            # Get DXCC code from member data
+            dxcc_code = TheirMemberEntry.get('dxcode', '').strip()
+            if dxcc_code and dxcc_code.isdigit():
+                home_dxcc = '291'  # TODO: Make configurable
+                
+                # Check DXC (unique countries)
+                if dxcc_code not in cls.ContactsForDXC:
+                    GoalHitList.append('DXC')
+                
+                # Check DXQ (foreign member QSOs)
+                if dxcc_code != home_dxcc and TheirMemberNumber not in cls.ContactsForDXQ:
+                    GoalHitList.append('DXQ')
 
         return GoalHitList
 
@@ -2039,7 +2186,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2143,7 +2290,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC = Contact
 
 
             # Skip invalid callsigns
@@ -2284,6 +2431,39 @@ class cQSO:
                                     cls.ContactsForQRP[qrp_key] = (QsoDate, TheirMemberNumber, MainCallSign, qrp_type)
                     except (ValueError, TypeError):
                         pass  # Skip invalid power values
+                
+                # Process DX contacts if DX is a goal
+                if 'DX' in cConfig.GOALS:
+                    # Get DXCC code - prioritize ADI file DXCC, fallback to member data
+                    dxcc_code = QsoDXCC.strip() if QsoDXCC else ''
+                    if not dxcc_code:
+                        # Try to get from member data
+                        dxcc_code = TheirMemberEntry.get('dxcode', '').strip()
+                    
+                    if dxcc_code and dxcc_code.isdigit():
+                        # Normalize DXCC code by converting to integer to remove leading zeros
+                        dxcc_code = str(int(dxcc_code))
+                        
+                        # Determine home country - assume 291 (USA) for now
+                        # TODO: This should be configurable or derived from MY_CALLSIGN
+                        home_dxcc = '291'
+                        
+                        # DXC: Count unique countries (date >= 20091219, allows one home country contact)
+                        if QsoDate >= '20091219':
+                            if dxcc_code == home_dxcc:
+                                # Home country - only allow one contact
+                                if not cls.DXC_HomeCountryUsed:
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                                    cls.DXC_HomeCountryUsed = True
+                            else:
+                                # Foreign country - count all unique DXCC entities
+                                if dxcc_code not in cls.ContactsForDXC:
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                        
+                        # DXQ: Count unique member QSOs from foreign countries (date >= 20090614, no home country)
+                        if QsoDate >= '20090614' and dxcc_code != home_dxcc:
+                            if TheirMemberNumber not in cls.ContactsForDXQ:
+                                cls.ContactsForDXQ[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
         # Generate output files
         QSOs_Dir = 'QSOs'
@@ -2300,12 +2480,50 @@ class cQSO:
         await cls.award_was_async('WAS-S', cls.ContactsForWAS_S)
         await cls.award_p_async(cls.ContactsForP)
         await cls.award_qrp_async(cls.ContactsForQRP)
+        await cls.award_dx_async()
         await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
         if 'K3Y' in cConfig.GOALS:
             cls.print_k3y_contacts()
 
+    @classmethod
+    async def award_dx_async(cls) -> None:
+        """Write DXC and DXQ award files."""
+        # Write DXC file (unique countries)
+        if cls.ContactsForDXC:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXC.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"DXC Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                await file.write("DXCC  Date        CallSign     Member#\n")
+                await file.write("-" * 40 + "\n")
+                
+                for index, (dxcc_code, (qso_date, member_number, callsign)) in enumerate(
+                    sorted(cls.ContactsForDXC.items()), start=1
+                ):
+                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
+                
+                await file.write(f"\nTotal Countries: {len(cls.ContactsForDXC)} (Need: 100)\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXC)/100.0*100.0:.1f}%\n")
+        
+        # Write DXQ file (foreign member QSOs)
+        if cls.ContactsForDXQ:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXQ.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"DXQ Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                await file.write("Date        CallSign     Member#\n")
+                await file.write("-" * 35 + "\n")
+                
+                for index, (member_number, (qso_date, _, callsign)) in enumerate(
+                    sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]), start=1
+                ):
+                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
+                
+                await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXQ)/100.0*100.0:.1f}%\n")
+    
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
         """Generate QRP award files with point calculations."""
@@ -2611,6 +2829,7 @@ class cSKCC:
         name: str
         plain_number: str
         spc: str
+        dxcode: str
         join_date: str
         c_date: str
         t_date: str
@@ -2631,6 +2850,10 @@ class cSKCC:
     was_t_level:     ClassVar[dict[str, int]] = {}
     was_s_level:     ClassVar[dict[str, int]] = {}
     prefix_level:    ClassVar[dict[str, int]] = {}
+    dxq_level:       ClassVar[dict[str, int]] = {}
+    dxc_level:       ClassVar[dict[str, int]] = {}
+    qrp_1x_level:    ClassVar[dict[str, int]] = {}
+    qrp_2x_level:    ClassVar[dict[str, int]] = {}
 
 
     # Cache for frequently accessed member data
@@ -2674,7 +2897,11 @@ class cSKCC:
                 cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'),
                 cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'),
                 cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'),
-                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php')
+                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php'),
+                cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'),
+                cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'),
+                cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'),
+                cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php')
             ]
 
             try:
@@ -2686,7 +2913,8 @@ class cSKCC:
             # Unpack results
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
             cls.was_level, cls.was_c_level, cls.was_t_level, \
-            cls.was_s_level, cls.prefix_level = results
+            cls.was_s_level, cls.prefix_level, cls.dxq_level, \
+            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level = results
 
             print("Successfully downloaded all award rosters.")
         except asyncio.TimeoutError:
@@ -2841,11 +3069,20 @@ class cSKCC:
         rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
         columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
 
-        return {
-            (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
-            for row in rows[1:]
-            if (cols := columns_regex.findall(row)) and len(cols) >= 2  # Ensure valid row data
-        }
+        # For DX and QRP rosters, use SKCC number (column 2) as key
+        if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x']:
+            return {
+                (cols := columns_regex.findall(row))[2]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
+                for row in rows[1:]
+                if (cols := columns_regex.findall(row)) and len(cols) >= 3  # Ensure valid row data with SKCC number
+            }
+        else:
+            # For other rosters, use callsign (column 1) as key
+            return {
+                (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
+                for row in rows[1:]
+                if (cols := columns_regex.findall(row)) and len(cols) >= 2  # Ensure valid row data
+            }
 
     @classmethod
     async def read_skcc_data_async(cls) -> None | NoReturn:
@@ -2875,7 +3112,7 @@ class cSKCC:
             try:
                 fields = line.split("|")
                 (
-                    number, current_call, name, spc, other_calls, join_date, c_date, t_date, tx8_date, s_date, mbr_status, *_
+                    number, current_call, name, spc, other_calls, dxcode, join_date, c_date, t_date, tx8_date, s_date, mbr_status, *_
                 ) = fields
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
@@ -2891,6 +3128,7 @@ class cSKCC:
                     'name'         : name,
                     'plain_number' : plain_number,
                     'spc'          : spc,
+                    'dxcode'       : dxcode,
                     'join_date'    : cls.normalize_skcc_date(join_date),
                     'c_date'       : cls.normalize_skcc_date(c_date),
                     't_date'       : cls.normalize_skcc_date(t_date),
