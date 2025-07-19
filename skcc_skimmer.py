@@ -765,6 +765,7 @@ class cDisplay:
 
 class cSked:
     _RegEx:          ClassVar[re.Pattern[str]] = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    _Freq_RegEx:     ClassVar[re.Pattern[str]] = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
     _SkedSite:       ClassVar[str | None] = None
 
     _PreviousLogins: ClassVar[dict[str, list[str]]] = {}
@@ -857,7 +858,8 @@ class cSked:
             # K3Y processing logic here...
             K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
             SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
-            Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
+            # Use hoisted regex pattern
+            Freq_RegEx = cls._Freq_RegEx
 
             Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
             if Matches:
@@ -2701,6 +2703,11 @@ class cQSO:
 
 class cSpotters:
     spotters: ClassVar[dict[str, tuple[int, list[int]]]] = {}
+    _columns_regex: ClassVar[re.Pattern[str]] = re.compile(
+        r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
+        r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
+        re.S
+    )
 
     @staticmethod
     def locator_to_latlong(locator: str) -> tuple[float, float]:
@@ -2772,11 +2779,8 @@ class cSpotters:
 
         rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.S)
 
-        columns_regex = re.compile(
-            r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
-            r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
-            re.S
-        )
+        # Use hoisted regex pattern
+        columns_regex = cls._columns_regex
 
         # Process spotters in parallel
         processing_tasks: list[Coroutine[Any, Any, None]]  = []
@@ -2817,6 +2821,8 @@ class cSpotters:
         return Miles
 
 class cSKCC:
+    _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
+    
     class cMemberEntry(TypedDict):
         name: str
         plain_number: str
@@ -3059,7 +3065,8 @@ class cSKCC:
             return {}
 
         rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
-        columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
+        # Use hoisted regex pattern
+        columns_regex = cSKCC._roster_columns_regex
 
         # For DX and QRP rosters, use SKCC number (column 2) as key
         if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x']:
