@@ -110,7 +110,7 @@ class PrefixThresholds:
 
 class cUtil:
     @staticmethod
-    def split(text: str) -> list[str]:
+    def split(text: str, /) -> list[str]:
         return re.split(r'[,\s]+', text.strip())
 
     @staticmethod
@@ -2472,7 +2472,7 @@ class cQSO:
                     await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
                 
                 await file.write(f"\nTotal Countries: {len(cls.ContactsForDXC)} (Need: 100)\n")
-                await file.write(f"Progress: {len(cls.ContactsForDXC)/100.0*100.0:.1f}%\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXC):.1f}%\n")
         
         # Write DXQ file (foreign member QSOs)
         if cls.ContactsForDXQ:
@@ -2487,7 +2487,7 @@ class cQSO:
                     await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
                 
                 await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
-                await file.write(f"Progress: {len(cls.ContactsForDXQ)/100.0*100.0:.1f}%\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXQ):.1f}%\n")
     
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
@@ -2551,7 +2551,7 @@ class cQSO:
                     index += 1
                 
                 await file.write(f"\nTotal Points: {total_points:.1f} (Need: 300)\n")
-                await file.write(f"Progress: {total_points/300.0*100.0:.1f}%\n")
+                await file.write(f"Progress: {total_points/3:.1f}%\n")
 
         # Write 2xQRP file
         qrp_2x_generator = qrp_2x_contacts_generator()
@@ -2577,7 +2577,7 @@ class cQSO:
                     index += 1
                 
                 await file.write(f"\nTotal Points: {total_points:.1f} (Need: 150)\n")
-                await file.write(f"Progress: {total_points/150.0*100.0:.1f}%\n")
+                await file.write(f"Progress: {total_points*2/3:.1f}%\n")
 
     @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
