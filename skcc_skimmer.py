@@ -123,7 +123,7 @@ class cUtil:
 
     @staticmethod
     def stripped(text: str) -> str:
-        return ''.join([c for c in text if 31 < ord(c) < 127])
+        return ''.join(c for c in text if 31 < ord(c) < 127)
 
     @staticmethod
     def beep() -> None:
@@ -784,8 +784,8 @@ class cSked:
             cDisplay.print('=========== ' + Heading + ' Sked Page ' + '=' * (16-len(Heading)))
 
             for CallSign in sorted(SkedHit):
-                GoalList = [hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for")]
-                TargetList = [hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for")]
+                GoalList = list(hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for"))
+                TargetList = list(hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for"))
                 IsFriend = "friend" in SkedHit[CallSign]
 
                 if CallSign in NewLogins:
@@ -2491,7 +2491,7 @@ class cQSO:
     
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
-        """Generate QRP award files with point calculations."""
+        """Generate QRP award files with point calculations using generator-based streaming."""
         import aiofiles
 
         if not QSOs:
@@ -2500,53 +2500,81 @@ class cQSO:
         # QRP point values by band (using hoisted constant)
         band_points = cls._QRP_BAND_POINTS_AWARDS
 
-        # Separate contacts by QRP type
-        qrp_1x_contacts: list[tuple[str, str, str, str, float]] = []
-        qrp_2x_contacts: list[tuple[str, str, str, str, float]] = []
-        
-        for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
-            # Extract band from the key (format: "member_band_date")
-            key_parts = qso_key.split('_')
-            if len(key_parts) >= 3:
-                band: str = key_parts[1]
-            else:
-                band = ""
-            points: float = band_points.get(band, 0.0)
+        def qrp_2x_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
+            """Generator that yields QRP 2x contacts (TX and RX <= 5W), sorted by date."""
+            contacts: list[tuple[str, str, str, str, float]] = []
+            for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
+                if qrp_type == 2:  # QRP 2x: TX power <= 5W AND RX power <= 5W
+                    # Extract band from the key (format: "member_band_date")
+                    key_parts = qso_key.split('_')
+                    band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                    points: float = band_points.get(band, 0.0)
+                    contacts.append((qso_date, member_number, callsign, band, points))
             
-            contact_data: tuple[str, str, str, str, float] = (qso_date, member_number, callsign, band, points)
-            if qrp_type == 1:
-                qrp_1x_contacts.append(contact_data)
-            else:
-                qrp_2x_contacts.append(contact_data)
+            # Sort by date and yield
+            yield from sorted(contacts, key=lambda x: x[0])
 
-        # Write 1xQRP file
-        if qrp_1x_contacts:
+        # Write 1xQRP file (ALL QRP contacts count toward 1xQRP)
+        def all_qrp_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
+            """Generator that yields ALL QRP contacts (both 1x and 2x), sorted by date."""
+            contacts: list[tuple[str, str, str, str, float]] = []
+            for qso_key, (qso_date, member_number, callsign, _) in QSOs.items():
+                # ALL QRP contacts count toward 1xQRP award
+                key_parts = qso_key.split('_')
+                band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                points: float = band_points.get(band, 0.0)
+                contacts.append((qso_date, member_number, callsign, band, points))
+            
+            # Sort by date and yield
+            yield from sorted(contacts, key=lambda x: x[0])
+        
+        qrp_1x_generator = all_qrp_contacts_generator()
+        qrp_1x_first = next(qrp_1x_generator, None)
+        if qrp_1x_first is not None:
             async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-1x.txt', 'w', encoding='utf-8') as file:
                 await file.write(f"1xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
                 await file.write("=" * 50 + "\n\n")
                 
                 total_points: float = 0.0
-                for index, (qso_date, member_number, callsign, band, points) in enumerate(
-                    sorted(qrp_1x_contacts, key=lambda x: x[0]), start=1
-                ):
+                index = 1
+                
+                # Process first contact
+                _, member_number, callsign, band, points = qrp_1x_first
+                total_points += points
+                await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                index += 1
+                
+                # Process remaining contacts from generator
+                for _, member_number, callsign, band, points in qrp_1x_generator:
                     total_points += points
                     await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                    index += 1
                 
                 await file.write(f"\nTotal Points: {total_points:.1f} (Need: 300)\n")
                 await file.write(f"Progress: {total_points/300.0*100.0:.1f}%\n")
 
         # Write 2xQRP file
-        if qrp_2x_contacts:
+        qrp_2x_generator = qrp_2x_contacts_generator()
+        qrp_2x_first = next(qrp_2x_generator, None)
+        if qrp_2x_first is not None:
             async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-2x.txt', 'w', encoding='utf-8') as file:
                 await file.write(f"2xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
                 await file.write("=" * 50 + "\n\n")
                 
                 total_points: float = 0.0
-                for index, (qso_date, member_number, callsign, band, points) in enumerate(
-                    sorted(qrp_2x_contacts, key=lambda x: x[0]), start=1
-                ):
+                index = 1
+                
+                # Process first contact
+                _, member_number, callsign, band, points = qrp_2x_first
+                total_points += points
+                await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                index += 1
+                
+                # Process remaining contacts from generator
+                for _, member_number, callsign, band, points in qrp_2x_generator:
                     total_points += points
                     await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                    index += 1
                 
                 await file.write(f"\nTotal Points: {total_points:.1f} (Need: 150)\n")
                 await file.write(f"Progress: {total_points/150.0*100.0:.1f}%\n")
@@ -2770,7 +2798,7 @@ class cSpotters:
 
             # Parse bands from csv string
             valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
-            bands = [int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands]
+            bands = list(int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands)
 
             cls.spotters[spotter] = (miles, bands)
         except ValueError:
@@ -2779,7 +2807,7 @@ class cSpotters:
     @classmethod
     def get_nearby_spotters(cls) -> list[tuple[str, int]]:
         spotters_sorted = sorted(cls.spotters.items(), key=lambda item: item[1][0])
-        nearbySpotters = [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS]
+        nearbySpotters = list((spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS)
         return nearbySpotters
 
     @classmethod
@@ -3084,7 +3112,7 @@ class cSKCC:
                 print("Error parsing SKCC data line. Skipping.")
                 continue
 
-            all_calls = [current_call] + [x.strip() for x in other_calls.split(",")] if other_calls else [current_call]
+            all_calls = [current_call] + list(x.strip() for x in other_calls.split(",")) if other_calls else [current_call]
 
             # Derive plain number by removing suffix letters from SKCCNR
             plain_number = re.sub(r'[A-Z]+$', '', number)
@@ -3496,7 +3524,7 @@ async def main_loop() -> None:
     await cSpotters.get_spotters_async()
 
     nearby_list_with_distance = cSpotters.get_nearby_spotters()
-    formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
+    formatted_nearby_list_with_distance = list(f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance)
     cConfig.SPOTTERS_NEARBY = {Spotter for Spotter, _ in nearby_list_with_distance}
 
     print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
