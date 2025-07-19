@@ -1126,6 +1126,18 @@ class cQSO:
     _EOH_PATTERN = re.compile(r'<eoh>', re.I)
     _EOR_PATTERN = re.compile(r'<eor>', re.I)
     _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+    
+    # QRP band point values (hoisted for efficiency)
+    _QRP_BAND_POINTS_DISPLAY: ClassVar[dict[str, float]] = {
+        "160m": 5.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 2.0, "10m": 2.0,
+        "6m": 3.0, "2m": 0.5
+    }
+    _QRP_BAND_POINTS_AWARDS: ClassVar[dict[str, float]] = {
+        "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
+        "6m": 0.5, "2m": 0.5
+    }
 
     ContactsForC:     dict[str, tuple[str, str, str]]
     ContactsForT:     dict[str, tuple[str, str, str]]
@@ -1442,12 +1454,8 @@ class cQSO:
         
         ### QRP ###
         if 'QRP' in cConfig.GOALS:
-            # Calculate QRP points
-            band_points = {
-                "160m": 5.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-                "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 2.0, "10m": 2.0,
-                "6m": 3.0, "2m": 0.5
-            }
+            # Calculate QRP points using hoisted constant
+            band_points = cls._QRP_BAND_POINTS_DISPLAY
             
             # Calculate points for 1xQRP (all contacts) and 2xQRP (only 2x contacts)
             points_1x = 0.0
@@ -1775,12 +1783,8 @@ class cQSO:
             print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
             return
 
-        # QRP point values by band
-        band_points: dict[str, float] = {
-            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
-            "6m": 0.5, "2m": 0.5
-        }
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
 
         # Calculate points for ALL QRP contacts (both 1x and 2x count toward 1xQRP)
         points_all: float = 0.0
@@ -1842,12 +1846,8 @@ class cQSO:
             print('QRP: No qualifying contacts found (TX power must be <= 5W)')
             return
 
-        # QRP point values by band
-        band_points: dict[str, float] = {
-            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
-            "6m": 0.5, "2m": 0.5
-        }
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
 
         # Calculate points for each QRP type
         points_1x: float = 0.0
@@ -2526,12 +2526,8 @@ class cQSO:
         if not QSOs:
             return
 
-        # QRP point values by band
-        band_points: dict[str, float] = {
-            "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-            "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
-            "6m": 0.5, "2m": 0.5
-        }
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
 
         # Separate contacts by QRP type
         qrp_1x_contacts: list[tuple[str, str, str, str, float]] = []
