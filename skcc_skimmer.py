@@ -342,13 +342,14 @@ class cConfig:
     GOALS:                    list[str]
     TARGETS:                  list[str]
     BANDS:                    list[int]
-    FRIENDS:                  list[str]
-    EXCLUSIONS:               list[str]
+    FRIENDS:                  set[str]
+    EXCLUSIONS:               set[str]
     DISTANCE_UNITS:           str
     SPOT_PERSISTENCE_MINUTES: int
     VERBOSE:                  bool
     LOG_BAD_SPOTS:            bool
     SPOTTER_RADIUS:           int
+    SPOTTERS_NEARBY:          set[str]
     K3Y_YEAR:                 int
 
     configFile:               dict[str, Any]
@@ -372,6 +373,15 @@ class cConfig:
         cls.MY_CALLSIGN = cls.configFile.get('MY_CALLSIGN', '')
         cls.ADI_FILE = cls.configFile.get('ADI_FILE', '')
         cls.MY_GRIDSQUARE = cls.configFile.get('MY_GRIDSQUARE', '')
+        cls.GOALS = []
+        cls.TARGETS = []
+        cls.BANDS = []
+        cls.FRIENDS = set()
+        cls.EXCLUSIONS = set()
+        cls.SPOTTERS_NEARBY = set()
+
+        if 'SPOTTERS_NEARBY' in cls.configFile:
+            cls.SPOTTERS_NEARBY = {spotter for spotter in cUtil.split(cls.configFile['SPOTTERS_NEARBY'])}
 
         if 'SPOTTER_RADIUS' in cls.configFile:
             cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
@@ -386,10 +396,10 @@ class cConfig:
             cls.BANDS = [int(Band)  for Band in cUtil.split(cls.configFile['BANDS'])]
 
         if 'FRIENDS' in cls.configFile:
-            cls.FRIENDS = [friend  for friend in cUtil.split(cls.configFile['FRIENDS'])]
+            cls.FRIENDS = {friend for friend in cUtil.split(cls.configFile['FRIENDS'])}
 
         if 'EXCLUSIONS' in cls.configFile:
-            cls.EXCLUSIONS = [friend  for friend in cUtil.split(cls.configFile['EXCLUSIONS'])]
+            cls.EXCLUSIONS = {friend for friend in cUtil.split(cls.configFile['EXCLUSIONS'])}
 
         cls.init_logfile()
         cls.init_progress_dots()
@@ -1048,8 +1058,7 @@ class cSPOTS:
             return
 
         # Process spotter information
-        SpottedNearby = Spotter in SPOTTERS_NEARBY
-        if SpottedNearby or CallSign == cConfig.MY_CALLSIGN:
+        if Spotter in cConfig.SPOTTERS_NEARBY or CallSign == cConfig.MY_CALLSIGN:
             if Spotter in cSpotters.spotters:
                 Miles = cSpotters.get_distance(Spotter)
                 Distance = cUtil.format_distance(Miles)
@@ -1103,7 +1112,7 @@ class cSPOTS:
             Report.append(f'THEY need you for {",".join(TargetList)}')
 
         # Record and report spot if relevant
-        if (SpottedNearby and (GoalList or TargetList)) or CallSign == cConfig.MY_CALLSIGN or CallSign in cConfig.FRIENDS:
+        if GoalList or TargetList or CallSign == cConfig.MY_CALLSIGN or CallSign in cConfig.FRIENDS:
             cSPOTS.last_spotted[CallSign] = (FrequencyKHz, time.time())
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
             FrequencyString = f'{FrequencyKHz:.1f}'
@@ -1117,7 +1126,7 @@ class cSPOTS:
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
             cDisplay.print(Out)
-            await cUtil.log_async(f'{ZuluDate} {Out}')  # Use the async log method
+            await cUtil.log_async(f'{ZuluDate} {Out}')
 
 class cQSO:
     MyMemberNumber: str
@@ -3460,7 +3469,7 @@ async def get_version_async() -> str:
     return VERSION
 
 async def main_loop() -> None:
-    global config, SPOTTERS_NEARBY, Spotters
+    global config, Spotters
 
     print(f'SKCC Skimmer version {await get_version_async()}\n')
 
@@ -3526,7 +3535,7 @@ async def main_loop() -> None:
 
     nearby_list_with_distance = cSpotters.get_nearby_spotters()
     formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
-    SPOTTERS_NEARBY = [Spotter for Spotter, _ in nearby_list_with_distance]
+    cConfig.SPOTTERS_NEARBY = {Spotter for Spotter, _ in nearby_list_with_distance}
 
     print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
 
