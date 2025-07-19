@@ -42,36 +42,6 @@
 #
 # WAS-T and WAS-C changes contributed by Nick, KC0MYW.
 
-#
-# Quickstart:
-#
-#  1. Make sure that you have Python installed.
-#
-#  2. Prepare an ADI logfile with stations worked thus far.
-#
-#  3. Run this utility from the command line with Python.
-#
-#     python skcc_skimmer.py [-c your-call-sign] [-a AdiFile] [-g "GoalString"] [-t "TargetString"] [-v]
-#
-#       The callsign is required unless you've specified MY_CALLSIGN in the skcc_skimmer.cfg file.
-#
-#       The ADI file is required unless you've specified ADI_FILE in the skcc_skimmer.cfg file.
-#
-#       GoalString: Any or all of: C,T,S,WAS,WAS-C,WAS-T,WAS-S,P,BRAG,K3Y,ALL,NONE.
-#                   (CXN,TXN,SXN are deprecated - use C,T,S instead)
-#
-#       TargetString: Any or all of: C,T,S,ALL,NONE.
-#                     (CXN,TXN,SXN are deprecated - use C,T,S instead)
-#
-#         (You must specify at least one GOAL or TARGET.)
-#
-
-#
-# Portability:
-#
-#   Requires Python version 3.13 or better. Also requires the following imports
-#   which may require a pip install.
-#
 
 
 from datetime import timedelta, datetime
@@ -933,9 +903,6 @@ class cSked:
                             SkedLogins: list[tuple[str, str]] = json.loads(Content)
                             Hits = await cls.handle_logins_async(SkedLogins, 'SKCC')
                         except Exception as ex:
-                            async with aiofiles.open('DEBUG.txt', 'a', encoding='utf-8') as File:
-                                await File.write(Content + '\n')
-
                             print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
                     cls._PreviousLogins = Hits
@@ -1130,6 +1097,7 @@ class cSPOTS:
 
 class cQSO:
     MyMemberNumber: str
+    MyDXCC_Code: str
 
     # Compiled regex patterns for ADI parsing (hoisted for efficiency)
     _EOH_PATTERN = re.compile(r'<eoh>', re.I)
@@ -1262,6 +1230,7 @@ class cQSO:
         cls.MyTX8_Date     = cUtil.effective(MyMemberEntry['tx8_date'])
 
         cls.MyMemberNumber = MyMemberEntry['plain_number']
+        cls.MyDXCC_Code = MyMemberEntry['dxcode']
 
     @classmethod
     async def watch_logfile_task(cls) -> NoReturn:
@@ -2108,7 +2077,7 @@ class cQSO:
             # Get DXCC code from member data
             dxcc_code = TheirMemberEntry.get('dxcode', '').strip()
             if dxcc_code and dxcc_code.isdigit():
-                home_dxcc = '291'  # TODO: Make configurable
+                home_dxcc = cls.MyDXCC_Code
                 
                 # Check DXC (unique countries)
                 if dxcc_code not in cls.ContactsForDXC:
@@ -2223,14 +2192,8 @@ class cQSO:
 
                     BragOkay = OnWarcFreq or (not DuringSprint)
 
-                    #print(BragOkay, DuringSprint, OnWarcFreq, QsoFreq, QsoDate)
-
                     if TheirMemberNumber not in cls.Brag and BragOkay:
                         cls.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
-                        #print('Brag contact: {} on {} {}'.format(QsoCallSign, QsoDate, QsoFreq))
-                    else:
-                        #print('Not brag eligible: {} on {}  {}  warc: {}  sprint: {}'.format(QsoCallSign, QsoDate, QsoFreq, OnWarcFreq, DuringSprint))
-                        pass
 
         if Print and 'BRAG' in cConfig.GOALS:
             Year = DateOfInterestGMT.year()
@@ -2451,9 +2414,8 @@ class cQSO:
                         # Normalize DXCC code by converting to integer to remove leading zeros
                         dxcc_code = str(int(dxcc_code))
                         
-                        # Determine home country - assume 291 (USA) for now
-                        # TODO: This should be configurable or derived from MY_CALLSIGN
-                        home_dxcc = '291'
+                        # Use user's DXCC code from membership data
+                        home_dxcc = cls.MyDXCC_Code
                         
                         # DXC: Count unique countries (date >= 20091219, allows one home country contact)
                         if QsoDate >= '20091219':
