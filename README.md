@@ -8,7 +8,7 @@ parameters with your own information:
 MY_CALLSIGN =  'x6xxx'
 ADI_FILE    = r'MasterLog.adi'
 GOALS       =  'all'
-TARGETS     =  'c,TXn,SXn'
+TARGETS     =  'C,T,S'
 ```
 
 `MY_CALLSIGN`: Replace `x6xxx` with your callsign. (Leave the
@@ -26,43 +26,51 @@ and should not be removed.
 or comma separated (but not both). When in doubt, leave it as 'all'.
 
 ```
-C     - You are working toward your C.
-T     - You are working toward your T.
-S     - You are working toward your S.
-CXn   - You are working toward your an advanced Cx- awards.
-TXn   - You are working toward your an advanced Tx- awards.
-SXn   - You are working toward your an advanced Sx- awards.
+C     - You are working toward your C (intelligently handles both initial C and multipliers).
+T     - You are working toward your T (intelligently handles both initial T and multipliers).
+S     - You are working toward your S (intelligently handles both initial S and multipliers).
+CXn   - (DEPRECATED) Use 'C' instead - handles both initial and advanced awards.
+TXn   - (DEPRECATED) Use 'T' instead - handles both initial and advanced awards.
+SXn   - (DEPRECATED) Use 'S' instead - handles both initial and advanced awards.
 WAS   - You are working toward your Worked All States.
 WAS-C - You are working toward your Worked All States, Centurion.
 WAS-T - You are working toward your Worked All States, Tribune.
 WAS-S - You are working toward your Worked All States, Senator.
 P     - You are attempting to accumulate prefix points.
+DXC   - You are working toward DX Countries award.
+DXQ   - You are working toward DX Member QSOs award.
+QRP   - You are working toward QRP awards (1xQRP and 2xQRP).
 all   - All of the above.
 none  - None of the above.
 
 GOALS Examples:
-   GOALS = 'txn'
-   GOALS = 'txn,sxn,p'
-   GOALS = 'txn,sxn,p,was,was-c'
-   GOALS = 'C,P'
+   GOALS = 'T'
+   GOALS = 'T,S,P'
+   GOALS = 'T,S,P,WAS,WAS-C'
+   GOALS = 'C,P,DXC,QRP'
    GOALS = 'all'
+   GOALS = 'all,-BRAG'          # All awards except BRAG
+   GOALS = 'all,-BRAG,-K3Y'     # All awards except BRAG and K3Y
+
+Note: Negation (using minus sign) only works with 'all'.
+Examples like 'C,T,-BRAG' are invalid.
 ```
 
-`TARGETS`: Replace 'C,TXn,SXn' with your preferences. When in doubt,
-         use the default value of 'c,TXn,SXn'.
+`TARGETS`: Replace 'C,T,S' with your preferences. When in doubt, just use the default value of 'C,T,S'.
 
 ```
-C     - You are helping others achieve their C.
-T     - You are helping others achieve their T.
-S     - You are helping others achieve their S.
-CXn   - You are helping others achieve their advanced Cx- awards.
-TXn   - You are helping others achieve their advanced Tx- awards.
-SXn   - You are helping others achieve their advanced Sx- awards.
+C     - You are helping others achieve their C (intelligently handles both initial and advanced).
+T     - You are helping others achieve their T (intelligently handles both initial and advanced).
+S     - You are helping others achieve their S (intelligently handles both initial and advanced).
+CXn   - (DEPRECATED) Use 'C' instead - handles both initial and advanced awards.
+TXn   - (DEPRECATED) Use 'T' instead - handles both initial and advanced awards.
+SXn   - (DEPRECATED) Use 'S' instead - handles both initial and advanced awards.
 all   - All of the above.
 none  - None of the above
 
 TARGETS Examples:
-   TARGETS = 'TXn,CXn'
+   TARGETS = 'T,C'
+   TARGETS = 'C,T,S'
    TARGETS = 'all'
    TARGETS = 'ALL'
    TARGETS = 'None'
