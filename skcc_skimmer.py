@@ -1120,6 +1120,11 @@ class cSPOTS:
 class cQSO:
     MyMemberNumber: str
 
+    # Compiled regex patterns for ADI parsing (hoisted for efficiency)
+    _EOH_PATTERN = re.compile(r'<eoh>', re.I)
+    _EOR_PATTERN = re.compile(r'<eor>', re.I)
+    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+
     ContactsForC:     dict[str, tuple[str, str, str]]
     ContactsForT:     dict[str, tuple[str, str, str]]
     ContactsForS:     dict[str, tuple[str, str, str]]
@@ -1616,90 +1621,59 @@ class cQSO:
 
         return remaining, x_factor
 
-    @classmethod 
-    def _parse_adi_regex_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str]]:
-        """
-        Regex-based ADI parser generator for fallback compatibility.
-        """
+    @classmethod
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str]]:
+        """Elegant regex-based ADI parser using generator."""
+        with open(file_path, 'rb') as f:
+            content = f.read().decode('utf-8', 'ignore')
         
-        # Compile regex patterns once
-        eoh_pattern = re.compile(r'<eoh>', re.I)
-        eor_pattern = re.compile(r'<eor>', re.I)
-        field_pattern = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+        # Split header from body using hoisted pattern
+        parts = cls._EOH_PATTERN.split(content, maxsplit=1)
+        body = parts[1].strip() if len(parts) > 1 else content
         
-        with open(file_path, 'rb') as file:
-            content = file.read()
-        
-        # Decode content
-        text = content.decode('utf-8', 'ignore')
-        
-        # Split header from body
-        parts = eoh_pattern.split(text, maxsplit=1)
-        if len(parts) < 2:
-            body = text
-        else:
-            body = parts[1].strip(' \t\r\n\x1a')
-        
-        # Process each QSO record as generator
-        for record_text in filter(None, map(str.strip, eor_pattern.split(body))):
-            # Extract fields
-            record = {k.upper(): v for k, v in field_pattern.findall(record_text)}
+        # Process each QSO record using hoisted patterns
+        for record_text in filter(None, map(str.strip, cls._EOR_PATTERN.split(body))):
+            # Extract fields using hoisted regex pattern
+            fields = {k.upper(): v.strip() for k, v in cls._FIELD_PATTERN.findall(record_text)}
             
-            # Normalize QSO_DATE and TIME_ON fields
-            record.setdefault('QSO_DATE', record.pop('QSO_DATE_OFF', None))
-            record.setdefault('TIME_ON', record.pop('TIME_OFF', None))
+            # Handle alternate field names
+            if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
+                fields['QSO_DATE'] = fields['QSO_DATE_OFF']
+            if 'TIME_OFF' in fields and 'TIME_ON' not in fields:
+                fields['TIME_ON'] = fields['TIME_OFF']
             
             # Skip non-CW QSOs and incomplete records
-            if not all(k in record for k in ('CALL', 'QSO_DATE', 'TIME_ON')) or record.get('MODE') != 'CW':
+            if (fields.get('MODE', '').upper() != 'CW' or 
+                not all(k in fields for k in ('CALL', 'QSO_DATE', 'TIME_ON'))):
                 continue
             
-            # Frequency conversion to kHz
-            freq_str = record.get('FREQ', '')
+            # Parse frequency
             frequency = 0.0
-            if freq_str and freq_str.replace('.', '', 1).isdigit():
-                frequency = float(freq_str) * 1000
+            if freq_str := fields.get('FREQ', ''):
+                try:
+                    frequency = float(freq_str) * 1000
+                except ValueError:
+                    pass
             
-            # Extract SKCC number and clean it
-            skcc_number = record.get('SKCC', '')
-            if skcc_number:
-                # Remove any trailing letters (C, T, S, etc.)
-                skcc_number = ''.join(c for c in skcc_number if c.isdigit())
+            # Clean SKCC number
+            skcc_number = ''.join(filter(str.isdigit, fields.get('SKCC', '')))
             
-            # Yield QSO data
+            # Yield QSO tuple
             yield (
-                record['QSO_DATE'] + record['TIME_ON'],
-                record['CALL'],
-                record.get('STATE', ''),
+                fields['QSO_DATE'] + fields['TIME_ON'],
+                fields['CALL'].upper(),
+                fields.get('STATE', '').upper(),
                 frequency,
-                record.get('COMMENT', ''),
+                fields.get('COMMENT', ''),
                 skcc_number,
-                record.get('TX_PWR', ''),
-                record.get('RX_PWR', ''),
-                record.get('DXCC', '')
+                fields.get('TX_PWR', ''),
+                fields.get('RX_PWR', ''),
+                fields.get('DXCC', '')
             )
-    
-    @classmethod
-    async def _parse_adi_regex_generator_async(cls, file_path: str) -> list[tuple[str, str, str, float, str, str, str, str, str]]:
-        """
-        Async wrapper for regex generator parser.
-        """
-        import asyncio
-        from concurrent.futures import ThreadPoolExecutor
-        
-        loop = asyncio.get_event_loop()
-        
-        # Run the generator in a thread pool
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            qsos = await loop.run_in_executor(
-                executor,
-                lambda: list(cls._parse_adi_regex_generator(file_path))
-            )
-        
-        return qsos
 
     @classmethod
     async def read_qsos_async(cls) -> None:
-        """Optimized QSO reading using fast ADI parser."""
+        """Fast, simple QSO reading using generator."""
         AdiFileAbsolute = os.path.abspath(cConfig.ADI_FILE)
         cDisplay.print(f"\nReading QSOs for {cConfig.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
@@ -1707,22 +1681,25 @@ class cQSO:
         cls.AdiFileReadTimeStamp = os.path.getmtime(cConfig.ADI_FILE)
 
         try:
-            # Use the fast ADI parser for better performance
-            from fast_adi_parser import read_qsos_fast_async
-            cls.QSOs = await read_qsos_fast_async(AdiFileAbsolute)
-
-        except ImportError:
-            # Fallback to regex-based generator parser if fast parser not available
-            cls.QSOs = await cls._parse_adi_regex_generator_async(AdiFileAbsolute)
+            # Use generator in thread pool for async operation
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                cls.QSOs = await loop.run_in_executor(
+                    executor,
+                    lambda: list(cls._parse_adi_generator(AdiFileAbsolute))
+                )
 
         except Exception as e:
-            print(f"Error reading ADIF file: {e}")
+            cDisplay.print(f"Error reading ADIF file: {e}")
             return
 
         # Sort QSOs by date
         cls.QSOs.sort(key=lambda qso: qso[0])
 
-        # Process and map QSOs by member number with batched operations
+        # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
         for qso_date, call_sign, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
