@@ -42,38 +42,10 @@
 #
 # WAS-T and WAS-C changes contributed by Nick, KC0MYW.
 
-#
-# Quickstart:
-#
-#  1. Make sure that you have Python installed.
-#
-#  2. Prepare an ADI logfile with stations worked thus far.
-#
-#  3. Run this utility from the command line with Python.
-#
-#     python skcc_skimmer.py [-c your-call-sign] [-a AdiFile] [-g "GoalString"] [-t "TargetString"] [-v]
-#
-#       The callsign is required unless you've specified MY_CALLSIGN in the skcc_skimmer.cfg file.
-#
-#       The ADI file is required unless you've specified ADI_FILE in the skcc_skimmer.cfg file.
-#
-#       GoalString: Any or all of: C,T,S,CXN,TXN,SXN,WAS,WAS-C,WAS-T,WAS-S,ALL,K3Y,NONE.
-#
-#       TargetString: Any or all of: C,T,S,CXN,TXN,SXN,ALL,NONE.
-#
-#         (You must specify at least one GOAL or TARGET.)
-#
-
-#
-# Portability:
-#
-#   Requires Python version 3.13 or better. Also requires the following imports
-#   which may require a pip install.
-#
 
 
 from datetime import timedelta, datetime
-from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, Self, TypedDict
+from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict, Self, Iterator
 from math import radians, sin, cos, atan2, sqrt
 from dataclasses import dataclass, field
 
@@ -98,6 +70,15 @@ import platform
 RBN_SERVER = 'telnet.reversebeacon.net'
 RBN_PORT   = 7000
 
+# URL constants
+SKED_STATUS_URL = 'http://sked.skccgroup.com/get-status.php'
+RBN_STATUS_URL = 'https://reversebeacon.net/cont_includes/status.php?t=skt'
+SKCC_DATA_URL = 'https://skccgroup.com/skimmer-data.txt'
+SKCC_BASE_URL = 'https://www.skccgroup.com/'
+
+# Global state for progress dot display
+_progress_dot_count: int = 0
+
 US_STATES: Final[list[str]] = [
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
@@ -106,16 +87,30 @@ US_STATES: Final[list[str]] = [
     'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
 ]
 
+# Award level requirements
 Levels: Final[dict[str, int]] = {
     'C'  :    100,
     'T'  :     50,
     'S'  :    200,
-    'P'  : 500000,
+    'P'  : 250000,
 }
+
+# Award dates - when each award started
+class AwardDates:
+    PREFIX_START: Final[str] = '20130101000000'
+    TRIBUNE_START: Final[str] = '20070301000000'
+    SENATOR_START: Final[str] = '20130801000000'
+    WAS_C_START: Final[str] = '20110612000000'
+    WAS_TS_START: Final[str] = '20160201000000'
+
+# Prefix award thresholds
+class PrefixThresholds:
+    INCREMENT: Final[int] = 500_000
+    MILESTONE_10M: Final[int] = 10_000_000
 
 class cUtil:
     @staticmethod
-    def split(text: str) -> list[str]:
+    def split(text: str, /) -> list[str]:
         return re.split(r'[,\s]+', text.strip())
 
     @staticmethod
@@ -128,7 +123,7 @@ class cUtil:
 
     @staticmethod
     def stripped(text: str) -> str:
-        return ''.join([c for c in text if 31 < ord(c) < 127])
+        return ''.join(c for c in text if 31 < ord(c) < 127)
 
     @staticmethod
     def beep() -> None:
@@ -144,13 +139,13 @@ class cUtil:
     @staticmethod
     async def log_async(Line: str) -> None:
         if cConfig.LOG_FILE.ENABLED and cConfig.LOG_FILE.FILE_NAME is not None:
-            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, mode='a', encoding='utf-8') as File:  # type: ignore
+            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
                 await File.write(Line + '\n')
 
     @staticmethod
     async def log_error_async(Line: str) -> None:
         if cConfig.LOG_BAD_SPOTS:
-            async with aiofiles.open('Bad_RBN_Spots.log', mode='a', encoding='utf-8') as File:  # type: ignore
+            async with aiofiles.open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
                 await File.write(Line + '\n')
 
     @staticmethod
@@ -192,7 +187,7 @@ class cUtil:
         )
 
     @staticmethod
-    def handle_shutdown(signum: int, frame: object | None = None) -> None:
+    def handle_shutdown(_signum: int, _frame: object | None = None) -> None:
         """Exits immediately when Ctrl+C is detected."""
         # Force immediate exit without any cleanup
         os._exit(0)
@@ -236,8 +231,9 @@ class cConfig:
 
     @dataclass
     class cLogFile:
-        ENABLED:           bool = False
         FILE_NAME:         str | None = None
+        ENABLED:           bool = True
+        LOG_FILE:          str | None = None
         DELETE_ON_STARTUP: bool = False
     @classmethod
     def init_logfile(cls) -> None:
@@ -316,15 +312,15 @@ class cConfig:
     GOALS:                    list[str]
     TARGETS:                  list[str]
     BANDS:                    list[int]
-    FRIENDS:                  list[str]
-    EXCLUSIONS:               list[str]
+    FRIENDS:                  set[str]
+    EXCLUSIONS:               set[str]
     DISTANCE_UNITS:           str
     SPOT_PERSISTENCE_MINUTES: int
     VERBOSE:                  bool
     LOG_BAD_SPOTS:            bool
     SPOTTER_RADIUS:           int
+    SPOTTERS_NEARBY:          set[str]
     K3Y_YEAR:                 int
-    HTTP_TIMEOUT:             int
 
     configFile:               dict[str, Any]
 
@@ -336,17 +332,9 @@ class cConfig:
             ConfigFileAbsolute = os.path.abspath('skcc_skimmer.cfg')
             cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
 
-            try:
-                async with aiofiles.open(ConfigFileAbsolute, mode='r', encoding='utf-8') as configFile:  # type: ignore
-                    ConfigFileString = await configFile.read()
-                    exec(ConfigFileString, {}, config_vars)
-
-            except FileNotFoundError:
-                print("Error: skcc_skimmer.cfg file not found")
-                sys.exit(1)
-            except Exception as e:
-                print(f"Error reading configuration file: {e}")
-                sys.exit(1)
+            async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as configFile:
+                ConfigFileString = await configFile.read()
+                exec(ConfigFileString, {}, config_vars)
 
             return config_vars
 
@@ -355,16 +343,21 @@ class cConfig:
         cls.MY_CALLSIGN = cls.configFile.get('MY_CALLSIGN', '')
         cls.ADI_FILE = cls.configFile.get('ADI_FILE', '')
         cls.MY_GRIDSQUARE = cls.configFile.get('MY_GRIDSQUARE', '')
+        cls.GOALS = []
+        cls.TARGETS = []
+        cls.BANDS = []
+        cls.FRIENDS = set()
+        cls.EXCLUSIONS = set()
+        cls.SPOTTERS_NEARBY = set()
+
+        if 'SPOTTERS_NEARBY' in cls.configFile:
+            cls.SPOTTERS_NEARBY = {spotter for spotter in cUtil.split(cls.configFile['SPOTTERS_NEARBY'])}
 
         if 'SPOTTER_RADIUS' in cls.configFile:
-            try:
-                cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
-            except (ValueError, TypeError) as e:
-                print(f"Error: SPOTTER_RADIUS must be a valid integer, got '{cls.configFile['SPOTTER_RADIUS']}': {e}")
-                sys.exit(1)
+            cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.configFile:
-            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y', 'goal')
+            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal')
 
         if 'TARGETS' in cls.configFile:
             cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
@@ -373,10 +366,10 @@ class cConfig:
             cls.BANDS = [int(Band)  for Band in cUtil.split(cls.configFile['BANDS'])]
 
         if 'FRIENDS' in cls.configFile:
-            cls.FRIENDS = [friend  for friend in cUtil.split(cls.configFile['FRIENDS'])]
+            cls.FRIENDS = {friend for friend in cUtil.split(cls.configFile['FRIENDS'])}
 
         if 'EXCLUSIONS' in cls.configFile:
-            cls.EXCLUSIONS = [friend  for friend in cUtil.split(cls.configFile['EXCLUSIONS'])]
+            cls.EXCLUSIONS = {friend for friend in cUtil.split(cls.configFile['EXCLUSIONS'])}
 
         cls.init_logfile()
         cls.init_progress_dots()
@@ -396,9 +389,6 @@ class cConfig:
             cls.K3Y_YEAR = cls.configFile['K3Y_YEAR']
         else:
             cls.K3Y_YEAR = datetime.now().year
-
-        # Set HTTP timeout with default
-        cls.HTTP_TIMEOUT = cls.configFile.get('HTTP_TIMEOUT', 30)
 
         cls._ParseArgs(ArgV)
         cls._ValidateConfig()
@@ -439,7 +429,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y", "goal")
+            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal")
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -600,27 +590,62 @@ class cConfig:
 
     @staticmethod
     def parse_goals(String: str, ALL_str: str, Type: str) -> list[str]:
-        ALL    = ALL_str.split()
-        parsed = cUtil.split(String.upper())
+        ALL: list[str] = ALL_str.split()
+        parsed: list[str] = cUtil.split(String.upper())
 
         # Using pattern matching simplifies the logic
         match parsed:
             case ['ALL']: return ALL
             case ['NONE']: return []
             case items:
-                # Add implied dependencies
-                for x in ['CXN', 'TXN', 'SXN']:
-                    base = x[0]
-                    if x in items and base not in items:
-                        items.append(base)
+                # Handle deprecation warnings and convert CXN/TXN/SXN to C/T/S
+                deprecated_mappings = {'CXN': 'C', 'TXN': 'T', 'SXN': 'S'}
+                for deprecated, replacement in deprecated_mappings.items():
+                    if deprecated in items:
+                        print(f"WARNING: '{deprecated}' is deprecated. Use '{replacement}' instead.")
+                        print(f"         The system will automatically handle both initial awards and multipliers.")
+                        items.remove(deprecated)
+                        if replacement not in items:
+                            items.append(replacement)
 
-                # Check for invalid items
-                invalid = [x for x in items if x not in ALL]
-                if invalid:
-                    print(f"Unrecognized {Type} '{invalid[0]}'.")
+                # Handle negation syntax (e.g., ALL,-BRAG)
+                # Negation only applies when ALL is specified
+                result: list[str] = []
+                negated: list[str] = []
+                has_all: bool = False
+
+                for item in items:
+                    if item.startswith('-'):
+                        # Remove the '-' prefix and add to negated list
+                        negated_item: str = item[1:]
+                        if negated_item in ALL:
+                            negated.append(negated_item)
+                        else:
+                            print(f"Unrecognized {Type} '{item}' (negated item '{negated_item}' not found).")
+                            sys.exit()
+                    else:
+                        # Regular item
+                        if item == 'ALL':
+                            has_all = True
+                            result.extend(ALL)
+                        elif item in ALL:
+                            result.append(item)
+                        else:
+                            print(f"Unrecognized {Type} '{item}'.")
+                            sys.exit()
+
+                # Check if negation was used without ALL
+                if negated and not has_all:
+                    print(f"Negation syntax (e.g., '-BRAG') can only be used with 'ALL'. Example: 'ALL,-BRAG'")
                     sys.exit()
 
-                return items
+                # Remove duplicates and apply negations
+                result = list(set(result))  # Remove duplicates
+                for negated_item in negated:
+                    if negated_item in result:
+                        result.remove(negated_item)
+
+                return result
 
 class cFastDateTime:
     FastDateTime: str
@@ -711,14 +736,16 @@ class cFastDateTime:
 class cDisplay:
     @staticmethod
     def print(text: str) -> None:
-        if cRBN.dot_count > 0:
+        global _progress_dot_count
+        if _progress_dot_count > 0:
             print()
 
         print(text)
-        cRBN.dot_count_reset()
+        _progress_dot_count = 0
 
 class cSked:
     _RegEx:          ClassVar[re.Pattern[str]] = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
+    _Freq_RegEx:     ClassVar[re.Pattern[str]] = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
     _SkedSite:       ClassVar[str | None] = None
 
     _PreviousLogins: ClassVar[dict[str, list[str]]] = {}
@@ -757,8 +784,8 @@ class cSked:
             cDisplay.print('=========== ' + Heading + ' Sked Page ' + '=' * (16-len(Heading)))
 
             for CallSign in sorted(SkedHit):
-                GoalList = [hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for")]
-                TargetList = [hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for")]
+                GoalList = list(hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for"))
+                TargetList = list(hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for"))
                 IsFriend = "friend" in SkedHit[CallSign]
 
                 if CallSign in NewLogins:
@@ -787,7 +814,7 @@ class cSked:
     @classmethod
     async def _process_login_async(cls, CallSign: str, Status: str, SkedHit: dict[str, list[str]]) -> None:
         """Process a single sked login asynchronously and add to SkedHit if relevant."""
-        Report: list[str] = [await cSKCC.build_member_info_async(CallSign)]
+        Report: list[str] = [cSKCC.build_member_info(CallSign)]
 
         if CallSign in cSPOTS.last_spotted:
             FrequencyKHz, StartTime = cSPOTS.last_spotted[CallSign]
@@ -811,7 +838,8 @@ class cSked:
             # K3Y processing logic here...
             K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
             SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
-            Freq_RegEx = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
+            # Use hoisted regex pattern
+            Freq_RegEx = cls._Freq_RegEx
 
             Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
             if Matches:
@@ -862,8 +890,8 @@ class cSked:
     async def display_logins_async(cls) -> None:
         """Async version of display_logins."""
         try:
-            async with aiohttp.ClientSession(timeout=ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
-                async with session.get('http://sked.skccgroup.com/get-status.php') as response:
+            async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
+                async with session.get(SKED_STATUS_URL) as response:
                     if response.status != 200:
                         return
 
@@ -875,9 +903,6 @@ class cSked:
                             SkedLogins: list[tuple[str, str]] = json.loads(Content)
                             Hits = await cls.handle_logins_async(SkedLogins, 'SKCC')
                         except Exception as ex:
-                            async with aiofiles.open('DEBUG.txt', mode='a', encoding='utf-8') as File:  # type: ignore
-                                await File.write(Content + '\n')
-
                             print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
                     cls._PreviousLogins = Hits
@@ -1000,8 +1025,7 @@ class cSPOTS:
             return
 
         # Process spotter information
-        SpottedNearby = Spotter in SPOTTERS_NEARBY
-        if SpottedNearby or CallSign == cConfig.MY_CALLSIGN:
+        if Spotter in cConfig.SPOTTERS_NEARBY or CallSign == cConfig.MY_CALLSIGN:
             if Spotter in cSpotters.spotters:
                 Miles = cSpotters.get_distance(Spotter)
                 Distance = cUtil.format_distance(Miles)
@@ -1017,10 +1041,11 @@ class cSPOTS:
         if CallSign != 'K3Y':
             OnFrequency = cSKCC.is_on_skcc_frequency(FrequencyKHz, cConfig.OFF_FREQUENCY.TOLERANCE)
             if not OnFrequency:
-                if cConfig.OFF_FREQUENCY.ACTION == 'warn':
-                    Report.append('OFF SKCC FREQUENCY!')
-                elif cConfig.OFF_FREQUENCY.ACTION == 'suppress':
-                    return
+                match cConfig.OFF_FREQUENCY.ACTION:
+                    case 'warn':
+                        Report.append('OFF SKCC FREQUENCY!')
+                    case 'suppress':
+                        return
 
         # Handle WPM
         match cConfig.HIGH_WPM.ACTION:
@@ -1038,7 +1063,7 @@ class cSPOTS:
             Report.append('friend')
 
         # Get goal hits
-        GoalList = []
+        GoalList: list[str] = []
         if 'K3Y' in cConfig.GOALS and CallSign == 'K3Y' and CallSignSuffix:
             if Band := cSKCC.which_arrl_band(FrequencyKHz):
                 if (CallSignSuffix not in cQSO.ContactsForK3Y) or (Band not in cQSO.ContactsForK3Y[CallSignSuffix]):
@@ -1054,7 +1079,7 @@ class cSPOTS:
             Report.append(f'THEY need you for {",".join(TargetList)}')
 
         # Record and report spot if relevant
-        if (SpottedNearby and (GoalList or TargetList)) or CallSign == cConfig.MY_CALLSIGN or CallSign in cConfig.FRIENDS:
+        if GoalList or TargetList or CallSign == cConfig.MY_CALLSIGN or CallSign in cConfig.FRIENDS:
             cSPOTS.last_spotted[CallSign] = (FrequencyKHz, time.time())
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
             FrequencyString = f'{FrequencyKHz:.1f}'
@@ -1063,15 +1088,33 @@ class cSPOTS:
                 NotificationFlag = cls.handle_notification(f'K3Y/{CallSignSuffix}', GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}K3Y/{CallSignSuffix} on {FrequencyString:>8} {"; ".join(Report)}'
             else:
-                MemberInfo = await cSKCC.build_member_info_async(CallSign)
+                MemberInfo = cSKCC.build_member_info(CallSign)
                 NotificationFlag = cls.handle_notification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
             cDisplay.print(Out)
-            await cUtil.log_async(f'{ZuluDate} {Out}')  # Use the async log method
+            await cUtil.log_async(f'{ZuluDate} {Out}')
 
 class cQSO:
     MyMemberNumber: str
+    MyDXCC_Code: str
+
+    # Compiled regex patterns for ADI parsing (hoisted for efficiency)
+    _EOH_PATTERN = re.compile(r'<eoh>', re.I)
+    _EOR_PATTERN = re.compile(r'<eor>', re.I)
+    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+    
+    # QRP band point values (hoisted for efficiency)
+    _QRP_BAND_POINTS_DISPLAY: ClassVar[dict[str, float]] = {
+        "160m": 5.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 2.0, "10m": 2.0,
+        "6m": 3.0, "2m": 0.5
+    }
+    _QRP_BAND_POINTS_AWARDS: ClassVar[dict[str, float]] = {
+        "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
+        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
+        "6m": 0.5, "2m": 0.5
+    }
 
     ContactsForC:     dict[str, tuple[str, str, str]]
     ContactsForT:     dict[str, tuple[str, str, str]]
@@ -1083,14 +1126,79 @@ class cQSO:
     ContactsForWAS_S: dict[str, tuple[str, str, str]]
     ContactsForP:     dict[str, tuple[str, str, int, str]]
     ContactsForK3Y:   dict[str, dict[int, str]]
+    ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
+    ContactsForDXC:   dict[str, tuple[str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call)
+    ContactsForDXQ:   dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call)
+    DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str]]
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
+
+    @classmethod
+    def _frequency_to_band(cls, frequency_khz: float) -> str | None:
+        """Convert frequency in kHz to band name for QRP award calculations."""
+        if 1800 <= frequency_khz <= 2000:
+            return "160m"
+        elif 3500 <= frequency_khz <= 4000:
+            return "80m"
+        elif 5330.5 <= frequency_khz <= 5403.5:
+            return "60m"
+        elif 7000 <= frequency_khz <= 7300:
+            return "40m"
+        elif 10100 <= frequency_khz <= 10150:
+            return "30m"
+        elif 14000 <= frequency_khz <= 14350:
+            return "20m"
+        elif 18068 <= frequency_khz <= 18168:
+            return "17m"
+        elif 21000 <= frequency_khz <= 21450:
+            return "15m"
+        elif 24890 <= frequency_khz <= 24990:
+            return "12m"
+        elif 28000 <= frequency_khz <= 29700:
+            return "10m"
+        elif 50000 <= frequency_khz <= 50100:
+            return "6m"
+        elif 144000 <= frequency_khz <= 148000:
+            return "2m"
+        else:
+            return None
+
+    @classmethod
+    def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
+        """Helper to lookup member information from QSO data.
+
+        Returns: (member_skcc_number, found_callsign, is_historical_member)
+        """
+        mbr_skcc_nr: str | None = None
+        found_call: str | None = None
+        is_historical_member = False
+
+        if qso_skcc and qso_skcc != "NONE":
+            # Try to find member by SKCC number first
+            if qso_skcc in skcc_number_to_call:
+                mbr_skcc_nr = qso_skcc
+                found_call = skcc_number_to_call[qso_skcc]
+            else:
+                # Historical member number case
+                extracted_call = cSKCC.extract_callsign(qso_callsign)
+                if extracted_call and extracted_call in cSKCC.members:
+                    mbr_skcc_nr = qso_skcc  # Keep historical number
+                    found_call = extracted_call
+                    is_historical_member = True
+
+        if not mbr_skcc_nr:
+            # Fall back to callsign lookup
+            found_call = cSKCC.extract_callsign(qso_callsign)
+            if found_call and found_call in cSKCC.members:
+                mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
+
+        return mbr_skcc_nr, found_call, is_historical_member
 
     @classmethod
     async def initialize_async(cls) -> None:
@@ -1106,6 +1214,10 @@ class cQSO:
         cls.ContactsForWAS_S   = {}
         cls.ContactsForP       = {}
         cls.ContactsForK3Y     = {}
+        cls.ContactsForQRP     = {}
+        cls.ContactsForDXC     = {}
+        cls.ContactsForDXQ     = {}
+        cls.DXC_HomeCountryUsed = False
         cls.QSOsByMemberNumber = {}
 
         await cls.read_qsos_async()
@@ -1118,6 +1230,7 @@ class cQSO:
         cls.MyTX8_Date     = cUtil.effective(MyMemberEntry['tx8_date'])
 
         cls.MyMemberNumber = MyMemberEntry['plain_number']
+        cls.MyDXCC_Code = MyMemberEntry['dxcode']
 
     @classmethod
     async def watch_logfile_task(cls) -> NoReturn:
@@ -1126,30 +1239,12 @@ class cQSO:
                 if await aiofiles.os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
                     cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                    # Wait until file size and modification time stabilize
-                    prev_size = 0
-                    prev_mtime = 0
-                    stable_count = 0
-
+                    # Wait until file size stabilizes
                     while True:
-                        try:
-                            current_size = os.path.getsize(cConfig.ADI_FILE)
-                            current_mtime = os.path.getmtime(cConfig.ADI_FILE)
-
-                            if current_size == prev_size and current_mtime == prev_mtime:
-                                stable_count += 1
-                                if stable_count >= 2:  # Require 2 stable checks
-                                    break
-                            else:
-                                stable_count = 0
-
-                            prev_size = current_size
-                            prev_mtime = current_mtime
-                            await asyncio.sleep(1)
-                        except (OSError, FileNotFoundError):
-                            # File might be temporarily unavailable during write
-                            await asyncio.sleep(1)
-                            continue
+                        Size = os.path.getsize(cConfig.ADI_FILE)
+                        await asyncio.sleep(1)
+                        if os.path.getsize(cConfig.ADI_FILE) == Size:
+                            break
 
                     await cls.refresh_async()
 
@@ -1164,39 +1259,78 @@ class cQSO:
     def calculate_current_award_level(cls, Class: str, Total: int) -> int:
         """
         Calculate what award level someone currently qualifies for.
+        Updated to match official SKCC rules.
         """
-        if Class == 'C':
-            if Total < 100:
-                return 0  # No award yet
-            elif Total < 1000:
-                return Total // 100
-            elif Total < 1500:
-                return 10  # Cx10
-            else:
-                # Cx15, Cx20, Cx25, etc.
-                increments_past_1500 = (Total - 1500) // 500
-                return 15 + (increments_past_1500 * 5)
+        match Class:
+            case 'C':
+                if Total < 100:
+                    return 0  # No award yet
+                elif Total < 1000:
+                    return Total // 100
+                elif Total < 1500:
+                    return 10  # Cx10
+                else:
+                    # Cx15, Cx20, Cx25, etc.
+                    increments_past_1500 = (Total - 1500) // 500
+                    return 15 + (increments_past_1500 * 5)
 
-        elif Class == 'T':
-            if Total < 50:
-                return 0  # No award yet
-            elif Total < 500:
-                return Total // 50
-            elif Total < 750:
-                return 10  # Tx10
-            else:
-                # Tx15, Tx20, Tx25, etc.
-                increments_past_750 = (Total - 750) // 250
-                return 15 + (increments_past_750 * 5)
+            case 'T':
+                # Tribune: Must be Centurion first, then 50 contacts with C/T/S for Tx1
+                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
+                if not cls.MyC_Date:
+                    return 0  # Must be Centurion first
+                if Total < 50:
+                    return 0  # No Tribune award yet
+                elif Total < 500:
+                    return Total // 50  # Tx1 through Tx10
+                elif Total < 750:
+                    return 10  # Between Tx10 and Tx15
+                elif Total < 1000:
+                    return 15  # Tx15
+                else:
+                    # Tx20 and beyond (250-contact increments)
+                    increments_past_1000 = (Total - 1000) // 250
+                    return 20 + (increments_past_1000 * 5)
 
-        else:
-            # S and P use simple division
-            return Total // Levels[Class]
+            case 'S':
+                # Senator: Must have Tribune x8 (400 Tribune contacts) first, then 200 contacts with T/S for Sx1
+                tribune_contacts = len(cls.ContactsForT)
+                if tribune_contacts < 400:
+                    return 0  # Must have Tribune x8 (400 contacts) first
+                if Total < 200:
+                    return 0  # No Senator award yet
+                else:
+                    # Sx1, Sx2, etc. - each level requires 200 more contacts
+                    return min(Total // 200, 10)  # Cap at Sx10 per official rules
+
+            case 'P':
+                # Prefix progression per SKCC rules:
+                # Px1-Px10: Each level requires an additional 500,000 points
+                # Px1 at >500k, Px2 at >1M, ..., Px10 at >5M
+                # Beyond Px10: Px15 at >7.5M, Px20 at >10M, Px25 at >12.5M (2.5M increments)
+                if Total <= 500_000:
+                    return 0  # No P award yet
+                elif Total <= 5_000_000:
+                    # Px1 through Px10 - each 500k increment adds 1 level
+                    return (Total - 1) // 500_000 + 1
+                else:
+                    # After 5M (Px10): levels jump by 5, thresholds by 2.5M
+                    # Px10: >5M, Px15: >7.5M, Px20: >10M, Px25: >12.5M
+                    if Total <= 7_500_000:
+                        return 10  # Still at Px10
+                    else:
+                        # Calculate how many 2.5M increments past 7.5M
+                        increments_past_7_5m = (Total - 7_500_001) // 2_500_000 + 1
+                        return 10 + (increments_past_7_5m * 5)
+
+            case _:
+                # Default simple division
+                return Total // Levels[Class]
 
     @classmethod
     def awards_check(cls) -> None:
         """
-        Updated awards check that properly handles the special C and T progression rules.
+        Updated awards check that properly handles official SKCC award requirements.
         """
         C_Level = cls.calculate_current_award_level('C', len(cls.ContactsForC))
         T_Level = cls.calculate_current_award_level('T', len(cls.ContactsForT))
@@ -1205,10 +1339,7 @@ class cQSO:
 
         ### C ###
         if cls.MyC_Date:
-            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 0)
-            # If 0, they have the award but haven't achieved any level beyond basic C
-            if Award_C_Level == 0:
-                Award_C_Level = 1
+            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 1)
 
             if C_Level > Award_C_Level:
                 C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
@@ -1219,11 +1350,11 @@ class cQSO:
                 print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
-        if cls.MyT_Date:
-            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 0)
-            # If 0, they have the award but haven't achieved any level beyond basic T
-            if Award_T_Level == 0:
-                Award_T_Level = 1
+        if not cls.MyC_Date:
+            if T_Level > 0:
+                print('NOTE: Tribune award requires Centurion first. Apply for C before T.')
+        elif cls.MyT_Date:
+            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
 
             if T_Level > Award_T_Level:
                 T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
@@ -1234,15 +1365,17 @@ class cQSO:
                 print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
-        if cls.MyS_Date:
-            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 0)
-            # If 0, they have the award but haven't achieved any level beyond basic S
-            if Award_S_Level == 0:
-                Award_S_Level = 1
+        tribune_contacts = len(cls.ContactsForT)
+        if tribune_contacts < 400:
+            if S_Level > 0:
+                print(f'NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+        elif cls.MyS_Date:
+            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
 
             if S_Level > Award_S_Level:
                 S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
-                print(f'FYI: You qualify for Sx{S_Level} but have only applied for {S_or_Sx}.')
+                next_level_name = 'S' if S_Level == 1 else f'Sx{S_Level}'
+                print(f'FYI: You qualify for {next_level_name} but have only applied for {S_or_Sx}.')
         else:
             if S_Level >= 1 and cls.MyMemberNumber not in cSKCC.senator_level:
                 print('FYI: You qualify for S but have not yet applied for it.')
@@ -1272,6 +1405,68 @@ class cQSO:
                     print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}')
             elif P_Level >= 1:
                 print(f'FYI: You qualify for Px{P_Level} but have not yet applied for it.')
+        
+        ### DX ###
+        if 'DX' in cConfig.GOALS:
+            # DXC
+            DXC_count = len(cls.ContactsForDXC)
+            if DXC_count >= 100:
+                DXC_Level = DXC_count // 100
+                if cls.MyMemberNumber in cSKCC.dxc_level:
+                    Award_DXC_Level = cSKCC.dxc_level[cls.MyMemberNumber]
+                    if DXC_Level > Award_DXC_Level:
+                        print(f'FYI: You qualify for DXCx{DXC_Level} but have only applied for DXCx{Award_DXC_Level}')
+                else:
+                    print(f'FYI: You qualify for DXCx{DXC_Level} but have not yet applied for it.')
+            
+            # DXQ
+            DXQ_count = len(cls.ContactsForDXQ)
+            if DXQ_count >= 100:
+                DXQ_Level = DXQ_count // 100
+                if cls.MyMemberNumber in cSKCC.dxq_level:
+                    Award_DXQ_Level = cSKCC.dxq_level[cls.MyMemberNumber]
+                    if DXQ_Level > Award_DXQ_Level:
+                        print(f'FYI: You qualify for DXQx{DXQ_Level} but have only applied for DXQx{Award_DXQ_Level}')
+                else:
+                    print(f'FYI: You qualify for DXQx{DXQ_Level} but have not yet applied for it.')
+        
+        ### QRP ###
+        if 'QRP' in cConfig.GOALS:
+            # Calculate QRP points using hoisted constant
+            band_points = cls._QRP_BAND_POINTS_DISPLAY
+            
+            # Calculate points for 1xQRP (all contacts) and 2xQRP (only 2x contacts)
+            points_1x = 0.0
+            points_2x = 0.0
+            
+            for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
+                key_parts = qso_key.split('_')
+                if len(key_parts) >= 3:
+                    band = key_parts[1]
+                    points = band_points.get(band, 0.0)
+                    points_1x += points  # All contacts count for 1xQRP
+                    if qrp_type == 2:
+                        points_2x += points  # Only 2xQRP contacts count for 2xQRP
+            
+            # Check 1xQRP
+            if points_1x >= 300:
+                QRP_1x_Level = int(points_1x // 300)
+                if cls.MyMemberNumber in cSKCC.qrp_1x_level:
+                    Award_QRP_1x_Level = cSKCC.qrp_1x_level[cls.MyMemberNumber]
+                    if QRP_1x_Level > Award_QRP_1x_Level:
+                        print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have only applied for 1xQRP x{Award_QRP_1x_Level}')
+                else:
+                    print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have not yet applied for it.')
+            
+            # Check 2xQRP
+            if points_2x >= 150:
+                QRP_2x_Level = int(points_2x // 150)
+                if cls.MyMemberNumber in cSKCC.qrp_2x_level:
+                    Award_QRP_2x_Level = cSKCC.qrp_2x_level[cls.MyMemberNumber]
+                    if QRP_2x_Level > Award_QRP_2x_Level:
+                        print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have only applied for 2xQRP x{Award_QRP_2x_Level}')
+                else:
+                    print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have not yet applied for it.')
 
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
@@ -1281,154 +1476,220 @@ class cQSO:
         """
         base_increment = Levels[Class]
 
-        if Class == 'C':
-            # Centurion: 100, 200, 300... up to 1000 (Cx10)
-            # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
-            if Total < 1000:  # Cx1 through Cx10
-                since_last = Total % base_increment
-                remaining = base_increment - since_last
-                x_factor = (Total + base_increment) // base_increment
-            else:  # Cx15, Cx20, Cx25, etc.
-                # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
-                # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
-
-                # Calculate current level
-                if Total >= 1500:
-                    # How many 500-increments past 1500?
-                    increments_past_1500 = (Total - 1500) // 500
-                    current_x_factor = 15 + (increments_past_1500 * 5)
-
-                    # Next level
-                    next_x_factor = current_x_factor + 5
+        match Class:
+            case 'C':
+                # Centurion: 100, 200, 300... up to 1000 (Cx10)
+                # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
+                if Total < 1000:  # Cx1 through Cx10
+                    since_last = Total % base_increment
+                    remaining = base_increment - since_last
+                    x_factor = (Total + base_increment) // base_increment
+                else:  # Cx15, Cx20, Cx25, etc.
+                    # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
                     # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
-                    # For next_x_factor, calculate n: n = (next_x_factor - 10) / 5
-                    n = (next_x_factor - 10) // 5
-                    next_target = 1000 + (n * 500)
+
+                    # Calculate current level
+                    if Total >= 1500:
+                        # How many 500-increments past 1500?
+                        increments_past_1500 = (Total - 1500) // 500
+                        current_x_factor = 15 + (increments_past_1500 * 5)
+
+                        # Next level
+                        next_x_factor = current_x_factor + 5
+                        next_target = 1000 + ((next_x_factor - 10) // 5) * 500
+                    else:
+                        # Between 1000 and 1500, working toward Cx15
+                        next_x_factor = 15
+                        next_target = 1500
+
+                    remaining = next_target - Total
+                    x_factor = next_x_factor
+
+            case 'T':
+                # Tribune: Must be Centurion first
+                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
+                if not cQSO.MyC_Date:
+                    # Must be Centurion first
+                    remaining = 999999  # Large number to indicate not eligible
+                    x_factor = 0
+                elif Total < 50:
+                    # Working toward Tx1
+                    remaining = 50 - Total
+                    x_factor = 1
+                elif Total < 500:
+                    # Tx1 through Tx10 (each level requires 50 contacts)
+                    current_level = Total // 50
+                    next_level = current_level + 1
+                    next_target = next_level * 50
+                    remaining = next_target - Total
+                    x_factor = next_level
+                elif Total < 750:
+                    # Between Tx10 and Tx15
+                    remaining = 750 - Total
+                    x_factor = 15
+                elif Total < 1000:
+                    # At Tx15, working toward Tx20
+                    remaining = 1000 - Total
+                    x_factor = 20
                 else:
-                    # Between 1000 and 1500, working toward Cx15
-                    next_x_factor = 15
-                    next_target = 1500
+                    # Tx20 and beyond (250-contact increments)
+                    increments_past_1000 = (Total - 1000) // 250
+                    current_x_factor = 20 + (increments_past_1000 * 5)
+                    next_x_factor = current_x_factor + 5
+                    next_target = 1000 + ((next_x_factor - 20) // 5) * 250
+                    remaining = next_target - Total
+                    x_factor = next_x_factor
 
-                remaining = next_target - Total
-                x_factor = next_x_factor
+            case 'S':
+                # Senator: Must have Tribune x8 (400 Tribune contacts) first
+                # Sx1=200, Sx2=400, Sx3=600, ..., Sx10=2000 (each requires 200 contacts)
+                tribune_contacts = len(cQSO.ContactsForT)
+                if tribune_contacts < 400:
+                    # Must have Tribune x8 (400 contacts) first
+                    remaining = 999999  # Large number to indicate not eligible
+                    x_factor = 0
+                elif Total < 200:
+                    # Working toward Sx1
+                    remaining = 200 - Total
+                    x_factor = 1
+                else:
+                    # Sx1 through Sx10 (each level requires 200 contacts)
+                    current_level = min(Total // 200, 10)
+                    if current_level >= 10:
+                        # Already at max Senator level
+                        remaining = 0
+                        x_factor = 10
+                    else:
+                        next_level = current_level + 1
+                        next_target = next_level * 200
+                        remaining = next_target - Total
+                        x_factor = next_level
 
-        elif Class == 'T':
-            # Tribune: 50, 100, 150... up to 500 (Tx10)
-            # Then Tx15 (750), Tx20 (1000), Tx25 (1250), etc. in increments of 250
-            if Total < 500:  # Tx1 through Tx10
+            case 'P':
+                # Prefix progression per SKCC rules
+                if Total <= 500_000:
+                    remaining = 500_001 - Total  # Need >500,000 for Px1
+                    x_factor = 1
+                elif Total <= 5_000_000:
+                    # Px1 through Px10 - calculate next level
+                    current_level = (Total - 1) // 500_000 + 1
+                    next_level = current_level + 1
+                    next_threshold = next_level * 500_000
+                    remaining = next_threshold + 1 - Total
+                    x_factor = next_level
+                else:
+                    # After 5M (Px10): levels go 15, 20, 25... with 2.5M increments
+                    # Calculate current level using same logic as calculate_current_award_level
+                    if Total <= 7_500_000:
+                        current_level = 10
+                        next_level = 15
+                        next_threshold = 7_500_000
+                    else:
+                        increments_past_7_5m = (Total - 7_500_001) // 2_500_000 + 1
+                        current_level = 10 + (increments_past_7_5m * 5)
+                        next_level = current_level + 5
+
+                        # Calculate threshold for next level
+                        # Px15: >7.5M, Px20: >10M, Px25: >12.5M
+                        levels_past_15 = (next_level - 15) // 5
+                        next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
+
+                    # For round numbers (10M, etc), don't add 1
+                    if next_threshold == PrefixThresholds.MILESTONE_10M:
+                        remaining = next_threshold - Total
+                    else:
+                        remaining = next_threshold + 1 - Total
+                    x_factor = next_level
+
+            case _:
+                # Default logic
                 since_last = Total % base_increment
                 remaining = base_increment - since_last
                 x_factor = (Total + base_increment) // base_increment
-            else:  # Tx15, Tx20, Tx25, etc.
-                # After 500: Tx15=750, Tx20=1000, Tx25=1250, Tx30=1500, Tx35=1750, Tx40=2000...
-                # Pattern: Tx(10+5n) = 500 + 250n where n >= 1
-
-                # Calculate current level
-                if Total >= 750:
-                    # How many 250-increments past 750?
-                    increments_past_750 = (Total - 750) // 250
-                    current_x_factor = 15 + (increments_past_750 * 5)
-
-                    # Next level
-                    next_x_factor = current_x_factor + 5
-                    # Pattern: Tx(10+5n) = 500 + 250n where n >= 1
-                    # For next_x_factor, calculate n: n = (next_x_factor - 10) / 5
-                    n = (next_x_factor - 10) // 5
-                    next_target = 500 + (n * 250)
-                else:
-                    # Between 500 and 750, working toward Tx15
-                    next_x_factor = 15
-                    next_target = 750
-
-                remaining = next_target - Total
-                x_factor = next_x_factor
-
-        else:
-            # S and P use original simple logic
-            if base_increment == 0:
-                raise ValueError(f"Invalid base increment (0) for class {Class}")
-            since_last = Total % base_increment
-            remaining = base_increment - since_last
-            x_factor = (Total + base_increment) // base_increment
 
         return remaining, x_factor
 
     @classmethod
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str]]:
+        """Elegant regex-based ADI parser using generator."""
+        with open(file_path, 'rb') as f:
+            content = f.read().decode('utf-8', 'ignore')
+        
+        # Split header from body using hoisted pattern
+        parts = cls._EOH_PATTERN.split(content, maxsplit=1)
+        body = parts[1].strip() if len(parts) > 1 else content
+        
+        # Process each QSO record using hoisted patterns
+        for record_text in filter(None, map(str.strip, cls._EOR_PATTERN.split(body))):
+            # Extract fields using hoisted regex pattern
+            fields = {k.upper(): v.strip() for k, v in cls._FIELD_PATTERN.findall(record_text)}
+            
+            # Handle alternate field names
+            if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
+                fields['QSO_DATE'] = fields['QSO_DATE_OFF']
+            if 'TIME_OFF' in fields and 'TIME_ON' not in fields:
+                fields['TIME_ON'] = fields['TIME_OFF']
+            
+            # Skip non-CW QSOs and incomplete records
+            if (fields.get('MODE', '').upper() != 'CW' or 
+                not all(k in fields for k in ('CALL', 'QSO_DATE', 'TIME_ON'))):
+                continue
+            
+            # Parse frequency
+            frequency = 0.0
+            if freq_str := fields.get('FREQ', ''):
+                try:
+                    frequency = float(freq_str) * 1000
+                except ValueError:
+                    pass
+            
+            # Clean SKCC number
+            skcc_number = ''.join(filter(str.isdigit, fields.get('SKCC', '')))
+            
+            # Yield QSO tuple
+            yield (
+                fields['QSO_DATE'] + fields['TIME_ON'],
+                fields['CALL'].upper(),
+                fields.get('STATE', '').upper(),
+                frequency,
+                fields.get('COMMENT', ''),
+                skcc_number,
+                fields.get('TX_PWR', ''),
+                fields.get('RX_PWR', ''),
+                fields.get('DXCC', '')
+            )
+
+    @classmethod
     async def read_qsos_async(cls) -> None:
-        """Optimized QSO reading with chunked async processing for better memory efficiency."""
+        """Fast, simple QSO reading using generator."""
         AdiFileAbsolute = os.path.abspath(cConfig.ADI_FILE)
         cDisplay.print(f"\nReading QSOs for {cConfig.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
         cls.QSOs = []
         cls.AdiFileReadTimeStamp = os.path.getmtime(cConfig.ADI_FILE)
 
-        # Compile regex patterns once with error handling
         try:
-            eoh_pattern = re.compile(r'<eoh>', re.I)
-            eor_pattern = re.compile(r'<eor>', re.I)
-            field_pattern = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
-        except re.error as e:
-            print(f"Error compiling regex patterns: {e}")
-            return
-
-        try:
-            async with aiofiles.open(AdiFileAbsolute, 'rb') as file:  # type: ignore
-                # Read the file in chunks for better memory usage with large files
-                content = b''
-                chunk_size = 1024 * 1024  # 1MB chunks
-
-                while chunk := await file.read(chunk_size):
-                    content += chunk
-
-                # Decode content
-                text = content.decode('utf-8', 'ignore')
-
-                # Split header from body
-                parts = eoh_pattern.split(text, maxsplit=1)
-                if len(parts) < 2:
-                    print("Warning: Could not find EOH marker in ADIF file")
-                    Body = text
-                else:
-                    Body = parts[1].strip(' \t\r\n\x1a')
-
-                # Process each QSO record
-                for record_text in filter(None, map(str.strip, eor_pattern.split(Body))):
-                    # Extract fields
-                    record = {k.upper(): v for k, v in field_pattern.findall(record_text)}
-
-                    # Normalize QSO_DATE and TIME_ON fields
-                    record.setdefault('QSO_DATE', record.pop('QSO_DATE_OFF', None))
-                    record.setdefault('TIME_ON', record.pop('TIME_OFF', None))
-
-                    # Skip non-CW QSOs and incomplete records
-                    if not all(k in record for k in ('CALL', 'QSO_DATE', 'TIME_ON')) or record.get('MODE') != 'CW':
-                        continue
-
-                    # Frequency conversion to kHz
-                    freq_str = record.get('FREQ', '')
-                    fFrequency = 0.0
-                    if freq_str and freq_str.replace('.', '', 1).isdigit():
-                        fFrequency = float(freq_str) * 1000
-
-                    # Append QSO data
-                    cls.QSOs.append((
-                        record['QSO_DATE'] + record['TIME_ON'],
-                        record['CALL'],
-                        record.get('STATE', ''),
-                        fFrequency,
-                        record.get('COMMENT', '')
-                    ))
+            # Use generator in thread pool for async operation
+            import asyncio
+            from concurrent.futures import ThreadPoolExecutor
+            
+            loop = asyncio.get_event_loop()
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                cls.QSOs = await loop.run_in_executor(
+                    executor,
+                    lambda: list(cls._parse_adi_generator(AdiFileAbsolute))
+                )
 
         except Exception as e:
-            print(f"Error reading ADIF file: {e}")
+            cDisplay.print(f"Error reading ADIF file: {e}")
             return
 
         # Sort QSOs by date
         cls.QSOs.sort(key=lambda qso: qso[0])
 
-        # Process and map QSOs by member number with batched operations
+        # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1445,13 +1706,212 @@ class cQSO:
 
 
     @classmethod
+    def print_dx_awards_progress(cls) -> None:
+        """Print DX award progress in the main awards progress section."""
+        # DXC: Unique countries (100 per level)
+        dxc_count = len(cls.ContactsForDXC)
+        if dxc_count == 0:
+            print('DXC: Have 0 countries. Need DXCC codes in ADI file or member data.')
+        else:
+            # Calculate current level and remaining for next level
+            if dxc_count < 100:
+                # Working toward initial DXC
+                remaining = 100 - dxc_count
+                print(f'DXC: Have {dxc_count}. DXC requires 100 ({remaining} more)')
+            else:
+                # Calculate multiplier level
+                current_level = dxc_count // 100
+                next_level = current_level + 1
+                next_target = next_level * 100
+                remaining = next_target - dxc_count
+                
+                if current_level >= 10:
+                    # Max level reached
+                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}.')
+                else:
+                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target:,} ({remaining:,} more)')
+        
+        # DXQ: Unique member QSOs from foreign countries (100 per level)
+        dxq_count = len(cls.ContactsForDXQ)
+        if dxq_count == 0:
+            print('DXQ: Have 0 foreign member QSOs.')
+        else:
+            # Calculate current level and remaining for next level
+            if dxq_count < 100:
+                # Working toward initial DXQ
+                remaining = 100 - dxq_count
+                print(f'DXQ: Have {dxq_count}. DXQ requires 100 ({remaining} more)')
+            else:
+                # Calculate multiplier level
+                current_level = dxq_count // 100
+                next_level = current_level + 1
+                next_target = next_level * 100
+                remaining = next_target - dxq_count
+                
+                if current_level >= 10:
+                    # Max level reached
+                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}.')
+                else:
+                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target:,} ({remaining:,} more)')
+    
+    @classmethod
+    def print_qrp_awards_progress(cls) -> None:
+        """Print QRP award progress in the main awards progress section."""
+        if not cls.ContactsForQRP:
+            print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
+            return
+
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
+
+        # Calculate points for ALL QRP contacts (both 1x and 2x count toward 1xQRP)
+        points_all: float = 0.0
+        points_2x_only: float = 0.0
+        count_all: int = 0
+        count_2x_only: int = 0
+
+        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
+            # Extract band from key format: "member_band_date"
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 3:
+                band: str = key_parts[1]
+            else:
+                band = ""
+            points: float = band_points.get(band, 0.0)
+            
+            # All QRP contacts count toward 1xQRP
+            points_all += points
+            count_all += 1
+            
+            # Only 2xQRP contacts count toward 2xQRP
+            if qrp_type == 2:
+                points_2x_only += points
+                count_2x_only += 1
+
+        # Display progress in awards progress format
+        # For 1xQRP: Show ALL QRP contacts (matching gold standard)
+        if count_all > 0:
+            remaining_1x: float = max(0.0, 300.0 - points_all)
+            if points_all >= 300.0:
+                current_level = int(points_all // 300)
+                next_level = current_level + 1
+                next_target = next_level * 300
+                remaining_next = next_target - points_all
+                print(f'QRP 1x: Have {count_all} which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+            else:
+                print(f'QRP 1x: Have {count_all}. 1xQRP requires 300 points ({remaining_1x:.0f} more)')
+        
+        # For 2xQRP: Show only 2xQRP contacts
+        if count_2x_only > 0:
+            remaining_2x: float = max(0.0, 150.0 - points_2x_only)
+            if points_2x_only >= 150.0:
+                current_level = int(points_2x_only // 150)
+                next_level = current_level + 1
+                next_target = next_level * 150
+                remaining_next = next_target - points_2x_only
+                print(f'QRP 2x: Have {count_2x_only} which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+            else:
+                print(f'QRP 2x: Have {count_2x_only}. 2xQRP requires 150 points ({remaining_2x:.0f} more)')
+        
+        # If we have no qualifying contacts, show what's needed
+        if count_all == 0:
+            print('QRP 1x: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
+
+    @classmethod
+    def print_qrp_progress(cls) -> None:
+        """Print QRP award progress."""
+        if not cls.ContactsForQRP:
+            print('QRP: No qualifying contacts found (TX power must be <= 5W)')
+            return
+
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
+
+        # Calculate points for each QRP type
+        points_1x: float = 0.0
+        points_2x: float = 0.0
+        count_1x: int = 0
+        count_2x: int = 0
+
+        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
+            # Extract band from key format: "member_band_date"
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 3:
+                band: str = key_parts[1]
+            else:
+                band = ""
+            points: float = band_points.get(band, 0.0)
+            
+            if qrp_type == 1:
+                points_1x += points
+                count_1x += 1
+            else:
+                points_2x += points
+                count_2x += 1
+
+        # Display progress
+        if count_1x > 0:
+            progress_1x: float = (points_1x / 300.0) * 100.0
+            print(f'QRP 1x: {count_1x} contacts, {points_1x:.1f} points ({progress_1x:.1f}% of 300 required)')
+        
+        if count_2x > 0:
+            progress_2x: float = (points_2x / 150.0) * 100.0
+            print(f'QRP 2x: {count_2x} contacts, {points_2x:.1f} points ({progress_2x:.1f}% of 150 required)')
+
+    @classmethod
     def print_progress(cls) -> None:
         def print_remaining(Class: str, Total: int) -> None:
             Remaining, X_Factor = cQSO.calculate_numerics(Class, Total)
 
             if Class in cConfig.GOALS:
-                Abbrev = cUtil.abbreviate_class(Class, X_Factor)
-                print(f'Total worked towards {Class}: {Total:,}, only need {Remaining:,} more for {Abbrev}.')
+                # Calculate current qualifying level
+                current_level = cls.calculate_current_award_level(Class, Total)
+                next_x_factor = X_Factor
+
+                # Format in requested style
+                # Use current qualifying level for display
+                display_level = current_level
+
+                match Class:
+                    case 'C':
+                        if display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Not yet qualified for C
+                            print(f'{Class}: Have {Total:,}. C requires 100 ({Remaining:,} more)')
+                    case 'T':
+                        if not cls.MyC_Date:
+                            print(f'{Class}: Tribune award requires Centurion first. Apply for C before working toward T.')
+                        elif display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Working toward T
+                            print(f'{Class}: Have {Total:,}. T requires 50 ({Remaining:,} more)')
+                    case 'S':
+                        tribune_contacts = len(cls.ContactsForT)
+                        if tribune_contacts < 400:
+                            print(f'{Class}: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+                        elif display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Working toward S
+                            print(f'{Class}: Have {Total:,}. S requires 200 ({Remaining:,} more)')
+                    case 'P':
+                        if display_level >= 1:
+                            current_abbrev = cUtil.abbreviate_class(Class, display_level)
+                            next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                        else:
+                            # Working toward P
+                            print(f'{Class}: Have {Total:,}. Px1 requires >500,000 ({Remaining:,} more)')
+                    case _:
+                        print(f'{Class}: Have {Total:,}. Need {Remaining:,} more for next level.')
 
         print('')
 
@@ -1463,6 +1923,9 @@ class cQSO:
 
         print(f'BANDS: {", ".join(str(Band) for Band in cConfig.BANDS)}')
 
+        print('')
+        print('*** Awards Progress ***')
+
         print_remaining('C', len(cls.ContactsForC))
 
         if cls.MyC_Date:
@@ -1472,6 +1935,12 @@ class cQSO:
             print_remaining('S', len(cls.ContactsForS))
 
         print_remaining('P', cls.calc_prefix_points())
+
+        if 'QRP' in cConfig.GOALS:
+            cls.print_qrp_awards_progress()
+        
+        if 'DX' in cConfig.GOALS:
+            cls.print_dx_awards_progress()
 
         def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
@@ -1484,7 +1953,7 @@ class cQSO:
                 else:
                     Need = f'only need {",".join(RemainingStates)}'
 
-            print(f'Total worked towards {Class}: {len(QSOs)}, {Need}.')
+            print(f'{Class}: Have {len(QSOs)}, {Need}')
 
         if 'WAS' in cConfig.GOALS:
             remaining_states('WAS', cls.ContactsForWAS)
@@ -1506,11 +1975,52 @@ class cQSO:
 
 
     @classmethod
+    def _check_cts_goal(cls, award_type: str, member_number: str, contacts_dict: dict[str, Any],
+                        my_award_date: str) -> str | None:
+        """Helper method to check C/T/S award goals - reduces code duplication."""
+        if member_number not in contacts_dict:
+            if not my_award_date:
+                # Working toward initial award
+                return award_type
+            else:
+                # Already have award, working toward multipliers
+                _, x_factor = cQSO.calculate_numerics(award_type, len(contacts_dict))
+                return cUtil.abbreviate_class(award_type, x_factor)
+        return None
+    
+    @classmethod
+    def _check_cts_target(cls, award_type: str, member_number: str, their_award_date: str,
+                          level_dict: dict[str, int], date1: str, date2: str) -> str | None:
+        """Helper method to check C/T/S target awards - reduces code duplication."""
+        if not their_award_date:
+            # They're working toward initial award
+            if member_number not in cls.QSOsByMemberNumber or all(
+                qso_date <= date1 or qso_date <= date2
+                for qso_date in cls.QSOsByMemberNumber[member_number]
+            ):
+                return award_type
+        else:
+            # They already have award, working toward multipliers
+            next_level = level_dict[member_number] + 1
+            if next_level <= 10 and (
+                member_number not in cls.QSOsByMemberNumber or all(
+                    qso_date <= date1 or qso_date <= date2
+                    for qso_date in cls.QSOsByMemberNumber[member_number]
+                )
+            ):
+                return f'{award_type}x{next_level}'
+        return None
+
+    @classmethod
     def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
         if TheirCallSign not in cSKCC.members or TheirCallSign == cConfig.MY_CALLSIGN:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
+
+        # Don't spot inactive members
+        if TheirMemberEntry.get('mbr_status') == 'IA':
+            return []
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
         TheirS_Date       = cUtil.effective(TheirMemberEntry['s_date'])
@@ -1522,26 +2032,23 @@ class cQSO:
             if (fFrequency and cSKCC.is_on_warc_frequency(fFrequency)) or not cSKCC.is_during_sprint(cFastDateTime.now_gmt()):
                 GoalHitList.append('BRAG')
 
-        if 'C' in cConfig.GOALS and not cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
-            GoalHitList.append('C')
+        # C award processing - handles both initial C and multipliers intelligently
+        if 'C' in cConfig.GOALS:
+            result = cls._check_cts_goal('C', TheirMemberNumber, cls.ContactsForC, cls.MyC_Date)
+            if result:
+                GoalHitList.append(result)
 
-        if 'CXN' in cConfig.GOALS and cls.MyC_Date and TheirMemberNumber not in cls.ContactsForC:
-            _, x_factor = cQSO.calculate_numerics('C', len(cls.ContactsForC))
-            GoalHitList.append(cUtil.abbreviate_class('C', x_factor))
+        # T award processing - handles both initial T and multipliers intelligently
+        if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date:
+            result = cls._check_cts_goal('T', TheirMemberNumber, cls.ContactsForT, cls.MyT_Date)
+            if result:
+                GoalHitList.append(result)
 
-        if 'T' in cConfig.GOALS and cls.MyC_Date and not cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            GoalHitList.append('T')
-
-        if 'TXN' in cConfig.GOALS and cls.MyT_Date and TheirC_Date and TheirMemberNumber not in cls.ContactsForT:
-            _, X_Factor = cQSO.calculate_numerics('T', len(cls.ContactsForT))
-            GoalHitList.append(cUtil.abbreviate_class('T', X_Factor))
-
-        if 'S' in cConfig.GOALS and cls.MyTX8_Date and not cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            GoalHitList.append('S')
-
-        if 'SXN' in cConfig.GOALS and cls.MyS_Date and TheirT_Date and TheirMemberNumber not in cls.ContactsForS:
-            _, X_Factor = cQSO.calculate_numerics('S', len(cls.ContactsForS))
-            GoalHitList.append(cUtil.abbreviate_class('S', X_Factor))
+        # S award processing - handles both initial S and multipliers intelligently
+        if 'S' in cConfig.GOALS and cls.MyTX8_Date and TheirT_Date:
+            result = cls._check_cts_goal('S', TheirMemberNumber, cls.ContactsForS, cls.MyS_Date)
+            if result:
+                GoalHitList.append(result)
 
         if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
             GoalHitList.append('WAS')
@@ -1561,12 +2068,24 @@ class cQSO:
             _, x_factor = cQSO.calculate_numerics('P', cls.calc_prefix_points())
 
             if (contact := cls.ContactsForP.get(prefix)):
-                # Ensure both values are integers for comparison
-                contact_member_number = int(contact[2]) if isinstance(contact[2], str) else contact[2]
-                if i_their_member_number > contact_member_number:
-                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact_member_number})')
+                if i_their_member_number > contact[2]:
+                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact[2]})')
             else:
                 GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(new +{i_their_member_number})')
+        
+        if 'DX' in cConfig.GOALS:
+            # Get DXCC code from member data
+            dxcc_code = TheirMemberEntry.get('dxcode', '').strip()
+            if dxcc_code and dxcc_code.isdigit():
+                home_dxcc = cls.MyDXCC_Code
+                
+                # Check DXC (unique countries)
+                if dxcc_code not in cls.ContactsForDXC:
+                    GoalHitList.append('DXC')
+                
+                # Check DXQ (foreign member QSOs)
+                if dxcc_code != home_dxcc and TheirMemberNumber not in cls.ContactsForDXQ:
+                    GoalHitList.append('DXQ')
 
         return GoalHitList
 
@@ -1576,6 +2095,10 @@ class cQSO:
             return []
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
+
+        # Don't spot inactive members
+        if TheirMemberEntry.get('mbr_status') == 'IA':
+            return []
         TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
@@ -1585,60 +2108,26 @@ class cQSO:
 
         TargetHitList: list[str] = []
 
-        if 'C' in cConfig.TARGETS and not TheirC_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('C')
+        # C target processing - handles both initial C and multipliers intelligently
+        if 'C' in cConfig.TARGETS:
+            result = cls._check_cts_target('C', TheirMemberNumber, TheirC_Date, 
+                                         cSKCC.centurion_level, TheirJoin_Date, cls.MyJoin_Date)
+            if result:
+                TargetHitList.append(result)
 
-        if 'CXN' in cConfig.TARGETS and TheirC_Date:
-            NextLevel = cSKCC.centurion_level[TheirMemberNumber] + 1
+        # T target processing - handles both initial T and multipliers intelligently
+        if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
+            result = cls._check_cts_target('T', TheirMemberNumber, TheirT_Date,
+                                         cSKCC.tribune_level, TheirC_Date, cls.MyC_Date)
+            if result:
+                TargetHitList.append(result)
 
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirJoin_Date or qso_date <= cls.MyJoin_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Cx{NextLevel}')
-
-
-        if 'T' in cConfig.TARGETS and TheirC_Date and not TheirT_Date and cls.MyC_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('T')
-
-        if 'TXN' in cConfig.TARGETS and TheirT_Date and cls.MyC_Date:
-            NextLevel = cSKCC.tribune_level[TheirMemberNumber] + 1
-
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirC_Date or qso_date <= cls.MyC_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Tx{NextLevel}')
-
-        if 'S' in cConfig.TARGETS and TheirTX8_Date and not TheirS_Date and cls.MyT_Date:
-            if TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
-                for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-            ):
-                TargetHitList.append('S')
-
-        if 'SXN' in cConfig.TARGETS and TheirS_Date and cls.MyT_Date:
-            NextLevel = cSKCC.senator_level[TheirMemberNumber] + 1
-
-            if NextLevel <= 10 and (
-                TheirMemberNumber not in cls.QSOsByMemberNumber or all(
-                    qso_date <= TheirTX8_Date or qso_date <= cls.MyT_Date
-                    for qso_date in cls.QSOsByMemberNumber[TheirMemberNumber]
-                )
-            ):
-                TargetHitList.append(f'Sx{NextLevel}')
+        # S target processing - handles both initial S and multipliers intelligently
+        if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
+            result = cls._check_cts_target('S', TheirMemberNumber, TheirS_Date,
+                                         cSKCC.senator_level, TheirTX8_Date, cls.MyT_Date)
+            if result:
+                TargetHitList.append(result)
 
         return TargetHitList
 
@@ -1673,7 +2162,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -1683,15 +2172,7 @@ class cQSO:
             if not QsoCallSign or QsoCallSign == 'K3Y':
                 continue
 
-            # Check if callsign exists in members database
-            if QsoCallSign not in cSKCC.members:
-                continue
-
             MainCallSign = cSKCC.members[QsoCallSign]['main_call']
-
-            # Check if main callsign exists in members database
-            if MainCallSign not in cSKCC.members:
-                continue
 
             TheirMemberEntry  = cSKCC.members[MainCallSign]
             TheirMemberNumber = TheirMemberEntry['plain_number']
@@ -1711,14 +2192,8 @@ class cQSO:
 
                     BragOkay = OnWarcFreq or (not DuringSprint)
 
-                    #print(BragOkay, DuringSprint, OnWarcFreq, QsoFreq, QsoDate)
-
                     if TheirMemberNumber not in cls.Brag and BragOkay:
                         cls.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
-                        #print('Brag contact: {} on {} {}'.format(QsoCallSign, QsoDate, QsoFreq))
-                    else:
-                        #print('Not brag eligible: {} on {}  {}  warc: {}  sprint: {}'.format(QsoCallSign, QsoDate, QsoFreq, OnWarcFreq, DuringSprint))
-                        pass
 
         if Print and 'BRAG' in cConfig.GOALS:
             Year = DateOfInterestGMT.year()
@@ -1765,102 +2240,199 @@ class cQSO:
 
         # Define key dates once for efficiency
         eligible_dates = {
-            'prefix': '20130101000000',
-            'tribune': '20070301000000',
-            'senator': '20130801000000',
-            'was_c': '20110612000000',
-            'was_ts': '20160201000000'
+            'prefix': AwardDates.PREFIX_START,
+            'tribune': AwardDates.TRIBUNE_START,
+            'senator': AwardDates.SENATOR_START,
+            'was_c': AwardDates.WAS_C_START,
+            'was_ts': AwardDates.WAS_TS_START
         }
+
+        # Create reverse lookup for SKCC numbers to callsigns (for GetSKCCFromCall efficiency)
+        skcc_number_to_call: dict[str, str] = {}
+        for call, member_data in cSKCC.members.items():
+            skcc_nr = member_data['plain_number']
+            # Use the actual callsign (not main_call) for direct member number lookup
+            # This handles cases where a callsign has its own member number
+            skcc_number_to_call[skcc_nr] = call
 
         # Batch process all QSOs
         k3y_start = f'{cConfig.K3Y_YEAR}0102000000'
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC = Contact
+
 
             # Skip invalid callsigns
             if QsoCallSign in ('K9SKC', 'K3Y'):
                 continue
 
-            QsoCallSign = cSKCC.extract_callsign(QsoCallSign)
-            if not QsoCallSign:
+            # Lookup member using helper method
+            mbr_skcc_nr, found_call, is_historical_member = cls._lookup_member_from_qso(QsoSKCC, QsoCallSign, skcc_number_to_call)
+
+            if not mbr_skcc_nr or not found_call:
                 continue
+            # For prefix processing, we need to use the ORIGINAL logged callsign, not the main_call
+            # Store the found_call for member data lookup but keep QsoCallSign as logged
+            MemberLookupCall = found_call
 
-            # Check if callsign exists in members database
-            if QsoCallSign not in cSKCC.members:
-                continue
-
-            # Get member data once
-            MainCallSign = cSKCC.members[QsoCallSign]['main_call']
-
-            # Check if main callsign exists in members database
-            if MainCallSign not in cSKCC.members:
-                continue
-
-            TheirMemberEntry = cSKCC.members[MainCallSign]
+            # Get member data using the determined SKCC number (matches Xojo line 315)
+            # For member number lookup matches, use the found call's data directly
+            if MemberLookupCall in cSKCC.members and cSKCC.members[MemberLookupCall]['plain_number'] == mbr_skcc_nr:
+                # Direct member number match - use this member's data
+                TheirMemberEntry = cSKCC.members[MemberLookupCall]
+                MainCallSign = MemberLookupCall
+            else:
+                # Fall back to main_call lookup
+                MainCallSign = cSKCC.members[MemberLookupCall]['main_call']
+                TheirMemberEntry = cSKCC.members[MainCallSign]
 
             TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
             TheirC_Date = cUtil.effective(TheirMemberEntry['c_date'])
             TheirT_Date = cUtil.effective(TheirMemberEntry['t_date'])
             TheirS_Date = cUtil.effective(TheirMemberEntry['s_date'])
-            TheirMemberNumber = TheirMemberEntry['plain_number']
+            # Use the determined member number from GetSKCCFromCall, not recalculated
+            TheirMemberNumber = mbr_skcc_nr
 
-            # K3Y processing
-            if 'K3Y' in cConfig.GOALS and QsoDate >= k3y_start and QsoDate < k3y_end:
-                if k3y_match := re.match(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', QsoComment, re.IGNORECASE):
-                    Suffix = k3y_match.group(1).upper()
+            # Main validation: QSO date >= member join date AND not working yourself (matches Xojo line 318)
+            # For historical members, we assume join date validation passes since QSO explicitly references that member
+            date_validation_passes = (is_historical_member or good(QsoDate, TheirJoin_Date, cls.MyJoin_Date))
 
-                    if Band := cSKCC.which_arrl_band(QsoFreq):
-                        if Suffix not in cls.ContactsForK3Y:
-                            cls.ContactsForK3Y[Suffix] = {}
-                        cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
+            if date_validation_passes and TheirMemberNumber != cls.MyMemberNumber:
 
-            # Prefix processing
-            if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date, eligible_dates['prefix']):
-                if TheirMemberNumber != cls.MyMemberNumber:
-                    if prefix_match := cQSO.Prefix_RegEx.match(QsoCallSign):
-                        Prefix = prefix_match.group(1)
-                        iTheirMemberNumber = int(TheirMemberNumber)
+                # K3Y processing
+                if 'K3Y' in cConfig.GOALS and QsoDate >= k3y_start and QsoDate < k3y_end:
+                    if k3y_match := re.match(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', QsoComment, re.IGNORECASE):
+                        Suffix = k3y_match.group(1).upper()
 
-                        if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
-                            FirstName = cSKCC.members[QsoCallSign]['name']
-                            cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, FirstName)
+                        if Band := cSKCC.which_arrl_band(QsoFreq):
+                            if Suffix not in cls.ContactsForK3Y:
+                                cls.ContactsForK3Y[Suffix] = {}
+                            cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
-            # Process C, T, S in one batch
-            if good(QsoDate, TheirJoin_Date, cls.MyJoin_Date):
-                if TheirMemberNumber not in cls.ContactsForC:
-                    cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                # Prefix processing - exact Xojo logic from AwardProcessorThreadWindow lines 485-511
+                # Xojo only checks if QSO date >= 20130101 (line 485)
+                if QsoDate >= eligible_dates['prefix']:
+                    # Split callsign by "/" and process each segment (Xojo logic)
+                    call_segments = QsoCallSign.split('/')
 
-            if good(QsoDate, TheirC_Date, cls.MyC_Date, eligible_dates['tribune']):
-                if TheirMemberNumber not in cls.ContactsForT:
+                    for pfx_call in call_segments:
+                        # GetSKCCFromCall(pfx_call, mbr_skcc_nr) logic from Xojo
+                        # Returns mbr_skcc_nr if pfx_call is found in member database, else empty string
+                        pfx_skcc_nr = ""  # Default to empty string like Xojo
+
+                        # Check if this segment exists in the member database
+                        if pfx_call in cSKCC.members:
+                            # Segment found in database - return the logged SKCC number
+                            pfx_skcc_nr = TheirMemberNumber
+
+                        # Xojo only processes if GetSKCCFromCall returned non-empty string
+                        if pfx_skcc_nr != "":
+                            # Extract prefix using exact Xojo logic from line 493-497
+                            if len(pfx_call) >= 3 and pfx_call[2].isdigit():
+                                Prefix = pfx_call[:3]  # First 3 characters
+                            else:
+                                Prefix = pfx_call[:2]  # First 2 characters
+
+                            iTheirMemberNumber = int(TheirMemberNumber)
+
+                            # Update if this is a new prefix or higher SKCC number (line 499-503)
+                            if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
+                                # Use the name from the segment's member data if found
+                                seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
+                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name)
+
+                            break  # Only process first valid segment (line 510)
+
+                # Process C, T, S in one batch
+                # For Centurion award: basic validation already done above
+                # Always update (last QSO wins, matching potential reference behavior)
+                cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+
+                if good(QsoDate, TheirC_Date, cls.MyC_Date, eligible_dates['tribune']):
                     cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-            if good(QsoDate, TheirT_Date, cls.MyTX8_Date, eligible_dates['senator']):
-                if TheirMemberNumber not in cls.ContactsForS:
+                if good(QsoDate, TheirT_Date, cls.MyTX8_Date, eligible_dates['senator']):
                     cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
-            # Process WAS entries for states
-            if QsoSPC in US_STATES:
-                # Base WAS
-                if TheirJoin_Date and QsoDate >= TheirJoin_Date and QsoDate >= cls.MyJoin_Date:
+                # Process WAS entries for states
+                if QsoSPC in US_STATES:
+                    # Base WAS - basic validation already done above
                     if QsoSPC not in cls.ContactsForWAS:
                         cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                # WAS variants
-                if QsoDate >= eligible_dates['was_c']:
-                    if TheirC_Date and QsoDate >= TheirC_Date:
-                        if QsoSPC not in cls.ContactsForWAS_C:
-                            cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    # WAS variants
+                    if QsoDate >= eligible_dates['was_c']:
+                        if TheirC_Date and QsoDate >= TheirC_Date:
+                            if QsoSPC not in cls.ContactsForWAS_C:
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                if QsoDate >= eligible_dates['was_ts']:
-                    if TheirT_Date and QsoDate >= TheirT_Date:
-                        if QsoSPC not in cls.ContactsForWAS_T:
-                            cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                    if QsoDate >= eligible_dates['was_ts']:
+                        if TheirT_Date and QsoDate >= TheirT_Date:
+                            if QsoSPC not in cls.ContactsForWAS_T:
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                    if TheirS_Date and QsoDate >= TheirS_Date:
-                        if QsoSPC not in cls.ContactsForWAS_S:
-                            cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        if TheirS_Date and QsoDate >= TheirS_Date:
+                            if QsoSPC not in cls.ContactsForWAS_S:
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+
+                # Process QRP contacts if QRP is a goal
+                if 'QRP' in cConfig.GOALS and QsoTxPwr and QsoFreq > 0:
+                    # Parse power - ensure it's numeric and <= 5 watts
+                    try:
+                        tx_power = float(QsoTxPwr.strip())
+                        if tx_power <= 5.0:
+                            # Determine QRP type: 1xQRP (TX only) or 2xQRP (TX + RX)
+                            qrp_type = 1  # Default to 1xQRP
+                            if QsoRxPwr and QsoRxPwr.strip():
+                                try:
+                                    rx_power = float(QsoRxPwr.strip())
+                                    if rx_power <= 5.0:
+                                        qrp_type = 2  # 2xQRP: both TX and RX <= 5W
+                                except (ValueError, TypeError):
+                                    pass  # Keep as 1xQRP if RX power is invalid
+                            
+                            # Determine band from frequency
+                            band = cls._frequency_to_band(QsoFreq)
+                            if band:
+                                # Use unique key for each QRP contact - QRP allows multiple contacts per member/band
+                                qrp_key = f"{TheirMemberNumber}_{band}_{QsoDate}"
+                                if qrp_key not in cls.ContactsForQRP:
+                                    cls.ContactsForQRP[qrp_key] = (QsoDate, TheirMemberNumber, MainCallSign, qrp_type)
+                    except (ValueError, TypeError):
+                        pass  # Skip invalid power values
+                
+                # Process DX contacts if DX is a goal
+                if 'DX' in cConfig.GOALS:
+                    # Get DXCC code - prioritize ADI file DXCC, fallback to member data
+                    dxcc_code = QsoDXCC.strip() if QsoDXCC else ''
+                    if not dxcc_code:
+                        # Try to get from member data
+                        dxcc_code = TheirMemberEntry.get('dxcode', '').strip()
+                    
+                    if dxcc_code and dxcc_code.isdigit():
+                        # Normalize DXCC code by converting to integer to remove leading zeros
+                        dxcc_code = str(int(dxcc_code))
+                        
+                        # Use user's DXCC code from membership data
+                        home_dxcc = cls.MyDXCC_Code
+                        
+                        # DXC: Count unique countries (date >= 20091219, allows one home country contact)
+                        if QsoDate >= '20091219':
+                            if dxcc_code == home_dxcc:
+                                # Home country - only allow one contact
+                                if not cls.DXC_HomeCountryUsed:
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                                    cls.DXC_HomeCountryUsed = True
+                            else:
+                                # Foreign country - count all unique DXCC entities
+                                if dxcc_code not in cls.ContactsForDXC:
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                        
+                        # DXQ: Count unique member QSOs from foreign countries (date >= 20090614, no home country)
+                        if QsoDate >= '20090614' and dxcc_code != home_dxcc:
+                            if TheirMemberNumber not in cls.ContactsForDXQ:
+                                cls.ContactsForDXQ[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
         # Generate output files
         QSOs_Dir = 'QSOs'
@@ -1876,6 +2448,8 @@ class cQSO:
         await cls.award_was_async('WAS-T', cls.ContactsForWAS_T)
         await cls.award_was_async('WAS-S', cls.ContactsForWAS_S)
         await cls.award_p_async(cls.ContactsForP)
+        await cls.award_qrp_async(cls.ContactsForQRP)
+        await cls.award_dx_async()
         await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
@@ -1883,11 +2457,134 @@ class cQSO:
             cls.print_k3y_contacts()
 
     @classmethod
+    async def award_dx_async(cls) -> None:
+        """Write DXC and DXQ award files."""
+        # Write DXC file (unique countries)
+        if cls.ContactsForDXC:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXC.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"DXC Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                await file.write("DXCC  Date        CallSign     Member#\n")
+                await file.write("-" * 40 + "\n")
+                
+                for dxcc_code, (qso_date, member_number, callsign) in sorted(cls.ContactsForDXC.items()):
+                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
+                
+                await file.write(f"\nTotal Countries: {len(cls.ContactsForDXC)} (Need: 100)\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXC):.1f}%\n")
+        
+        # Write DXQ file (foreign member QSOs)
+        if cls.ContactsForDXQ:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXQ.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"DXQ Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                await file.write("Date        CallSign     Member#\n")
+                await file.write("-" * 35 + "\n")
+                
+                for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]):
+                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
+                
+                await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
+                await file.write(f"Progress: {len(cls.ContactsForDXQ):.1f}%\n")
+    
+    @classmethod
+    async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
+        """Generate QRP award files with point calculations using generator-based streaming."""
+        import aiofiles
+
+        if not QSOs:
+            return
+
+        # QRP point values by band (using hoisted constant)
+        band_points = cls._QRP_BAND_POINTS_AWARDS
+
+        def qrp_2x_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
+            """Generator that yields QRP 2x contacts (TX and RX <= 5W), sorted by date."""
+            contacts: list[tuple[str, str, str, str, float]] = []
+            for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
+                if qrp_type == 2:  # QRP 2x: TX power <= 5W AND RX power <= 5W
+                    # Extract band from the key (format: "member_band_date")
+                    key_parts = qso_key.split('_')
+                    band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                    points: float = band_points.get(band, 0.0)
+                    contacts.append((qso_date, member_number, callsign, band, points))
+            
+            # Sort by date and yield
+            yield from sorted(contacts, key=lambda x: x[0])
+
+        # Write 1xQRP file (ALL QRP contacts count toward 1xQRP)
+        def all_qrp_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
+            """Generator that yields ALL QRP contacts (both 1x and 2x), sorted by date."""
+            contacts: list[tuple[str, str, str, str, float]] = []
+            for qso_key, (qso_date, member_number, callsign, _) in QSOs.items():
+                # ALL QRP contacts count toward 1xQRP award
+                key_parts = qso_key.split('_')
+                band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                points: float = band_points.get(band, 0.0)
+                contacts.append((qso_date, member_number, callsign, band, points))
+            
+            # Sort by date and yield
+            yield from sorted(contacts, key=lambda x: x[0])
+        
+        qrp_1x_generator = all_qrp_contacts_generator()
+        qrp_1x_first = next(qrp_1x_generator, None)
+        if qrp_1x_first is not None:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-1x.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"1xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                
+                total_points: float = 0.0
+                index = 1
+                
+                # Process first contact
+                _, member_number, callsign, band, points = qrp_1x_first
+                total_points += points
+                await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                index += 1
+                
+                # Process remaining contacts from generator
+                for _, member_number, callsign, band, points in qrp_1x_generator:
+                    total_points += points
+                    await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                    index += 1
+                
+                await file.write(f"\nTotal Points: {total_points:.1f} (Need: 300)\n")
+                await file.write(f"Progress: {total_points/3:.1f}%\n")
+
+        # Write 2xQRP file
+        qrp_2x_generator = qrp_2x_contacts_generator()
+        qrp_2x_first = next(qrp_2x_generator, None)
+        if qrp_2x_first is not None:
+            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-2x.txt', 'w', encoding='utf-8') as file:
+                await file.write(f"2xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
+                await file.write("=" * 50 + "\n\n")
+                
+                total_points: float = 0.0
+                index = 1
+                
+                # Process first contact
+                _, member_number, callsign, band, points = qrp_2x_first
+                total_points += points
+                await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                index += 1
+                
+                # Process remaining contacts from generator
+                for _, member_number, callsign, band, points in qrp_2x_generator:
+                    total_points += points
+                    await file.write(f"{index:>4} {member_number:>8} {callsign:<12} {band:<6} {points:>6.1f} {total_points:>8.1f}\n")
+                    index += 1
+                
+                await file.write(f"\nTotal Points: {total_points:.1f} (Need: 150)\n")
+                await file.write(f"Progress: {total_points*2/3:.1f}%\n")
+
+    @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
         """Async version of award_p to write files using aiofiles"""
         import aiofiles  # You'll need to add this to your imports
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', mode='w', encoding='utf-8') as file:  # type: ignore
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
             iPoints = 0
             for index, (_qso_date, prefix, member_number, first_name) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
@@ -1903,7 +2600,7 @@ class cQSO:
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', mode='w', encoding='utf-8') as File:  # type: ignore
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
             for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
                 Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
                 await File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
@@ -1915,7 +2612,7 @@ class cQSO:
 
         QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', mode='w', encoding='utf-8') as file:  # type: ignore
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
             for state in US_STATES:
                 if state in QSOsByState:
                     spc, date, callsign = QSOsByState[state]
@@ -1928,7 +2625,7 @@ class cQSO:
         """Async version of track_brag to write files using aiofiles"""
         import aiofiles
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', mode='w', encoding='utf-8') as file:  # type: ignore
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
                 sorted(QSOs.values()), start=1
             ):
@@ -2001,6 +2698,11 @@ class cQSO:
 
 class cSpotters:
     spotters: ClassVar[dict[str, tuple[int, list[int]]]] = {}
+    _columns_regex: ClassVar[re.Pattern[str]] = re.compile(
+        r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
+        r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
+        re.S
+    )
 
     @staticmethod
     def locator_to_latlong(locator: str) -> tuple[float, float]:
@@ -2060,8 +2762,8 @@ class cSpotters:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
-                async with session.get('https://reversebeacon.net/cont_includes/status.php?t=skt') as response:
+            async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
+                async with session.get(RBN_STATUS_URL) as response:
                     if response.status != 200:
                         print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
                         sys.exit()
@@ -2072,11 +2774,8 @@ class cSpotters:
 
         rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.S)
 
-        columns_regex = re.compile(
-            r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
-            r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
-            re.S
-        )
+        # Use hoisted regex pattern
+        columns_regex = cls._columns_regex
 
         # Process spotters in parallel
         processing_tasks: list[Coroutine[Any, Any, None]]  = []
@@ -2099,7 +2798,7 @@ class cSpotters:
 
             # Parse bands from csv string
             valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
-            bands = [int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands]
+            bands = list(int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands)
 
             cls.spotters[spotter] = (miles, bands)
         except ValueError:
@@ -2108,7 +2807,7 @@ class cSpotters:
     @classmethod
     def get_nearby_spotters(cls) -> list[tuple[str, int]]:
         spotters_sorted = sorted(cls.spotters.items(), key=lambda item: item[1][0])
-        nearbySpotters = [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS]
+        nearbySpotters = list((spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS)
         return nearbySpotters
 
     @classmethod
@@ -2117,27 +2816,38 @@ class cSpotters:
         return Miles
 
 class cSKCC:
+    _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
+    
     class cMemberEntry(TypedDict):
         name: str
         plain_number: str
         spc: str
+        dxcode: str
         join_date: str
         c_date: str
         t_date: str
         tx8_date: str
         s_date: str
         main_call: str
+        mbr_status: str
 
     members:         ClassVar[dict[str, cMemberEntry]] = {}
 
     centurion_level: ClassVar[dict[str, int]] = {}
+
     tribune_level:   ClassVar[dict[str, int]] = {}
     senator_level:   ClassVar[dict[str, int]] = {}
     was_level:       ClassVar[dict[str, int]] = {}
     was_c_level:     ClassVar[dict[str, int]] = {}
+
     was_t_level:     ClassVar[dict[str, int]] = {}
     was_s_level:     ClassVar[dict[str, int]] = {}
     prefix_level:    ClassVar[dict[str, int]] = {}
+    dxq_level:       ClassVar[dict[str, int]] = {}
+    dxc_level:       ClassVar[dict[str, int]] = {}
+    qrp_1x_level:    ClassVar[dict[str, int]] = {}
+    qrp_2x_level:    ClassVar[dict[str, int]] = {}
+
 
     # Cache for frequently accessed member data
     _member_cache:   ClassVar[dict[str, dict[str, str]]] = {}
@@ -2180,16 +2890,24 @@ class cSKCC:
                 cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'),
                 cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'),
                 cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'),
-                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php')
+                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php'),
+                cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'),
+                cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'),
+                cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'),
+                cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php')
             ]
 
-            async with asyncio.timeout(30):  # 30 second timeout
-                results = await asyncio.gather(*tasks)
+            try:
+                results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+            except asyncio.TimeoutError:
+                print("Timeout loading rosters")
+                return
 
             # Unpack results
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
             cls.was_level, cls.was_c_level, cls.was_t_level, \
-            cls.was_s_level, cls.prefix_level = results
+            cls.was_s_level, cls.prefix_level, cls.dxq_level, \
+            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level = results
 
             print("Successfully downloaded all award rosters.")
         except asyncio.TimeoutError:
@@ -2200,9 +2918,9 @@ class cSKCC:
             sys.exit(1)
 
     @classmethod
-    async def build_member_info_async(cls, CallSign: str) -> str:
+    def build_member_info(cls, CallSign: str) -> str:
         entry = cls.members[CallSign]
-        number, suffix = await cls.get_full_member_number_async(CallSign)
+        number, suffix = cls.get_full_member_number(CallSign)
 
         return f'({number:>5} {suffix:<4} {entry["name"]:<9.9} {entry["spc"]:>3})'
 
@@ -2291,8 +3009,8 @@ class cSKCC:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
-                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving award info: HTTP {response.status}")
                         return {}
@@ -2310,18 +3028,7 @@ class cSKCC:
             except ValueError:
                 continue  # Skip malformed lines
 
-            # Parse x_factor safely with bounds checking
-            if " " in cert_number:
-                parts = cert_number.split()
-                if len(parts) > 1 and len(parts[1]) > 1:
-                    try:
-                        x_factor = int(parts[1][1:])
-                    except (ValueError, IndexError):
-                        x_factor = 1
-                else:
-                    x_factor = 1
-            else:
-                x_factor = 1
+            x_factor = int(cert_number.split()[1][1:]) if " " in cert_number else 1
             level[member_number] = x_factor
 
             skcc_effective_date = cSKCC.normalize_skcc_date(effective_date)
@@ -2342,8 +3049,8 @@ class cSKCC:
 
         try:
             # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=cConfig.HTTP_TIMEOUT)) as session:
-                async with session.get(f"https://www.skccgroup.com/{URL}") as response:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+                async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving {Name} roster: HTTP {response.status}")
                         return {}
@@ -2353,38 +3060,30 @@ class cSKCC:
             return {}
 
         rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
-        columns_regex = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
+        # Use hoisted regex pattern
+        columns_regex = cSKCC._roster_columns_regex
 
-        result: dict[str, int] = {}
-        for row in rows[1:]:
-            cols = columns_regex.findall(row)
-            if cols and len(cols) >= 2:
-                member_number = cols[1]
-                cert_info = cols[0]
-
-                # Parse x_factor safely with bounds checking
-                if " " in cert_info:
-                    parts = cert_info.split()
-                    if len(parts) > 1 and len(parts[1]) > 1:
-                        try:
-                            x_factor = int(parts[1][1:])
-                        except (ValueError, IndexError):
-                            x_factor = 1
-                    else:
-                        x_factor = 1
-                else:
-                    x_factor = 1
-
-                result[member_number] = x_factor
-
-        return result
+        # For DX and QRP rosters, use SKCC number (column 2) as key
+        if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x']:
+            return {
+                (cols := columns_regex.findall(row))[2]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
+                for row in rows[1:]
+                if (cols := columns_regex.findall(row)) and len(cols) >= 3  # Ensure valid row data with SKCC number
+            }
+        else:
+            # For other rosters, use callsign (column 1) as key
+            return {
+                (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
+                for row in rows[1:]
+                if (cols := columns_regex.findall(row)) and len(cols) >= 2  # Ensure valid row data
+            }
 
     @classmethod
     async def read_skcc_data_async(cls) -> None | NoReturn:
         """Read SKCC member data asynchronously with improved error handling."""
         print('Retrieving SKCC award dates...')
 
-        url = 'https://www.skccgroup.com/membership_data/skccdata.txt'
+        url = SKCC_DATA_URL
 
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
@@ -2407,28 +3106,33 @@ class cSKCC:
             try:
                 fields = line.split("|")
                 (
-                    _number, current_call, name, _city, spc, other_calls, plain_number,_, join_date, c_date, t_date, tx8_date, s_date, _country
+                    number, current_call, name, spc, other_calls, dxcode, join_date, c_date, t_date, tx8_date, s_date, mbr_status, *_
                 ) = fields
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
                 continue
 
-            all_calls = [current_call] + [x.strip() for x in other_calls.split(",")] if other_calls else [current_call]
+            all_calls = [current_call] + list(x.strip() for x in other_calls.split(",")) if other_calls else [current_call]
+
+            # Derive plain number by removing suffix letters from SKCCNR
+            plain_number = re.sub(r'[A-Z]+$', '', number)
 
             for call in all_calls:
                 cls.members[call] = {
                     'name'         : name,
                     'plain_number' : plain_number,
                     'spc'          : spc,
+                    'dxcode'       : dxcode,
                     'join_date'    : cls.normalize_skcc_date(join_date),
                     'c_date'       : cls.normalize_skcc_date(c_date),
                     't_date'       : cls.normalize_skcc_date(t_date),
                     'tx8_date'     : cls.normalize_skcc_date(tx8_date),
                     's_date'       : cls.normalize_skcc_date(s_date),
                     'main_call'    : current_call,
+                    'mbr_status'   : mbr_status,
                 }
 
-        print(f"Successfully loaded data for {len(cls.members)} member callsigns")
+        print(f"Successfully loaded data for {len(cls.members):,} member callsigns")
 
     @classmethod
     def is_on_skcc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
@@ -2475,20 +3179,18 @@ class cSKCC:
         )
 
     @classmethod
-    async def get_full_member_number_async(cls, CallSign: str) -> tuple[str, str]:
-        """Async version to get a member's full number including suffix."""
+    def get_full_member_number(cls, CallSign: str) -> tuple[str, str]:
+        """Get a member's full number including suffix."""
         Entry = cls.members[CallSign]
         MemberNumber = Entry['plain_number']
 
         Suffix = ''
         Level = 1
 
-        # Use asyncio.gather to concurrently fetch member information
-        c_date, t_date, s_date = await asyncio.gather(
-            asyncio.to_thread(cUtil.effective, Entry['c_date']),
-            asyncio.to_thread(cUtil.effective, Entry['t_date']),
-            asyncio.to_thread(cUtil.effective, Entry['s_date'])
-        )
+        # Simple synchronous calls - no need for threading
+        c_date = cUtil.effective(Entry['c_date'])
+        t_date = cUtil.effective(Entry['t_date'])
+        s_date = cUtil.effective(Entry['s_date'])
 
         if s_date:
             Suffix = 'S'
@@ -2514,7 +3216,7 @@ class cSKCC:
         async def print_callsign_async(CallSign: str) -> None:
             Entry = cls.members[CallSign]
             MyNumber = cls.members[cConfig.MY_CALLSIGN]['plain_number']
-            Report = [await cls.build_member_info_async(CallSign)]
+            Report = [cls.build_member_info(CallSign)]
 
             if Entry['plain_number'] == MyNumber:
                 Report.append('(you)')
@@ -2572,7 +3274,6 @@ class cSKCC:
         print('')
 
 class cRBN:
-    dot_count: int = 0
 
     _connected: ClassVar[bool] = False
 
@@ -2586,74 +3287,131 @@ class cRBN:
                 [(ai[0], ai[4][0]) for ai in addr_info],
                 key=lambda x: x[0] != socket.AF_INET6  # Prioritize IPv6
             )
-        except socket.gaierror as e:
-            print(f"DNS resolution failed for {host}: {e}")
-            return []
-        except Exception as e:
-            print(f"Unexpected error during DNS resolution for {host}: {e}")
-            return []
+        except socket.gaierror:
+            return []  # Silently fail if DNS resolution fails
 
     @classmethod
     async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
-        """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4."""
+        """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4.
+        Includes robust connection handling with keepalive and timeout management."""
 
         reader: asyncio.StreamReader | None = None
         writer: asyncio.StreamWriter | None = None
+        retry_count = 0
 
         while True:
             # Resolve the hostname dynamically
             addresses: list[tuple[socket.AddressFamily, str]] = await cRBN.resolve_host(RBN_SERVER, RBN_PORT)
             if not addresses:
-                print(f"Error: No valid IP addresses found for {RBN_SERVER}. Retrying in 5 seconds...")
-                await asyncio.sleep(5)
+                retry_count += 1
+                backoff_time = min(5 * (2 ** min(retry_count - 1, 4)), 60)  # Exponential backoff, max 60s
+                print(f"Error: No valid IP addresses found for {RBN_SERVER}. Retrying in {backoff_time} seconds...")
+                await asyncio.sleep(backoff_time)
                 continue
 
             cls._connected = False
+            connection_succeeded = False
+            attempted_protocols: list[str] = []
+            error_messages: list[str] = []
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
+                attempted_protocols.append(protocol)
+
                 try:
-                    reader, writer = await asyncio.open_connection(ip, RBN_PORT, family=family)
+                    # Add connection timeout
+                    reader, writer = await asyncio.wait_for(
+                        asyncio.open_connection(ip, RBN_PORT, family=family),
+                        timeout=30.0  # 30 second connection timeout
+                    )
+
+                    # Enable TCP keepalive
+                    sock = writer.get_extra_info('socket')
+                    if sock:
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+                        # Set keepalive parameters if available (Linux/Unix)
+                        if hasattr(socket, 'TCP_KEEPIDLE'):
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 300)  # 5 minutes
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 60)  # 1 minute
+                            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)    # 3 probes
+
                     print(f"Connected to '{RBN_SERVER}' using {protocol}.")
                     cls._connected = True
+                    retry_count = 0  # Reset retry count on successful connection
 
                     # Authenticate with the RBN server
-                    await reader.readuntil(b"call: ")
+                    await asyncio.wait_for(reader.readuntil(b"call: "), timeout=10.0)
                     writer.write(f"{callsign}\r\n".encode("ascii"))
                     await writer.drain()
-                    await reader.readuntil(b">\r\n\r\n")
+                    await asyncio.wait_for(reader.readuntil(b">\r\n\r\n"), timeout=10.0)
 
-                    async for data in reader:
-                        yield data
-                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError):
-                    pass  # Silently ignore & retry
+                    # Main data reading loop with connection health monitoring
+                    while True:
+                        try:
+                            # Read data with timeout to detect stale connections
+                            data = await asyncio.wait_for(reader.read(8192), timeout=600.0)  # 10 minute timeout
+                            if not data:  # EOF received
+                                print("RBN connection closed by server.")
+                                break
+
+                            yield data
+
+                        except asyncio.TimeoutError:
+                            print("No data received from RBN for 10 minutes. Connection may be stale.")
+                            # Send a simple keepalive (empty line) to test connection
+                            try:
+                                writer.write(b"\r\n")
+                                await asyncio.wait_for(writer.drain(), timeout=5.0)
+                                print("Sent keepalive to RBN server.")
+                                continue
+                            except Exception:
+                                print("Keepalive failed. Reconnecting...")
+                                break
+
+                    connection_succeeded = True
+
+                except asyncio.TimeoutError:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Connection timeout ({protocol})")
+                except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Connection error ({protocol}): {type(e).__name__}")
                 except asyncio.CancelledError:
                     raise  # Ensure proper cancellation handling
-                except Exception:
-                    pass  # Silently ignore unexpected errors
+                except Exception as e:
+                    # Silent failure for IPv6, log for IPv4
+                    if protocol == "IPv4":
+                        error_messages.append(f"Unexpected error ({protocol}): {e}")
                 finally:
-                    # Cleanup connections properly with more robust error handling
+                    # Cleanup connections properly
+                    cls._connected = False
                     if writer is not None:
+                        writer.close()
                         try:
-                            if not writer.is_closing():
-                                writer.close()
                             await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-                        except asyncio.TimeoutError:
-                            # Force close if timeout occurs
-                            try:
-                                writer.transport.abort()
-                            except Exception:
-                                pass
-                        except Exception:
-                            # Handle any other cleanup errors silently
+                        except (asyncio.TimeoutError, Exception):
                             pass
 
-                if reader and writer:  # If connection succeeds, stop trying
+                if connection_succeeded:  # If connection worked, stop trying other IPs
                     break
 
-            if not cls._connected:
-                print(f"Connection to {RBN_SERVER} failed over both IPv6 and IPv4. Retrying in 5 seconds...")
-            await asyncio.sleep(5)
+            if not connection_succeeded:
+                retry_count += 1
+                backoff_time = min(5 * (2 ** min(retry_count - 1, 4)), 60)  # Exponential backoff, max 60s
+
+                # Show specific error messages, or generic message if no IPv4 errors
+                if error_messages:
+                    error_detail = "; ".join(error_messages)
+                    protocols_tried = " and ".join(attempted_protocols)
+                    print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. {error_detail}. Retrying in {backoff_time} seconds...")
+                else:
+                    # Only IPv6 was attempted and failed silently, or no specific errors
+                    protocols_tried = " and ".join(attempted_protocols)
+                    print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. Retrying in {backoff_time} seconds...")
+
+                await asyncio.sleep(backoff_time)
 
     @classmethod
     async def write_dots_task(cls) -> NoReturn:
@@ -2661,15 +3419,17 @@ class cRBN:
             await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)
 
             if cls._connected:
+                global _progress_dot_count
                 print('.', end='', flush=True)
-                cls.dot_count += 1
+                _progress_dot_count += 1
 
-                if cls.dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
+                if _progress_dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
                     print('', flush=True)
 
     @classmethod
     def dot_count_reset(cls) -> None:
-        cls.dot_count = 0
+        global _progress_dot_count
+        _progress_dot_count = 0
 
 async def get_version_async() -> str:
     """
@@ -2699,7 +3459,7 @@ async def get_version_async() -> str:
     return VERSION
 
 async def main_loop() -> None:
-    global config, SPOTTERS_NEARBY, Spotters
+    global config, Spotters
 
     print(f'SKCC Skimmer version {await get_version_async()}\n')
 
@@ -2764,8 +3524,8 @@ async def main_loop() -> None:
     await cSpotters.get_spotters_async()
 
     nearby_list_with_distance = cSpotters.get_nearby_spotters()
-    formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
-    SPOTTERS_NEARBY = [Spotter for Spotter, _ in nearby_list_with_distance]
+    formatted_nearby_list_with_distance = list(f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance)
+    cConfig.SPOTTERS_NEARBY = {Spotter for Spotter, _ in nearby_list_with_distance}
 
     print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
 
@@ -2785,13 +3545,19 @@ async def main_loop() -> None:
     print()
 
     try:
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(cQSO.watch_logfile_task())
-            tg.create_task(cSPOTS.handle_spots_task())
-            if cConfig.PROGRESS_DOTS.ENABLED:
-                tg.create_task(cRBN.write_dots_task())
-            if cConfig.SKED.ENABLED:
-                tg.create_task(cSked.sked_page_scraper_task_async())
+        # Create tasks for concurrent execution
+        tasks: list[asyncio.Task[None]] = [
+            asyncio.create_task(cQSO.watch_logfile_task()),
+            asyncio.create_task(cSPOTS.handle_spots_task()),
+        ]
+
+        if cConfig.PROGRESS_DOTS.ENABLED:
+            tasks.append(asyncio.create_task(cRBN.write_dots_task()))
+        if cConfig.SKED.ENABLED:
+            tasks.append(asyncio.create_task(cSked.sked_page_scraper_task_async()))
+
+        # Run all tasks concurrently
+        await asyncio.gather(*tasks)
     except (KeyboardInterrupt, asyncio.CancelledError):
         return
     except Exception:
