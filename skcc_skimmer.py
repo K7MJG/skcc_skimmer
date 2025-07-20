@@ -2018,8 +2018,8 @@ class cQSO:
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
 
-        # Don't spot inactive members
-        if TheirMemberEntry.get('mbr_status') == 'IA':
+        # Don't spot inactive members (IA=Inactive, SK=Silent Key)
+        if TheirMemberEntry.get('mbr_status') != 'A':
             return []
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
         TheirT_Date       = cUtil.effective(TheirMemberEntry['t_date'])
@@ -2096,8 +2096,8 @@ class cQSO:
 
         TheirMemberEntry  = cSKCC.members[TheirCallSign]
 
-        # Don't spot inactive members
-        if TheirMemberEntry.get('mbr_status') == 'IA':
+        # Don't spot inactive members (IA=Inactive, SK=Silent Key)
+        if TheirMemberEntry.get('mbr_status') != 'A':
             return []
         TheirJoin_Date    = cUtil.effective(TheirMemberEntry['join_date'])
         TheirC_Date       = cUtil.effective(TheirMemberEntry['c_date'])
