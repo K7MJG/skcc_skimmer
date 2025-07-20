@@ -1971,7 +1971,7 @@ class cQSO:
             NowGMT = cFastDateTime.now_gmt()
             MonthIndex = NowGMT.month()-1
             MonthName = cFastDateTime.MONTH_NAMES[MonthIndex]
-            print(f'Total worked towards {MonthName} Brag: {len(cls.Brag)}')
+            print(f'{MonthName} Brag: Have {len(cls.Brag)}')
 
 
     @classmethod
