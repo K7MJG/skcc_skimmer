@@ -1,0 +1,67 @@
+#!/bin/bash
+# SKCC Skimmer Runtime Script for Linux/macOS
+# Creates virtual environment if needed and runs the application
+
+set -e  # Exit on any error
+
+# Prevent Python from creating __pycache__ directories
+export PYTHONDONTWRITEBYTECODE=1
+
+# Check if virtual environment exists, create if not
+if [ ! -d .venv ]; then
+    # Check Python version before creating venv
+    if ! python3 -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
+        echo "Error: Python 3.11 or higher is required"
+        echo "Current Python version: $(python3 --version 2>/dev/null || echo 'Not found')"
+        echo "Please install Python 3.11+ and try again"
+        exit 1
+    fi
+    
+    echo "Creating Python virtual environment..."
+    python3 -m venv .venv || {
+        echo "Error: Failed to create virtual environment"
+        echo "Make sure Python 3.11+ is installed and working correctly"
+        exit 1
+    }
+    
+    echo "Installing required packages..."
+    .venv/bin/python -m pip install --upgrade pip >/dev/null 2>&1
+    .venv/bin/python -m pip install -r requirements.txt >/dev/null 2>&1 || {
+        echo "Error: Failed to install requirements"
+        exit 1
+    }
+fi
+
+# Generate version stamp if .git exists (directory or file for submodules)
+if [ -d .git ] || [ -f .git ]; then
+    # Try to get tag first
+    if VERSION=$(git describe --tags --exact-match HEAD 2>/dev/null); then
+        GIT_SHA=$(git rev-list -n 1 "$VERSION")
+    else
+        # No tag, use current commit
+        GIT_SHA=$(git rev-parse HEAD)
+        VERSION=$(git rev-parse --short HEAD)
+    fi
+    
+    # Check for modified files
+    if [ -n "$(git status --porcelain)" ]; then
+        VERSION="${VERSION}-"
+    fi
+    
+    # Get commit date and short SHA
+    COMMIT_DATE=$(git show -s --format=%as "$GIT_SHA")
+    SHORT_SHA=$(git rev-parse --short "$GIT_SHA")
+    
+    # Create version stamp
+    if [ "$VERSION" = "$SHORT_SHA" ]; then
+        VERSION_STAMP="$VERSION / $COMMIT_DATE"
+    else
+        VERSION_STAMP="$VERSION / $COMMIT_DATE ($SHORT_SHA)"
+    fi
+    
+    # Write cVersion.py
+    echo "VERSION = '$VERSION_STAMP'" > cVersion.py
+fi
+
+# Run the application with all command line arguments
+.venv/bin/python skcc_skimmer.py "$@"
