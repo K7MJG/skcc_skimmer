@@ -189,7 +189,13 @@ class cUtil:
     @staticmethod
     def handle_shutdown(_signum: int, _frame: object | None = None) -> None:
         """Exits immediately when Ctrl+C is detected."""
-        # Force immediate exit without any cleanup
+        # Print a clean exit message and force immediate exit
+        try:
+            print("\n\nExiting...")
+            sys.stdout.flush()
+        except:
+            pass
+        # Force immediate exit without any cleanup or traceback
         os._exit(0)
 
     @staticmethod
@@ -200,6 +206,12 @@ class cUtil:
             while True:
                 await asyncio.sleep(0.1)
         except KeyboardInterrupt:
+            # Print a clean exit message and force immediate exit
+            try:
+                print("\n\nExiting...")
+                sys.stdout.flush()
+            except:
+                pass
             os._exit(0)
 
     @staticmethod
@@ -3564,4 +3576,24 @@ async def main_loop() -> None:
         return
 
 if __name__ == "__main__":
-    asyncio.run(main_loop())
+    try:
+        asyncio.run(main_loop())
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        # Clean exit on Ctrl+C - no traceback
+        try:
+            print("\n\nExiting...")
+            sys.stdout.flush()
+        except:
+            pass
+        os._exit(0)
+    except SystemExit:
+        # Allow normal sys.exit() calls to proceed
+        raise
+    except Exception as e:
+        # Show unexpected errors but exit cleanly
+        try:
+            print(f"\nUnexpected error: {e}")
+            sys.stdout.flush()
+        except:
+            pass
+        os._exit(1)
