@@ -2,13 +2,16 @@
 REM SKCC Skimmer Runtime Script for Windows
 REM Creates virtual environment if needed and runs the application
 
+REM Enable delayed variable expansion for use in for loops
+setlocal enabledelayedexpansion
+
 REM Prevent Python from creating __pycache__ directories
 set PYTHONDONTWRITEBYTECODE=1
 
 REM Check if virtual environment exists, create if not
 if not exist .venv (
     REM Check Python version before creating venv
-    python -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)" >nul 2>&1
+    python -c "import sys; sys.exit(0) if sys.version_info >= (3,11) else sys.exit(1)" >nul 2>&1
     if errorlevel 1 (
         echo Error: Python 3.11 or higher is required
         for /f "tokens=*" %%i in ('python --version 2^>^&1') do echo Current Python version: %%i
@@ -16,7 +19,7 @@ if not exist .venv (
         pause
         exit /b 1
     )
-    
+
     echo Creating Python virtual environment...
     python -m venv .venv >nul 2>&1
     if errorlevel 1 (
@@ -25,7 +28,7 @@ if not exist .venv (
         pause
         exit /b 1
     )
-    
+
     echo Installing required packages...
     .venv\Scripts\python.exe -m pip install --upgrade pip >nul 2>&1
     .venv\Scripts\python.exe -m pip install -r requirements.txt >nul 2>&1
@@ -36,8 +39,8 @@ if not exist .venv (
     )
 )
 
-REM Generate version stamp if .git exists
-if exist .git (
+REM Generate version stamp if .git exists and cVersion.py doesn't exist
+if exist .git if not exist cVersion.py (
     REM Clear variables first
     set VERSION=
     set GIT_SHA=
@@ -45,7 +48,7 @@ if exist .git (
     set COMMIT_DATE=
     set SHORT_SHA=
     set VERSION_STAMP=
-    
+
     REM Try to get tag first
     for /f "tokens=*" %%i in ('git describe --tags --exact-match HEAD 2^>nul') do set VERSION=%%i
     if defined VERSION (
@@ -55,26 +58,33 @@ if exist .git (
         for /f "tokens=*" %%i in ('git rev-parse HEAD 2^>nul') do set GIT_SHA=%%i
         for /f "tokens=*" %%i in ('git rev-parse --short HEAD 2^>nul') do set VERSION=%%i
     )
-    
-    REM Ensure we have required variables - exit silently if Git commands fail
+
+    REM Only proceed if we got valid git data
     if defined GIT_SHA if defined VERSION (
         REM Check for modified files
         for /f "tokens=*" %%i in ('git status --porcelain 2^>nul') do set HAS_CHANGES=%%i
-        if defined HAS_CHANGES set VERSION=%VERSION%-
-        
+        if defined HAS_CHANGES set VERSION=!VERSION!-
+
         REM Get commit date and short SHA
-        for /f "tokens=*" %%i in ('git show -s --format^=%%as "%GIT_SHA%" 2^>nul') do set COMMIT_DATE=%%i
-        for /f "tokens=*" %%i in ('git rev-parse --short "%GIT_SHA%" 2^>nul') do set SHORT_SHA=%%i
-        
-        REM Create version stamp
-        if "%VERSION%"=="%SHORT_SHA%" (
-            set VERSION_STAMP=%VERSION% / %COMMIT_DATE%
-        ) else (
-            set VERSION_STAMP=%VERSION% / %COMMIT_DATE% ^(%SHORT_SHA%^)
+        for /f "tokens=*" %%i in ('git log -1 --format=%%ad --date=short "!GIT_SHA!" 2^>nul') do set COMMIT_DATE=%%i
+        for /f "tokens=*" %%i in ('git rev-parse --short "!GIT_SHA!" 2^>nul') do set SHORT_SHA=%%i
+
+        REM Create version stamp with available data
+        if defined SHORT_SHA (
+            REM Create version stamp - use current date if commit date unavailable
+            if not defined COMMIT_DATE (
+                for /f "tokens=2-4 delims=/ " %%a in ('date /t') do set COMMIT_DATE=%%c-%%a-%%b
+            )
+            
+            if "!VERSION!"=="!SHORT_SHA!" (
+                set "VERSION_STAMP=!VERSION! / !COMMIT_DATE!"
+            ) else (
+                set "VERSION_STAMP=!VERSION! / !COMMIT_DATE! - !SHORT_SHA!"
+            )
+
+            REM Write cVersion.py
+            > cVersion.py echo VERSION = '!VERSION_STAMP!'
         )
-        
-        REM Write cVersion.py
-        echo VERSION = '%VERSION_STAMP%' > cVersion.py
     )
 )
 
