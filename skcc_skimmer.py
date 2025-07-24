@@ -369,10 +369,10 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.configFile:
-            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal')
+            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal')
 
         if 'TARGETS' in cls.configFile:
-            cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C CXN T TXN S SXN', 'target')
+            cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C T S', 'target')
 
         if 'BANDS' in cls.configFile:
             cls.BANDS = [int(Band)  for Band in cUtil.split(cls.configFile['BANDS'])]
@@ -441,7 +441,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = cls.parse_goals(args.goals, "C CXN T TXN S SXN WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal")
+            cls.GOALS = cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal")
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -455,7 +455,7 @@ class cConfig:
         if args.sked:
             cls.SKED.ENABLED = args.sked == "on"
         if args.targets:
-            cls.TARGETS = cls.parse_goals(args.targets, "C CXN T TXN S SXN", "target")
+            cls.TARGETS = cls.parse_goals(args.targets, "C T S", "target")
 
     @classmethod
     def _ValidateConfig(cls) -> None:
