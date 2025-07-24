@@ -1851,26 +1851,26 @@ class cQSO:
         # For 1xQRP: Show ALL QRP contacts (matching gold standard)
         if count_all > 0:
             remaining_1x: float = max(0.0, 300.0 - points_all)
-            if points_all >= 300.0:
-                current_level = int(points_all // 300)
-                next_level = current_level + 1
-                next_target = next_level * 300
-                remaining_next = next_target - points_all
+            current_level = int(points_all // 300)
+            next_level = current_level + 1
+            next_target = next_level * 300
+            remaining_next = next_target - points_all
+            if current_level > 0:
                 print(f'QRP 1x: Have {count_all} contacts, {points_all:.0f} points which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
-                print(f'QRP 1x: Have {count_all}. 1xQRP requires 300 points ({remaining_1x:.0f} more)')
+                print(f'QRP 1x: Have {count_all} contacts, {points_all:.0f} points. 1xQRP x1 requires 300 points ({remaining_next:.0f} more)')
         
         # For 2xQRP: Show only 2xQRP contacts
         if count_2x_only > 0:
             remaining_2x: float = max(0.0, 150.0 - points_2x_only)
-            if points_2x_only >= 150.0:
-                current_level = int(points_2x_only // 150)
-                next_level = current_level + 1
-                next_target = next_level * 150
-                remaining_next = next_target - points_2x_only
+            current_level = int(points_2x_only // 150)
+            next_level = current_level + 1
+            next_target = next_level * 150
+            remaining_next = next_target - points_2x_only
+            if current_level > 0:
                 print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.0f} points which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
-                print(f'QRP 2x: Have {count_2x_only}. 2xQRP requires 150 points ({remaining_2x:.0f} more)')
+                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.0f} points. 2xQRP x1 requires 150 points ({remaining_next:.0f} more)')
         
         # If we have no qualifying contacts, show what's needed
         if count_all == 0:
