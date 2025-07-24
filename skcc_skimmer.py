@@ -1928,10 +1928,16 @@ class cQSO:
         print('')
 
         if cConfig.GOALS:
-            print(f'GOAL{"S" if len(cConfig.GOALS) > 1 else ""}: {", ".join(cConfig.GOALS)}')
+            # Sort goals in preferred display order
+            goal_order = ['C', 'T', 'S', 'P', 'DX', 'QRP', 'WAS', 'WAS-C', 'WAS-T', 'WAS-S', 'BRAG', 'K3Y']
+            sorted_goals = sorted(cConfig.GOALS, key=lambda x: goal_order.index(x) if x in goal_order else len(goal_order))
+            print(f'GOAL{"S" if len(cConfig.GOALS) > 1 else ""}: {", ".join(sorted_goals)}')
 
         if cConfig.TARGETS:
-            print(f'TARGET{"S" if len(cConfig.TARGETS) > 1 else ""}: {", ".join(cConfig.TARGETS)}')
+            # Sort targets in preferred display order (same as goals)
+            target_order = ['C', 'T', 'S']  # Only C, T, S are valid targets
+            sorted_targets = sorted(cConfig.TARGETS, key=lambda x: target_order.index(x) if x in target_order else len(target_order))
+            print(f'TARGET{"S" if len(cConfig.TARGETS) > 1 else ""}: {", ".join(sorted_targets)}')
 
         print(f'BANDS: {", ".join(str(Band) for Band in cConfig.BANDS)}')
 
