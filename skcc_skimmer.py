@@ -1116,16 +1116,12 @@ class cQSO:
     _EOR_PATTERN = re.compile(r'<eor>', re.I)
     _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
     
-    # QRP band point values (hoisted for efficiency)
-    _QRP_BAND_POINTS_DISPLAY: ClassVar[dict[str, float]] = {
-        "160m": 5.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 2.0, "10m": 2.0,
-        "6m": 3.0, "2m": 0.5
-    }
+    # QRP band point values (hoisted for efficiency) - includes both upper/lowercase for ADI compatibility
     _QRP_BAND_POINTS_AWARDS: ClassVar[dict[str, float]] = {
-        "160m": 4.0, "80m": 3.0, "60m": 2.0, "40m": 2.0, "30m": 2.0,
-        "20m": 1.0, "17m": 1.0, "15m": 1.0, "12m": 1.0, "10m": 3.0,
-        "6m": 0.5, "2m": 0.5
+        "160M": 4.0, "160m": 4.0, "80M": 3.0, "80m": 3.0, "60M": 2.0, "60m": 2.0, 
+        "40M": 2.0, "40m": 2.0, "30M": 2.0, "30m": 2.0, "20M": 1.0, "20m": 1.0,
+        "17M": 1.0, "17m": 1.0, "15M": 1.0, "15m": 1.0, "12M": 1.0, "12m": 1.0,
+        "10M": 3.0, "10m": 3.0, "6M": 0.5, "6m": 0.5, "2M": 0.5, "2m": 0.5
     }
 
     ContactsForC:     dict[str, tuple[str, str, str]]
@@ -1139,15 +1135,17 @@ class cQSO:
     ContactsForP:     dict[str, tuple[str, str, int, str]]
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
+    QRPQualifiedQSOs: list[dict[str, str | bool]]  # Phase 1: QRP-qualified QSOs for band-by-band processing
     ContactsForDXC:   dict[str, tuple[str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call)
     ContactsForDXQ:   dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call)
     DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
+    
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1444,8 +1442,8 @@ class cQSO:
         
         ### QRP ###
         if 'QRP' in cConfig.GOALS:
-            # Calculate QRP points using hoisted constant
-            band_points = cls._QRP_BAND_POINTS_DISPLAY
+            # Calculate QRP points using correct hoisted constant
+            band_points = cls._QRP_BAND_POINTS_AWARDS
             
             # Calculate points for 1xQRP (all contacts) and 2xQRP (only 2x contacts)
             points_1x = 0.0
@@ -1622,7 +1620,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str]]:
         """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
@@ -1668,7 +1666,8 @@ class cQSO:
                 skcc_number,
                 fields.get('TX_PWR', ''),
                 fields.get('RX_PWR', ''),
-                fields.get('DXCC', '')
+                fields.get('DXCC', ''),
+                fields.get('BAND', '')  # Add BAND field from ADI file
             )
 
     @classmethod
@@ -1701,7 +1700,7 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1767,6 +1766,53 @@ class cQSO:
                     print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target:,} ({remaining:,} more)')
     
     @classmethod
+    def process_qrp_awards_xojo_style(cls) -> None:
+        """Phase 2: Process QRP awards using Xojo's exact band-by-band logic"""
+        if 'QRP' not in cConfig.GOALS or not hasattr(cls, 'QRPQualifiedQSOs'):
+            return
+            
+        # Define Xojo's band array (AP_Bands) - exactly matching Xojo source
+        xojo_bands = ["6M", "10M", "12M", "15M", "17M", "20M", "30M", "40M", "60M", "80M", "160M"]
+        
+        # Clear existing QRP contacts to rebuild with Xojo logic
+        cls.ContactsForQRP = {}
+        
+        # Process each band separately (matching Xojo's for loop)
+        for xojo_band in xojo_bands:
+            # Select all QRP QSOs for this band using UPPER(Log_BAND) = xojo_band logic
+            band_qsos = []
+            
+            for qso in cls.QRPQualifiedQSOs:
+                if qso['band'].upper() == xojo_band:
+                    band_qsos.append(qso)
+            
+            # Process QSOs for this band - one entry per member per band
+            # But we need to ensure 2xQRP contacts are properly identified
+            for qso in band_qsos:
+                member_number = qso['member_number']
+                dup_key = f"{member_number}_{xojo_band}"
+                
+                if dup_key not in cls.ContactsForQRP:
+                    # Add the QSO - it will be counted correctly by the display logic
+                    qrp_type = 2 if qso['qrp_2x'] else 1
+                    cls.ContactsForQRP[dup_key] = (
+                        qso['date'], 
+                        qso['member_number'], 
+                        qso['callsign'], 
+                        qrp_type
+                    )
+                else:
+                    # If we already have this member-band, upgrade to 2xQRP if this QSO qualifies
+                    existing_qso = cls.ContactsForQRP[dup_key]
+                    if qso['qrp_2x'] and existing_qso[3] != 2:
+                        cls.ContactsForQRP[dup_key] = (
+                            qso['date'], 
+                            qso['member_number'], 
+                            qso['callsign'], 
+                            2  # Upgrade to 2xQRP
+                        )
+
+    @classmethod
     def print_qrp_awards_progress(cls) -> None:
         """Print QRP award progress in the main awards progress section."""
         if not cls.ContactsForQRP:
@@ -1781,11 +1827,11 @@ class cQSO:
         points_2x_only: float = 0.0
         count_all: int = 0
         count_2x_only: int = 0
-
+        
         for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
-            # Extract band from key format: "member_band_date"
+            # Extract band from key format: "member_band" (matching Xojo duplicate detection)
             key_parts = qso_key.split('_')
-            if len(key_parts) >= 3:
+            if len(key_parts) >= 2:
                 band: str = key_parts[1]
             else:
                 band = ""
@@ -1800,6 +1846,7 @@ class cQSO:
                 points_2x_only += points
                 count_2x_only += 1
 
+        
         # Display progress in awards progress format
         # For 1xQRP: Show ALL QRP contacts (matching gold standard)
         if count_all > 0:
@@ -1809,7 +1856,7 @@ class cQSO:
                 next_level = current_level + 1
                 next_target = next_level * 300
                 remaining_next = next_target - points_all
-                print(f'QRP 1x: Have {count_all} which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+                print(f'QRP 1x: Have {count_all} contacts, {points_all:.0f} points which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
                 print(f'QRP 1x: Have {count_all}. 1xQRP requires 300 points ({remaining_1x:.0f} more)')
         
@@ -1821,7 +1868,7 @@ class cQSO:
                 next_level = current_level + 1
                 next_target = next_level * 150
                 remaining_next = next_target - points_2x_only
-                print(f'QRP 2x: Have {count_2x_only} which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.0f} points which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
             else:
                 print(f'QRP 2x: Have {count_2x_only}. 2xQRP requires 150 points ({remaining_2x:.0f} more)')
         
@@ -1846,9 +1893,9 @@ class cQSO:
         count_2x: int = 0
 
         for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
-            # Extract band from key format: "member_band_date"
+            # Extract band from key format: "member_band" (matching Xojo duplicate detection)
             key_parts = qso_key.split('_')
-            if len(key_parts) >= 3:
+            if len(key_parts) >= 2:
                 band: str = key_parts[1]
             else:
                 band = ""
@@ -2180,7 +2227,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2278,7 +2325,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand = Contact
 
 
             # Skip invalid callsigns
@@ -2394,31 +2441,42 @@ class cQSO:
                             if QsoSPC not in cls.ContactsForWAS_S:
                                 cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
 
-                # Process QRP contacts if QRP is a goal
-                if 'QRP' in cConfig.GOALS and QsoTxPwr and QsoFreq > 0:
-                    # Parse power - ensure it's numeric and <= 5 watts
+                # Phase 1: Mark QRP QSOs during processing (matching Xojo AwardProcessorThreadWindow logic)
+                if QsoTxPwr and QsoFreq > 0:
                     try:
                         tx_power = float(QsoTxPwr.strip())
-                        if tx_power <= 5.0:
-                            # Determine QRP type: 1xQRP (TX only) or 2xQRP (TX + RX)
-                            qrp_type = 1  # Default to 1xQRP
+                        if 0.0 < tx_power <= 5.0:
+                            # This QSO qualifies for QRP 1x
+                            qrp_1x_qualified = True
+                            qrp_2x_qualified = False
+                            
+                            # Check for QRP 2x (both TX and RX <= 5W)
                             if QsoRxPwr and QsoRxPwr.strip():
                                 try:
                                     rx_power = float(QsoRxPwr.strip())
-                                    if rx_power <= 5.0:
-                                        qrp_type = 2  # 2xQRP: both TX and RX <= 5W
+                                    if 0.0 < rx_power <= 5.0:
+                                        qrp_2x_qualified = True
                                 except (ValueError, TypeError):
-                                    pass  # Keep as 1xQRP if RX power is invalid
+                                    pass
                             
-                            # Determine band from frequency
-                            band = cls._frequency_to_band(QsoFreq)
-                            if band:
-                                # Use unique key for each QRP contact - QRP allows multiple contacts per member/band
-                                qrp_key = f"{TheirMemberNumber}_{band}_{QsoDate}"
-                                if qrp_key not in cls.ContactsForQRP:
-                                    cls.ContactsForQRP[qrp_key] = (QsoDate, TheirMemberNumber, MainCallSign, qrp_type)
+                            # Store QRP-qualified QSO with all needed data for later band-by-band processing
+                            if qrp_1x_qualified or qrp_2x_qualified:
+                                band = QsoBand.strip() if QsoBand else ''
+                                if band:
+                                    # Store with original band name (before normalization)
+                                    qrp_qso_data = {
+                                        'date': QsoDate,
+                                        'member_number': TheirMemberNumber,
+                                        'callsign': MainCallSign,
+                                        'band': band,
+                                        'qrp_1x': qrp_1x_qualified,
+                                        'qrp_2x': qrp_2x_qualified
+                                    }
+                                    if not hasattr(cls, 'QRPQualifiedQSOs'):
+                                        cls.QRPQualifiedQSOs = []
+                                    cls.QRPQualifiedQSOs.append(qrp_qso_data)
                     except (ValueError, TypeError):
-                        pass  # Skip invalid power values
+                        pass
                 
                 # Process DX contacts if DX is a goal
                 if 'DX' in cConfig.GOALS:
@@ -2466,6 +2524,11 @@ class cQSO:
         await cls.award_was_async('WAS-T', cls.ContactsForWAS_T)
         await cls.award_was_async('WAS-S', cls.ContactsForWAS_S)
         await cls.award_p_async(cls.ContactsForP)
+        
+        # Phase 2: Process QRP awards using Xojo's exact band-by-band logic
+        cls.process_qrp_awards_xojo_style()
+        
+        
         await cls.award_qrp_async(cls.ContactsForQRP)
         await cls.award_dx_async()
         await cls.track_brag_async(cls.Brag)
