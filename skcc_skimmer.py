@@ -1856,9 +1856,9 @@ class cQSO:
             next_target = next_level * 300
             remaining_next = next_target - points_all
             if current_level > 0:
-                print(f'QRP 1x: Have {count_all} contacts, {points_all:.0f} points which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+                print(f'QRP 1x: Have {count_all} contacts, {points_all:.1f} points which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
             else:
-                print(f'QRP 1x: Have {count_all} contacts, {points_all:.0f} points. 1xQRP x1 requires 300 points ({remaining_next:.0f} more)')
+                print(f'QRP 1x: Have {count_all} contacts, {points_all:.1f} points. 1xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
         
         # For 2xQRP: Show only 2xQRP contacts
         if count_2x_only > 0:
@@ -1868,9 +1868,9 @@ class cQSO:
             next_target = next_level * 150
             remaining_next = next_target - points_2x_only
             if current_level > 0:
-                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.0f} points which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.0f} points ({remaining_next:.0f} more)')
+                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.1f} points which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
             else:
-                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.0f} points. 2xQRP x1 requires 150 points ({remaining_next:.0f} more)')
+                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.1f} points. 2xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
         
         # If we have no qualifying contacts, show what's needed
         if count_all == 0:
