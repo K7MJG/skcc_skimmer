@@ -1434,8 +1434,8 @@ class cQSO:
         if 'DX' in cConfig.GOALS:
             # DXC
             DXC_count = len(cls.ContactsForDXC)
-            if DXC_count >= 100:
-                DXC_Level = DXC_count // 100
+            if DXC_count >= 10:  # First level is 10
+                DXC_Level, _, _ = cls.get_dx_award_level_and_next(DXC_count)
                 if cls.MyMemberNumber in cSKCC.dxc_level:
                     Award_DXC_Level = cSKCC.dxc_level[cls.MyMemberNumber]
                     if DXC_Level > Award_DXC_Level:
@@ -1445,8 +1445,8 @@ class cQSO:
 
             # DXQ
             DXQ_count = len(cls.ContactsForDXQ)
-            if DXQ_count >= 100:
-                DXQ_Level = DXQ_count // 100
+            if DXQ_count >= 10:  # First level is 10
+                DXQ_Level, _, _ = cls.get_dx_award_level_and_next(DXQ_count)
                 if cls.MyMemberNumber in cSKCC.dxq_level:
                     Award_DXQ_Level = cSKCC.dxq_level[cls.MyMemberNumber]
                     if DXQ_Level > Award_DXQ_Level:
@@ -1730,54 +1730,68 @@ class cQSO:
         return sum(value[2] for value in cls.ContactsForP.values())
 
 
+    @staticmethod
+    def get_dx_award_level_and_next(count: int) -> tuple[int, int, int]:
+        """Calculate DX award level and next target based on count.
+        
+        DX award progression: 10, 25, 50, then increment by 25 (75, 100, 125, 150, etc.)
+        
+        Returns:
+            Tuple of (current_level, next_level, next_target)
+        """
+        if count < 10:
+            return 0, 10, 10
+        elif count < 25:
+            return 10, 25, 25
+        elif count < 50:
+            return 25, 50, 50
+        else:
+            # After 50, levels increment by 25
+            # 50 -> 75, 75 -> 100, 100 -> 125, etc.
+            current_level = 50 + ((count - 50) // 25) * 25
+            next_level = current_level + 25
+            return current_level, next_level, next_level
+
     @classmethod
     def print_dx_awards_progress(cls) -> None:
         """Print DX award progress in the main awards progress section."""
-        # DXC: Unique countries (100 per level)
+        # DXC: Unique countries
         dxc_count = len(cls.ContactsForDXC)
         if dxc_count == 0:
             print('DXC: Have 0 countries. Need DXCC codes in ADI file or member data.')
         else:
-            # Calculate current level and remaining for next level
-            if dxc_count < 100:
+            current_level, next_level, next_target = cls.get_dx_award_level_and_next(dxc_count)
+            
+            if current_level == 0:
                 # Working toward initial DXC
-                remaining = 100 - dxc_count
-                print(f'DXC: Have {dxc_count}. DXC requires 100 ({remaining} more)')
-            else:
-                # Calculate multiplier level
-                current_level = dxc_count // 100
-                next_level = current_level + 1
-                next_target = next_level * 100
                 remaining = next_target - dxc_count
-
-                if current_level >= 10:
-                    # Max level reached
-                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}.')
+                print(f'DXC: Have {dxc_count}. DXCx{next_level} requires {next_target} ({remaining} more)')
+            else:
+                remaining = next_target - dxc_count
+                if remaining == 0:
+                    # Exactly at a level
+                    print(f'DXC: Have {dxc_count} which qualifies for DXCx{current_level}.')
                 else:
-                    print(f'DXC: Have {dxc_count:,} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target:,} ({remaining:,} more)')
+                    print(f'DXC: Have {dxc_count} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target} ({remaining} more)')
 
-        # DXQ: Unique member QSOs from foreign countries (100 per level)
+        # DXQ: Unique member QSOs from foreign countries
         dxq_count = len(cls.ContactsForDXQ)
         if dxq_count == 0:
             print('DXQ: Have 0 foreign member QSOs.')
         else:
-            # Calculate current level and remaining for next level
-            if dxq_count < 100:
+            current_level, next_level, next_target = cls.get_dx_award_level_and_next(dxq_count)
+            
+            if current_level == 0:
                 # Working toward initial DXQ
-                remaining = 100 - dxq_count
-                print(f'DXQ: Have {dxq_count}. DXQ requires 100 ({remaining} more)')
-            else:
-                # Calculate multiplier level
-                current_level = dxq_count // 100
-                next_level = current_level + 1
-                next_target = next_level * 100
                 remaining = next_target - dxq_count
-
-                if current_level >= 10:
-                    # Max level reached
-                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}.')
+                print(f'DXQ: Have {dxq_count}. DXQx{next_level} requires {next_target} ({remaining} more)')
+            else:
+                remaining = next_target - dxq_count
+                if remaining == 0:
+                    # Exactly at a level
+                    print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}.')
                 else:
-                    print(f'DXQ: Have {dxq_count:,} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target:,} ({remaining:,} more)')
+                    print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target} ({remaining} more)')
 
     @classmethod
     def process_qrp_awards_xojo_style(cls) -> None:
