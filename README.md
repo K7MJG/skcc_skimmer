@@ -1,5 +1,4 @@
 ## Quick Start
-***
 
 Edit the skcc_skimmer.cfg configuration file and replace these
 parameters with your own information:
@@ -48,11 +47,11 @@ GOALS Examples:
    GOALS = 'T,S,P'
    GOALS = 'T,S,P,WAS,WAS-C'
    GOALS = 'C,P,DXC,QRP'
-   GOALS = 'all'
-   GOALS = 'all,-BRAG'          # All awards except BRAG
-   GOALS = 'all,-BRAG,-K3Y'     # All awards except BRAG and K3Y
+   GOALS = 'ALL'
+   GOALS = 'ALL,-BRAG'          # All awards except BRAG
+   GOALS = 'ALL,-BRAG,-K3Y'     # All awards except BRAG and K3Y
 
-Note: Negation (using minus sign) only works with 'all'.
+Note: Negation (using minus sign) only works with 'ALL'.
 Examples like 'C,T,-BRAG' are invalid.
 ```
 
@@ -65,8 +64,8 @@ S     - You are helping others achieve their S (intelligently handles both initi
 CXn   - (DEPRECATED) Use 'C' instead - handles both initial and advanced awards.
 TXn   - (DEPRECATED) Use 'T' instead - handles both initial and advanced awards.
 SXn   - (DEPRECATED) Use 'S' instead - handles both initial and advanced awards.
-all   - All of the above.
-none  - None of the above
+ALL   - All of the above.
+NONE  - None of the above
 
 TARGETS Examples:
    TARGETS = 'T,C'
@@ -79,7 +78,11 @@ TARGETS Examples:
 Once you've changed these three configuration parameters, you
 can run skcc_skimmer:
 
-  `python skcc_skimmer.py`
+On Windows:
+  `run skcc_skimmer.py`
+
+On Linux:
+  `./run skcc_skimmer.py`
 
 Visit the SKCC Skimmer web page for the most up-to-date info:
 
