@@ -79,13 +79,13 @@ SKCC_BASE_URL = 'https://www.skccgroup.com/'
 # Global state for progress dot display
 _progress_dot_count: int = 0
 
-US_STATES: Final[list[str]] = [
+US_STATES: Final[set[str]] = {
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
     'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
     'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
     'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
-]
+}
 
 # Award level requirements
 Levels: Final[dict[str, int]] = {
@@ -321,8 +321,8 @@ class cConfig:
     MY_CALLSIGN:              str
     ADI_FILE:                 str
     MY_GRIDSQUARE:            str
-    GOALS:                    list[str]
-    TARGETS:                  list[str]
+    GOALS:                    set[str]
+    TARGETS:                  set[str]
     BANDS:                    list[int]
     FRIENDS:                  set[str]
     EXCLUSIONS:               set[str]
@@ -355,8 +355,8 @@ class cConfig:
         cls.MY_CALLSIGN = cls.configFile.get('MY_CALLSIGN', '')
         cls.ADI_FILE = cls.configFile.get('ADI_FILE', '')
         cls.MY_GRIDSQUARE = cls.configFile.get('MY_GRIDSQUARE', '')
-        cls.GOALS = []
-        cls.TARGETS = []
+        cls.GOALS = set()
+        cls.TARGETS = set()
         cls.BANDS = []
         cls.FRIENDS = set()
         cls.EXCLUSIONS = set()
@@ -369,13 +369,13 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.configFile:
-            cls.GOALS = cls.parse_goals(cls.configFile['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal')
+            cls.GOALS = set(cls.parse_goals(cls.configFile['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal'))
 
         if 'TARGETS' in cls.configFile:
-            cls.TARGETS = cls.parse_goals(cls.configFile['TARGETS'], 'C T S', 'target')
+            cls.TARGETS = set(cls.parse_goals(cls.configFile['TARGETS'], 'C T S', 'target'))
 
         if 'BANDS' in cls.configFile:
-            cls.BANDS = [int(Band)  for Band in cUtil.split(cls.configFile['BANDS'])]
+            cls.BANDS = [int(Band) for Band in cUtil.split(cls.configFile['BANDS'])]
 
         if 'FRIENDS' in cls.configFile:
             cls.FRIENDS = {friend for friend in cUtil.split(cls.configFile['FRIENDS'])}
@@ -441,7 +441,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal")
+            cls.GOALS = set(cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal"))
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -455,7 +455,7 @@ class cConfig:
         if args.sked:
             cls.SKED.ENABLED = args.sked == "on"
         if args.targets:
-            cls.TARGETS = cls.parse_goals(args.targets, "C T S", "target")
+            cls.TARGETS = set(cls.parse_goals(args.targets, "C T S", "target"))
 
     @classmethod
     def _ValidateConfig(cls) -> None:
@@ -789,7 +789,7 @@ class cSked:
             ZuluDate = time.strftime('%Y-%m-%d', GMT)
 
             if cls._FirstPass:
-                NewLogins = []
+                NewLogins: list[str] = []
             else:
                 NewLogins = list(set(SkedHit) - set(cls._PreviousLogins))
 
@@ -1993,7 +1993,7 @@ class cQSO:
             sorted_targets = sorted(cConfig.TARGETS, key=lambda x: target_order.index(x) if x in target_order else len(target_order))
             print(f'TARGET{"S" if len(cConfig.TARGETS) > 1 else ""}: {", ".join(sorted_targets)}')
 
-        print(f'BANDS: {", ".join(str(Band) for Band in cConfig.BANDS)}')
+        print(f'BANDS: {", ".join(str(Band) for Band in sorted(cConfig.BANDS, reverse=True))}')
 
         print('')
         print('*** Awards Progress ***')
