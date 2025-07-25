@@ -1035,8 +1035,11 @@ class cSPOTS:
         if not cUtil.is_in_bands(FrequencyKHz):
             return
 
+        # Check if spotter is nearby
+        SpottedNearby = Spotter in cConfig.SPOTTERS_NEARBY
+        
         # Process spotter information
-        if Spotter in cConfig.SPOTTERS_NEARBY or CallSign == cConfig.MY_CALLSIGN:
+        if SpottedNearby or CallSign == cConfig.MY_CALLSIGN:
             if Spotter in cSpotters.spotters:
                 Miles = cSpotters.get_distance(Spotter)
                 Distance = cUtil.format_distance(Miles)
@@ -1090,7 +1093,10 @@ class cSPOTS:
             Report.append(f'THEY need you for {",".join(TargetList)}')
 
         # Record and report spot if relevant
-        if GoalList or TargetList or CallSign == cConfig.MY_CALLSIGN or CallSign in cConfig.FRIENDS:
+        # Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
+        if ((SpottedNearby and (GoalList or TargetList)) or 
+            CallSign == cConfig.MY_CALLSIGN or 
+            CallSign in cConfig.FRIENDS):
             cSPOTS.last_spotted[CallSign] = (FrequencyKHz, time.time())
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
             FrequencyString = f'{FrequencyKHz:.1f}'
