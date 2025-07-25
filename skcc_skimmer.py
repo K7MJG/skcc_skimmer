@@ -67,7 +67,7 @@ import calendar
 import json
 import platform
 
-RBN_SERVER = 'telnet.reversebeacon.net'
+RBN_SERVER = "telnet.reversebeacon.net"
 RBN_PORT   = 7000
 
 # URL constants
@@ -118,8 +118,8 @@ class cUtil:
         return date if time.strftime('%Y%m%d000000', time.gmtime()) >= date else ''
 
     @staticmethod
-    def miles_to_km(Miles: int) -> int:
-        return round(Miles * 1.609344)
+    def miles_to_km(miles: int) -> int:
+        return round(miles * 1.609344)
 
     @staticmethod
     def stripped(text: str) -> str:
@@ -130,23 +130,23 @@ class cUtil:
         print('\a', end='', flush=True)
 
     @staticmethod
-    def format_distance(Miles: int) -> str:
+    def format_distance(miles: int) -> str:
         if cConfig.DISTANCE_UNITS == "mi":
-            return f'{Miles}mi'
+            return f'{miles}mi'
 
-        return f'{cUtil.miles_to_km(Miles)}km'
+        return f'{cUtil.miles_to_km(miles)}km'
 
     @staticmethod
-    async def log_async(Line: str) -> None:
+    async def log_async(line: str) -> None:
         if cConfig.LOG_FILE.ENABLED and cConfig.LOG_FILE.FILE_NAME is not None:
-            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as File:
-                await File.write(Line + '\n')
+            async with aiofiles.open(cConfig.LOG_FILE.FILE_NAME, 'a', encoding='utf-8') as file:
+                await file.write(line + '\n')
 
     @staticmethod
-    async def log_error_async(Line: str) -> None:
+    async def log_error_async(line: str) -> None:
         if cConfig.LOG_BAD_SPOTS:
-            async with aiofiles.open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as File:
-                await File.write(Line + '\n')
+            async with aiofiles.open('Bad_RBN_Spots.log', 'a', encoding='utf-8') as file:
+                await file.write(line + '\n')
 
     @staticmethod
     def abbreviate_class(Class: str, X_Factor: int) -> str:
@@ -160,9 +160,9 @@ class cUtil:
         if await aiofiles.os.path.exists(Filename):
             return
 
-        print('')
+        print()
         print(f"File '{Filename}' does not exist.")
-        print('')
+        print()
         sys.exit()
 
     @staticmethod
@@ -234,7 +234,7 @@ class cConfig:
         DOTS_PER_LINE:   int  = 30
     @classmethod
     def init_progress_dots(cls) -> None:
-        progress_config = cls.configFile.get("PROGRESS_DOTS", {})
+        progress_config = cls.config_file.get("PROGRESS_DOTS", {})
         cls.PROGRESS_DOTS = cConfig.cProgressDots(
             ENABLED         = bool(progress_config.get("ENABLED", cConfig.cProgressDots.ENABLED)),
             DISPLAY_SECONDS = progress_config.get("DISPLAY_SECONDS", cConfig.cProgressDots.DISPLAY_SECONDS),
@@ -249,7 +249,7 @@ class cConfig:
         DELETE_ON_STARTUP: bool = False
     @classmethod
     def init_logfile(cls) -> None:
-        log_file_config = cls.configFile.get("LOG_FILE", {})
+        log_file_config = cls.config_file.get("LOG_FILE", {})
         cls.LOG_FILE = cConfig.cLogFile(
             ENABLED           = bool(log_file_config.get("ENABLED", cConfig.cLogFile.ENABLED)),
             FILE_NAME         = log_file_config.get("FILE_NAME", cConfig.cLogFile.FILE_NAME),
@@ -263,7 +263,7 @@ class cConfig:
         THRESHOLD: int = 15
     @classmethod
     def init_high_wpm(cls) -> None:
-        high_wpm_config = cls.configFile.get("HIGH_WPM", {})
+        high_wpm_config = cls.config_file.get("HIGH_WPM", {})
         action: cConfig.cHighWpm.tAction = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
         if action not in get_args(cConfig.cHighWpm.tAction):
             print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.cHighWpm.tAction)}.")
@@ -280,7 +280,7 @@ class cConfig:
         TOLERANCE: int = 0
     @classmethod
     def init_off_frequency(cls) -> None:
-        off_frequency_config = cls.configFile.get("OFF_FREQUENCY", {})
+        off_frequency_config = cls.config_file.get("OFF_FREQUENCY", {})
         cls.OFF_FREQUENCY = cConfig.cOffFrequency(
             ACTION    =     off_frequency_config.get("ACTION",    cConfig.cOffFrequency.ACTION),
             TOLERANCE = int(off_frequency_config.get("TOLERANCE", cConfig.cOffFrequency.TOLERANCE))
@@ -292,7 +292,7 @@ class cConfig:
         CHECK_SECONDS: int  = 60
     @classmethod
     def init_sked(cls) -> None:
-        sked_config = cls.configFile.get("SKED", {})
+        sked_config = cls.config_file.get("SKED", {})
         cls.SKED = cConfig.cSked(
             ENABLED       = sked_config.get("ENABLED",       cConfig.cSked.ENABLED),
             CHECK_SECONDS = sked_config.get("CHECK_SECONDS", cConfig.cSked.CHECK_SECONDS),
@@ -306,7 +306,7 @@ class cConfig:
         RENOTIFICATION_DELAY_SECONDS: int = 30
     @classmethod
     def init_notifications(cls) -> None:
-        notification_config = cls.configFile.get("NOTIFICATION", {})
+        notification_config = cls.config_file.get("NOTIFICATION", {})
         conditions = cUtil.split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # Use DEFAULT_CONDITION
         invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
         if invalid_conditions:
@@ -334,27 +334,27 @@ class cConfig:
     SPOTTERS_NEARBY:          set[str]
     K3Y_YEAR:                 int
 
-    configFile:               dict[str, Any]
+    config_file:              dict[str, Any]
 
     @classmethod
-    async def init(cls, ArgV: list[str]) -> None:
+    async def init(cls, argv_v: list[str]) -> None:
         async def read_skcc_skimmer_cfg_async() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
             ConfigFileAbsolute = os.path.abspath('skcc_skimmer.cfg')
             cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
 
-            async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as configFile:
-                ConfigFileString = await configFile.read()
+            async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as config_file:
+                ConfigFileString = await config_file.read()
                 exec(ConfigFileString, {}, config_vars)
 
             return config_vars
 
-        cls.configFile = await read_skcc_skimmer_cfg_async()
+        cls.config_file = await read_skcc_skimmer_cfg_async()
 
-        cls.MY_CALLSIGN = cls.configFile.get('MY_CALLSIGN', '')
-        cls.ADI_FILE = cls.configFile.get('ADI_FILE', '')
-        cls.MY_GRIDSQUARE = cls.configFile.get('MY_GRIDSQUARE', '')
+        cls.MY_CALLSIGN = cls.config_file.get('MY_CALLSIGN', '')
+        cls.ADI_FILE = cls.config_file.get('ADI_FILE', '')
+        cls.MY_GRIDSQUARE = cls.config_file.get('MY_GRIDSQUARE', '')
         cls.GOALS = set()
         cls.TARGETS = set()
         cls.BANDS = []
@@ -362,26 +362,26 @@ class cConfig:
         cls.EXCLUSIONS = set()
         cls.SPOTTERS_NEARBY = set()
 
-        if 'SPOTTERS_NEARBY' in cls.configFile:
-            cls.SPOTTERS_NEARBY = {spotter for spotter in cUtil.split(cls.configFile['SPOTTERS_NEARBY'])}
+        if 'SPOTTERS_NEARBY' in cls.config_file:
+            cls.SPOTTERS_NEARBY = {spotter for spotter in cUtil.split(cls.config_file['SPOTTERS_NEARBY'])}
 
-        if 'SPOTTER_RADIUS' in cls.configFile:
-            cls.SPOTTER_RADIUS = int(cls.configFile['SPOTTER_RADIUS'])
+        if 'SPOTTER_RADIUS' in cls.config_file:
+            cls.SPOTTER_RADIUS = int(cls.config_file['SPOTTER_RADIUS'])
 
-        if 'GOALS' in cls.configFile:
-            cls.GOALS = set(cls.parse_goals(cls.configFile['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal'))
+        if 'GOALS' in cls.config_file:
+            cls.GOALS = set(cls.parse_goals(cls.config_file['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal'))
 
-        if 'TARGETS' in cls.configFile:
-            cls.TARGETS = set(cls.parse_goals(cls.configFile['TARGETS'], 'C T S', 'target'))
+        if 'TARGETS' in cls.config_file:
+            cls.TARGETS = set(cls.parse_goals(cls.config_file['TARGETS'], 'C T S', 'target'))
 
-        if 'BANDS' in cls.configFile:
-            cls.BANDS = [int(Band) for Band in cUtil.split(cls.configFile['BANDS'])]
+        if 'BANDS' in cls.config_file:
+            cls.BANDS = [int(Band) for Band in cUtil.split(cls.config_file['BANDS'])]
 
-        if 'FRIENDS' in cls.configFile:
-            cls.FRIENDS = {friend for friend in cUtil.split(cls.configFile['FRIENDS'])}
+        if 'FRIENDS' in cls.config_file:
+            cls.FRIENDS = {friend for friend in cUtil.split(cls.config_file['FRIENDS'])}
 
-        if 'EXCLUSIONS' in cls.configFile:
-            cls.EXCLUSIONS = {friend for friend in cUtil.split(cls.configFile['EXCLUSIONS'])}
+        if 'EXCLUSIONS' in cls.config_file:
+            cls.EXCLUSIONS = {friend for friend in cUtil.split(cls.config_file['EXCLUSIONS'])}
 
         cls.init_logfile()
         cls.init_progress_dots()
@@ -390,24 +390,23 @@ class cConfig:
         cls.init_off_frequency()
         cls.init_high_wpm()
 
-        cls.VERBOSE = bool(cls.configFile.get('VERBOSE', False))
-        cls.LOG_BAD_SPOTS = bool(cls.configFile.get('LOG_BAD_SPOTS', False))
+        cls.VERBOSE = bool(cls.config_file.get('VERBOSE', False))
+        cls.LOG_BAD_SPOTS = bool(cls.config_file.get('LOG_BAD_SPOTS', False))
 
-        cls.DISTANCE_UNITS = cls.configFile.get('DISTANCE_UNITS', 'mi')
+        cls.DISTANCE_UNITS = cls.config_file.get('DISTANCE_UNITS', 'mi')
         if cls.DISTANCE_UNITS not in ('mi', 'km'):
             cls.DISTANCE_UNITS = 'mi'
 
-        if 'K3Y_YEAR' in cls.configFile:
-            cls.K3Y_YEAR = cls.configFile['K3Y_YEAR']
+        if 'K3Y_YEAR' in cls.config_file:
+            cls.K3Y_YEAR = cls.config_file['K3Y_YEAR']
         else:
             cls.K3Y_YEAR = datetime.now().year
 
-        cls._ParseArgs(ArgV)
-        cls._ValidateConfig()
-        return
+        cls._parse_args(argv_v)
+        cls._validate_config()
 
     @classmethod
-    def _ParseArgs(cls, ArgV: list[str]) -> None:
+    def _parse_args(cls, arg_v: list[str]) -> None:
         parser = argparse.ArgumentParser(description="SKCC Skimmer Configuration")
 
         parser.add_argument("-a", "--adi", type=str, help="ADI file")
@@ -425,7 +424,7 @@ class cConfig:
         parser.add_argument("-t", "--targets", type=str, help="Targets")
         parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode")
 
-        args = parser.parse_args(ArgV)
+        args = parser.parse_args(arg_v)
 
         cls.INTERACTIVE = args.interactive
         cls.VERBOSE = args.verbose
@@ -458,19 +457,19 @@ class cConfig:
             cls.TARGETS = set(cls.parse_goals(args.targets, "C T S", "target"))
 
     @classmethod
-    def _ValidateConfig(cls) -> None:
+    def _validate_config(cls) -> None:
         #
         # MY_CALLSIGN can be defined in skcc_skimmer.cfg.  It is not required
         # that it be supplied on the command line.
         #
         if not cls.MY_CALLSIGN:
             print("You must specify your callsign, either on the command line or in 'skcc_skimmer.cfg'.")
-            print('')
+            print()
             cls.usage()
 
         if not cls.ADI_FILE:
             print("You must supply an ADI file, either on the command line or in 'skcc_skimmer.cfg'.")
-            print('')
+            print()
             cls.usage()
 
         if not cls.GOALS and not cls.TARGETS:
@@ -481,70 +480,70 @@ class cConfig:
             print("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
             sys.exit()
 
-        if 'SPOTTER_RADIUS' not in cls.configFile:
+        if 'SPOTTER_RADIUS' not in cls.config_file:
             print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
             sys.exit()
 
-        if 'QUALIFIERS' in cls.configFile:
+        if 'QUALIFIERS' in cls.config_file:
             print("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
             sys.exit()
 
-        if 'NEARBY' in cls.configFile:
+        if 'NEARBY' in cls.config_file:
             print("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
             sys.exit()
 
-        if 'SPOTTER_PREFIXES' in cls.configFile:
+        if 'SPOTTER_PREFIXES' in cls.config_file:
             print("'SPOTTER_PREFIXES' has been deprecated.")
             sys.exit()
 
-        if 'SPOTTERS_NEARBY' in cls.configFile:
+        if 'SPOTTERS_NEARBY' in cls.config_file:
             print("'SPOTTERS_NEARBY' has been deprecated.")
             sys.exit()
 
-        if 'SKCC_FREQUENCIES' in cls.configFile:
+        if 'SKCC_FREQUENCIES' in cls.config_file:
             print("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
             sys.exit()
 
-        if 'HITS_FILE' in cls.configFile:
+        if 'HITS_FILE' in cls.config_file:
             print("'HITS_FILE' is no longer supported.")
             sys.exit()
 
-        if 'HitCriteria' in cls.configFile:
+        if 'HitCriteria' in cls.config_file:
             print("'HitCriteria' is no longer supported.")
             sys.exit()
 
-        if 'StatusCriteria' in cls.configFile:
+        if 'StatusCriteria' in cls.config_file:
             print("'StatusCriteria' is no longer supported.")
             sys.exit()
 
-        if 'SkedCriteria' in cls.configFile:
+        if 'SkedCriteria' in cls.config_file:
             print("'SkedCriteria' is no longer supported.")
             sys.exit()
 
-        if 'SkedStatusCriteria' in cls.configFile:
+        if 'SkedStatusCriteria' in cls.config_file:
             print("'SkedStatusCriteria' is no longer supported.")
             sys.exit()
 
-        if 'SERVER' in cls.configFile:
+        if 'SERVER' in cls.config_file:
             print('SERVER is no longer supported.')
             sys.exit()
 
-        if 'SPOT_PERSISTENCE_MINUTES' not in cls.configFile:
+        if 'SPOT_PERSISTENCE_MINUTES' not in cls.config_file:
             cls.SPOT_PERSISTENCE_MINUTES = 15
 
-        if 'GOAL' in cls.configFile:
+        if 'GOAL' in cls.config_file:
             print("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
             sys.exit()
 
-        if 'GOALS' not in cls.configFile:
+        if 'GOALS' not in cls.config_file:
             print("GOALS must be defined in 'skcc_skimmer.cfg'.")
             sys.exit()
 
-        if 'TARGETS' not in cls.configFile:
+        if 'TARGETS' not in cls.config_file:
             print("TARGETS must be defined in 'skcc_skimmer.cfg'.")
             sys.exit()
 
-        if 'HIGH_WPM' not in cls.configFile:
+        if 'HIGH_WPM' not in cls.config_file:
             print("HIGH_WPM must be defined in 'skcc_skimmer.cfg'.")
             sys.exit()
 
@@ -552,7 +551,7 @@ class cConfig:
             print("HIGH_WPM['ACTION'] must be one of ('suppress', 'warn', 'always-display')")
             sys.exit()
 
-        if 'OFF_FREQUENCY' not in cls.configFile:
+        if 'OFF_FREQUENCY' not in cls.config_file:
             print("OFF_FREQUENCY must be defined in 'skcc_skimmer.cfg'.")
             sys.exit()
 
@@ -560,14 +559,14 @@ class cConfig:
             print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
             sys.exit()
 
-        if 'NOTIFICATION' not in cls.configFile:
+        if 'NOTIFICATION' not in cls.config_file:
             print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
             sys.exit()
 
     @staticmethod
     def usage() -> NoReturn:
         print('Usage:')
-        print('')
+        print()
         print('   skcc_skimmer.py')
         print('                   [--adi <adi-file>]')
         print('                   [--bands <comma-separated-bands>]')
@@ -583,7 +582,7 @@ class cConfig:
         print('                   [--targets <targets>]')
         print('                   [--verbose]')
         print(' or...')
-        print('')
+        print()
         print('   skcc_skimmer.py')
         print('                   [-a <adi-file>]')
         print('                   [-b <comma-separated-bands>]')
@@ -597,17 +596,17 @@ class cConfig:
         print('                   [-r <distance-in-miles>]')
         print('                   [-t <targets>]')
         print('                   [-v]')
-        print('')
+        print()
         sys.exit()
 
     @staticmethod
-    def parse_goals(String: str, ALL_str: str, Type: str) -> list[str]:
-        ALL: list[str] = ALL_str.split()
-        parsed: list[str] = cUtil.split(String.upper())
+    def parse_goals(string: str, all_str: str, type_str: str) -> list[str]:
+        all: list[str] = all_str.split()
+        parsed: list[str] = cUtil.split(string.upper())
 
         # Using pattern matching simplifies the logic
         match parsed:
-            case ['ALL']: return ALL
+            case ['ALL']: return all
             case ['NONE']: return []
             case items:
                 # Handle deprecation warnings and convert CXN/TXN/SXN to C/T/S
@@ -615,7 +614,7 @@ class cConfig:
                 for deprecated, replacement in deprecated_mappings.items():
                     if deprecated in items:
                         print(f"WARNING: '{deprecated}' is deprecated. Use '{replacement}' instead.")
-                        print(f"         The system will automatically handle both initial awards and multipliers.")
+                        print( "         The system will automatically handle both initial awards and multipliers.")
                         items.remove(deprecated)
                         if replacement not in items:
                             items.append(replacement)
@@ -630,25 +629,25 @@ class cConfig:
                     if item.startswith('-'):
                         # Remove the '-' prefix and add to negated list
                         negated_item: str = item[1:]
-                        if negated_item in ALL:
+                        if negated_item in all:
                             negated.append(negated_item)
                         else:
-                            print(f"Unrecognized {Type} '{item}' (negated item '{negated_item}' not found).")
+                            print(f"Unrecognized {type_str} '{item}' (negated item '{negated_item}' not found).")
                             sys.exit()
                     else:
                         # Regular item
                         if item == 'ALL':
                             has_all = True
-                            result.extend(ALL)
-                        elif item in ALL:
+                            result.extend(all)
+                        elif item in all:
                             result.append(item)
                         else:
-                            print(f"Unrecognized {Type} '{item}'.")
+                            print(f"Unrecognized {type_str} '{item}'.")
                             sys.exit()
 
                 # Check if negation was used without ALL
                 if negated and not has_all:
-                    print(f"Negation syntax (e.g., '-BRAG') can only be used with 'ALL'. Example: 'ALL,-BRAG'")
+                    print("Negation syntax (e.g., '-BRAG') can only be used with 'ALL'. Example: 'ALL,-BRAG'")
                     sys.exit()
 
                 # Remove duplicates and apply negations
@@ -673,11 +672,11 @@ class cFastDateTime:
 
         elif isinstance(Object, tuple):
             if len(Object) == 3:
-                Year, Month, Day = Object
-                self.FastDateTime = f'{Year:0>4}{Month:0>2}{Day:0>2}000000'
+                year, month, day = Object
+                self.FastDateTime = f'{year:0>4}{month:0>2}{day:0>2}000000'
             elif len(Object) == 6:
-                Year, Month, Day, Hour, Minute, Second = Object
-                self.FastDateTime = f"{Year:04}{Month:02}{Day:02}{Hour:02}{Minute:02}{Second:02}"
+                year, month, day, hour, minute, second = Object
+                self.FastDateTime = f"{year:04}{month:02}{day:02}{hour:02}{minute:02}{second:02}"
 
         elif isinstance(Object, str):
             self.FastDateTime = Object
@@ -716,15 +715,15 @@ class cFastDateTime:
 
         return cFastDateTime(DateTime)
 
-    def first_weekday_after_date(self, TargetWeekday: str) -> 'cFastDateTime':
-        TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
-        DateTime = self.to_datetime()
+    def first_weekday_after_date(self, target_weekday: str) -> 'cFastDateTime':
+        target_weekday_number = time.strptime(target_weekday, '%a').tm_wday
+        date_time = self.to_datetime()
 
         while True:
-            DateTime += timedelta(days=1)
+            date_time += timedelta(days=1)
 
-            if DateTime.weekday() == TargetWeekdayNumber:
-                return cFastDateTime(DateTime)
+            if date_time.weekday() == target_weekday_number:
+                return cFastDateTime(date_time)
 
     def __repr__(self) -> str:
         return self.FastDateTime
