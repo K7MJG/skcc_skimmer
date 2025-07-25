@@ -1,6 +1,6 @@
 @echo off
-REM SKCC Skimmer Runtime Script for Windows
-REM Creates virtual environment if needed and runs the application
+REM SKCC Skimmer Runtime Script for Windows using uv
+REM Uses uv for fast dependency management and virtual environment handling
 
 REM Enable delayed variable expansion for use in for loops
 setlocal enabledelayedexpansion
@@ -8,36 +8,58 @@ setlocal enabledelayedexpansion
 REM Prevent Python from creating __pycache__ directories
 set PYTHONDONTWRITEBYTECODE=1
 
-REM Check if virtual environment exists, create if not
-if not exist .venv (
-    REM Check Python version before creating venv
-    python -c "import sys; sys.exit(0) if sys.version_info >= (3,11) else sys.exit(1)" >nul 2>&1
+REM Check if uv is installed
+uv --version >nul 2>&1
+if errorlevel 1 (
+    echo Error: uv is not installed or not in PATH
+    echo Please install uv first:
+    echo   1. Download from: https://github.com/astral-sh/uv
+    echo   2. Or install via pip: pip install uv
+    echo   3. Or install via pipx: pipx install uv
+    pause
+    exit /b 1
+)
+
+REM Set Windows-specific virtual environment
+set UV_PROJECT_ENVIRONMENT=.venv-windows
+
+REM Create/sync virtual environment - let uv handle Python version requirements
+uv sync --quiet
+if errorlevel 1 (
+    echo First sync attempt failed, trying to install Python 3.11 via uv...
+    uv python install 3.11 --quiet
     if errorlevel 1 (
-        echo Error: Python 3.11 or higher is required
-        for /f "tokens=*" %%i in ('python --version 2^>^&1') do echo Current Python version: %%i
-        echo Please install Python 3.11+ and try again
+        echo Failed to install Python 3.11 via uv
+        echo Please install Python 3.11+ manually from: https://www.python.org/downloads/
         pause
         exit /b 1
     )
-
-    echo Creating Python virtual environment...
-    python -m venv .venv >nul 2>&1
+    
+    echo Python 3.11 installed, retrying environment sync...
+    uv sync --quiet
     if errorlevel 1 (
-        echo Error: Failed to create virtual environment
-        echo Make sure Python 3.11+ is installed and working correctly
-        pause
-        exit /b 1
-    )
-
-    echo Installing required packages...
-    .venv\Scripts\python.exe -m pip install --upgrade pip >nul 2>&1
-    .venv\Scripts\python.exe -m pip install -r requirements.txt >nul 2>&1
-    if errorlevel 1 (
-        echo Error: Failed to install requirements
-        pause
-        exit /b 1
+        echo Environment sync still failed, cleaning old virtual environment...
+        if exist .venv (
+            rmdir /s /q .venv 2>nul
+            REM Handle stubborn symlinks on Windows
+            if exist .venv\lib64 (
+                del /f /q .venv\lib64 2>nul
+                rmdir /s /q .venv 2>nul
+            )
+        )
+        
+        echo Final attempt with fresh virtual environment...
+        uv sync --quiet
+        if errorlevel 1 (
+            echo Error: Failed to create virtual environment
+            echo Make sure pyproject.toml exists and is valid
+            pause
+            exit /b 1
+        )
     )
 )
+
+:version_stamp
 
 REM Generate version stamp if .git exists and cVersion.py doesn't exist
 if exist .git if not exist cVersion.py (
@@ -88,5 +110,5 @@ if exist .git if not exist cVersion.py (
     )
 )
 
-REM Run the application with all command line arguments
-.venv\Scripts\python.exe skcc_skimmer.py %*
+REM Run the application with all command line arguments using uv
+uv run skcc_skimmer.py %*

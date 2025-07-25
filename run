@@ -1,35 +1,53 @@
 #!/bin/bash
-# SKCC Skimmer Runtime Script for Linux/macOS
-# Creates virtual environment if needed and runs the application
+# SKCC Skimmer Runtime Script for Linux/macOS using uv
+# Uses uv for fast dependency management and virtual environment handling
 
 set -e  # Exit on any error
 
 # Prevent Python from creating __pycache__ directories
 export PYTHONDONTWRITEBYTECODE=1
 
-# Check if virtual environment exists, create if not
-if [ ! -d .venv ]; then
-    # Check Python version before creating venv
-    if ! python3 -c "import sys; exit(0 if sys.version_info >= (3, 11) else 1)" 2>/dev/null; then
-        echo "Error: Python 3.11 or higher is required"
-        echo "Current Python version: $(python3 --version 2>/dev/null || echo 'Not found')"
-        echo "Please install Python 3.11+ and try again"
+# Check if uv is installed
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Error: uv is not installed or not in PATH"
+    echo "Please install uv first:"
+    echo "  1. Download from: https://github.com/astral-sh/uv"
+    echo "  2. Or install via pip: pip install uv"
+    echo "  3. Or install via pipx: pipx install uv" 
+    echo "  4. Or install via curl: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
+# Set Linux-specific virtual environment
+export UV_PROJECT_ENVIRONMENT=.venv-linux
+
+# Create/sync virtual environment - let uv handle Python version requirements
+if ! uv sync --quiet; then
+    echo "First sync attempt failed, trying to install Python 3.11 via uv..."
+    if ! uv python install 3.11 --quiet; then
+        echo "Failed to install Python 3.11 via uv"
+        echo "Please install Python 3.11+ manually using your package manager:"
+        echo ""
+        echo "Ubuntu/Debian: sudo apt-get install python3.11"
+        echo "RHEL/CentOS/Fedora: sudo yum install python3.11"
+        echo "macOS: brew install python@3.11"
+        echo "Arch Linux: sudo pacman -S python"
+        echo "Or download from: https://www.python.org/downloads/"
         exit 1
     fi
     
-    echo "Creating Python virtual environment..."
-    python3 -m venv .venv || {
-        echo "Error: Failed to create virtual environment"
-        echo "Make sure Python 3.11+ is installed and working correctly"
-        exit 1
-    }
-    
-    echo "Installing required packages..."
-    .venv/bin/python -m pip install --upgrade pip >/dev/null 2>&1
-    .venv/bin/python -m pip install -r requirements.txt >/dev/null 2>&1 || {
-        echo "Error: Failed to install requirements"
-        exit 1
-    }
+    echo "Python 3.11 installed, retrying environment sync..."
+    if ! uv sync --quiet; then
+        echo "Environment sync still failed, cleaning old virtual environment..."
+        rm -rf .venv
+        
+        echo "Final attempt with fresh virtual environment..."
+        if ! uv sync --quiet; then
+            echo "Error: Failed to create virtual environment"
+            echo "Make sure pyproject.toml exists and is valid"
+            exit 1
+        fi
+    fi
 fi
 
 # Generate version stamp if .git exists (directory or file for submodules)
@@ -63,5 +81,5 @@ if [ -d .git ] || [ -f .git ]; then
     echo "VERSION = '$VERSION_STAMP'" > cVersion.py
 fi
 
-# Run the application with all command line arguments
-.venv/bin/python skcc_skimmer.py "$@"
+# Run the application with all command line arguments using uv
+uv run skcc_skimmer.py "$@"

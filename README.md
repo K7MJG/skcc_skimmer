@@ -1,6 +1,23 @@
+# SKCC Skimmer
+
+SKCC Skimmer connects to the Reverse Beacon Network (RBN) to help you find SKCC stations you haven't worked yet for various award levels.
+
+## Prerequisites
+
+### Windows Executable Version
+- No prerequisites - just extract and run!
+
+### Source Code Version
+1. **Python 3.11 or higher** (will be installed automatically if missing)
+2. **uv** - Modern Python package manager
+   - Windows: Download from https://github.com/astral-sh/uv
+   - Linux/Mac: `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
 ## Quick Start
 
-Edit the skcc_skimmer.cfg configuration file and replace these
+### Step 1: Configure
+
+Edit the `skcc_skimmer.cfg` configuration file and replace these
 parameters with your own information:
 
 ```
@@ -12,7 +29,6 @@ TARGETS     =  'C,T,S'
 
 `MY_CALLSIGN`: Replace `x6xxx` with your callsign. (Leave the
 quotes -- they are important.)
-
 
 `ADI_FILE`: Replace 'MasterLog.adi' with a log file in ADI format.
 It should be your complete master ADI file that contains all SKCC
@@ -75,20 +91,66 @@ TARGETS Examples:
    TARGETS = 'None'
 ```
 
-Once you've changed these three configuration parameters, you
+### Step 2: Run
+
+Once you've changed these configuration parameters, you
 can run skcc_skimmer:
 
-On Windows:
-  `run skcc_skimmer.py`
+#### Windows Executable Version
+Double-click `skcc_skimmer.exe`
 
-On Linux:
-  `./run skcc_skimmer.py`
+#### Windows Source Code Version
+Double-click `run.bat` or open a command prompt and type:
+```
+run.bat
+```
+
+#### Linux/Mac Source Code Version
+Open a terminal and type:
+```
+./run
+```
+
+The first time you run the source code version, it will:
+1. Check if Python 3.11+ is installed (install if needed)
+2. Create a virtual environment
+3. Install dependencies
+4. Start SKCC Skimmer
+
+## Command Line Options
+
+You can override configuration file settings with command line options:
+
+```
+run.bat [options]  # Windows
+./run [options]    # Linux/Mac
+
+Options:
+  -c, --callsign CALL     Your amateur radio callsign
+  -a, --adi FILE          ADI log file path
+  -g, --goals GOALS       Awards you're working toward
+  -t, --targets TARGETS   Awards you're helping others achieve
+  -m, --maidenhead GRID   Your grid square location
+  -i, --interactive       Enable interactive mode
+  -v, --verbose           Enable verbose mode
+```
+
+## Interactive Commands
+
+While running, press:
+- `c` - Display worked member counts
+- `g` - Display goal progress
+- `l` - List recent spots
+- `f` - List spots nearby (requires maidenhead grid)
+- `q` - Quit
+
+## More Information
 
 Visit the SKCC Skimmer web page for the most up-to-date info:
 
-https://www.k7mjg.com/SKCC_Skimmer
+https://k7mjg.com/pages/SKCC_Skimmer/
 
 
-73,<br>
-Mark<br>
-K7MJG<br>
+73,
+Mark
+K7MJG
