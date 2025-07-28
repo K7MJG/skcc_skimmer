@@ -369,7 +369,7 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.config_file['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.config_file:
-            cls.GOALS = set(cls.parse_goals(cls.config_file['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX', 'goal'))
+            cls.GOALS = set(cls.parse_goals(cls.config_file['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA', 'goal'))
 
         if 'TARGETS' in cls.config_file:
             cls.TARGETS = set(cls.parse_goals(cls.config_file['TARGETS'], 'C T S', 'target'))
@@ -440,7 +440,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = set(cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX", "goal"))
+            cls.GOALS = set(cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA", "goal"))
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -1153,13 +1153,16 @@ class cQSO:
     ContactsForDXC:   dict[str, tuple[str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call)
     ContactsForDXQ:   dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call)
     DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
+    ContactsForTKA_SK:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Straight Key
+    ContactsForTKA_BUG: dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Bug
+    ContactsForTKA_SS:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Sideswiper
 
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band, key_type)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1242,6 +1245,9 @@ class cQSO:
         cls.ContactsForDXC     = {}
         cls.ContactsForDXQ     = {}
         cls.DXC_HomeCountryUsed = False
+        cls.ContactsForTKA_SK  = {}
+        cls.ContactsForTKA_BUG = {}
+        cls.ContactsForTKA_SS  = {}
         cls.QSOsByMemberNumber = {}
 
         await cls.read_qsos_async()
@@ -1492,6 +1498,25 @@ class cQSO:
                 else:
                     print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have not yet applied for it.')
 
+        ### TKA ###
+        if 'TKA' in cConfig.GOALS:
+            # Check if they have achieved all 300 unique QSOs (100 of each key type)
+            sk_count = len(cls.ContactsForTKA_SK)
+            bug_count = len(cls.ContactsForTKA_BUG)
+            ss_count = len(cls.ContactsForTKA_SS)
+            
+            # Calculate unique members across all key types
+            all_members = set()
+            all_members.update(cls.ContactsForTKA_SK.keys())
+            all_members.update(cls.ContactsForTKA_BUG.keys())
+            all_members.update(cls.ContactsForTKA_SS.keys())
+            unique_total = len(all_members)
+            
+            # Check if they qualify (100 of each type and 300 unique total)
+            if sk_count >= 100 and bug_count >= 100 and ss_count >= 100 and unique_total >= 300:
+                if cls.MyMemberNumber not in cSKCC.tka_level:
+                    print('FYI: You qualify for TKA but have not yet applied for it.')
+
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
         """
@@ -1634,7 +1659,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str]]:
         """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
@@ -1681,7 +1706,8 @@ class cQSO:
                 fields.get('TX_PWR', ''),
                 fields.get('RX_PWR', ''),
                 fields.get('DXCC', ''),
-                fields.get('BAND', '')  # Add BAND field from ADI file
+                fields.get('BAND', ''),  # Add BAND field from ADI file
+                fields.get('APP_SKCCLOGGER_KEYTYPE', '')  # Add KEY_TYPE field for TKA
             )
 
     @classmethod
@@ -1714,7 +1740,7 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, call_sign, _, _, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1792,6 +1818,23 @@ class cQSO:
                     print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}.')
                 else:
                     print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target} ({remaining} more)')
+
+    @classmethod
+    def print_tka_award_progress(cls) -> None:
+        """Print TKA (Triple Key Award) progress."""
+        sk_count = len(cls.ContactsForTKA_SK)
+        bug_count = len(cls.ContactsForTKA_BUG)
+        ss_count = len(cls.ContactsForTKA_SS)
+        
+        # Calculate unique members across all key types (for the 300 unique requirement)
+        all_members = set()
+        all_members.update(cls.ContactsForTKA_SK.keys())
+        all_members.update(cls.ContactsForTKA_BUG.keys())
+        all_members.update(cls.ContactsForTKA_SS.keys())
+        unique_total = len(all_members)
+        
+        # Simple, clear format showing progress toward requirements
+        print(f'TKA: SK:{sk_count}/100 BUG:{bug_count}/100 SS:{ss_count}/100. Unique:{unique_total}/300')
 
     @classmethod
     def process_qrp_awards_xojo_style(cls) -> None:
@@ -2032,6 +2075,9 @@ class cQSO:
 
         if 'DX' in cConfig.GOALS:
             cls.print_dx_awards_progress()
+
+        if 'TKA' in cConfig.GOALS:
+            cls.print_tka_award_progress()
 
         def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
@@ -2298,7 +2344,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2396,7 +2442,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType = Contact
 
 
             # Skip invalid callsigns
@@ -2581,6 +2627,20 @@ class cQSO:
                             if TheirMemberNumber not in cls.ContactsForDXQ:
                                 cls.ContactsForDXQ[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
 
+                if 'TKA' in cConfig.GOALS:
+                    # TKA: Triple Key Award - need 100 each of SK, BUG, SS from unique members
+                    # Only count QSOs on or after November 10, 2018
+                    if QsoDate >= '20181110' and QsoKeyType:
+                        # QsoKeyType should contain 'SK', 'BUG', or 'SS' from APP_SKCCLOGGER_KEYTYPE field
+                        key_type_upper = QsoKeyType.upper().strip()
+                        
+                        if key_type_upper == 'SK' and TheirMemberNumber not in cls.ContactsForTKA_SK:
+                            cls.ContactsForTKA_SK[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                        elif key_type_upper == 'BUG' and TheirMemberNumber not in cls.ContactsForTKA_BUG:
+                            cls.ContactsForTKA_BUG[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                        elif key_type_upper == 'SS' and TheirMemberNumber not in cls.ContactsForTKA_SS:
+                            cls.ContactsForTKA_SS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+
         # Generate output files
         QSOs_Dir = 'QSOs'
         if not await aiofiles.os.path.exists(QSOs_Dir):
@@ -2602,6 +2662,7 @@ class cQSO:
 
         await cls.award_qrp_async(cls.ContactsForQRP)
         await cls.award_dx_async()
+        await cls.award_tka_async()
         await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
@@ -2640,6 +2701,54 @@ class cQSO:
 
                 await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
                 await file.write(f"Progress: {len(cls.ContactsForDXQ):.1f}%\n")
+
+    @classmethod
+    async def award_tka_async(cls) -> None:
+        """Write TKA (Triple Key Award) files."""
+        import aiofiles
+        
+        # Only generate files if we have TKA contacts
+        if not (cls.ContactsForTKA_SK or cls.ContactsForTKA_BUG or cls.ContactsForTKA_SS):
+            return
+            
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-TKA.txt', 'w', encoding='utf-8') as file:
+            await file.write(f"TKA Award Progress for {cConfig.MY_CALLSIGN}\n")
+            await file.write(f"Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members\n")
+            await file.write("=" * 70 + "\n\n")
+            
+            # Write SK contacts
+            await file.write("STRAIGHT KEY (SK) CONTACTS\n")
+            await file.write("-" * 30 + "\n")
+            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_SK.items(), key=lambda x: x[1][0]):
+                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
+            await file.write(f"Total SK: {len(cls.ContactsForTKA_SK)}\n\n")
+            
+            # Write BUG contacts
+            await file.write("BUG CONTACTS\n")
+            await file.write("-" * 30 + "\n")
+            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_BUG.items(), key=lambda x: x[1][0]):
+                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
+            await file.write(f"Total BUG: {len(cls.ContactsForTKA_BUG)}\n\n")
+            
+            # Write SS contacts
+            await file.write("SIDESWIPER/COOTIE (SS) CONTACTS\n")
+            await file.write("-" * 30 + "\n")
+            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_SS.items(), key=lambda x: x[1][0]):
+                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
+            await file.write(f"Total SS: {len(cls.ContactsForTKA_SS)}\n\n")
+            
+            # Calculate unique members
+            all_members: set[str] = set()
+            all_members.update(cls.ContactsForTKA_SK.keys())
+            all_members.update(cls.ContactsForTKA_BUG.keys())
+            all_members.update(cls.ContactsForTKA_SS.keys())
+            unique_total = len(all_members)
+            
+            await file.write("=" * 70 + "\n")
+            await file.write(f"SUMMARY: SK:{len(cls.ContactsForTKA_SK)} BUG:{len(cls.ContactsForTKA_BUG)} SS:{len(cls.ContactsForTKA_SS)} Total unique:{unique_total}/300\n")
 
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
@@ -2999,6 +3108,7 @@ class cSKCC:
     dxc_level:       ClassVar[dict[str, int]] = {}
     qrp_1x_level:    ClassVar[dict[str, int]] = {}
     qrp_2x_level:    ClassVar[dict[str, int]] = {}
+    tka_level:       ClassVar[dict[str, int]] = {}  # Triple Key Award roster
 
 
     # Cache for frequently accessed member data
@@ -3046,7 +3156,8 @@ class cSKCC:
                 cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'),
                 cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'),
                 cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'),
-                cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php')
+                cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php'),
+                cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php')
             ]
 
             try:
@@ -3059,7 +3170,7 @@ class cSKCC:
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
             cls.was_level, cls.was_c_level, cls.was_t_level, \
             cls.was_s_level, cls.prefix_level, cls.dxq_level, \
-            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level = results
+            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level, cls.tka_level = results
 
             print("Successfully downloaded all award rosters.")
         except asyncio.TimeoutError:
