@@ -1506,7 +1506,7 @@ class cQSO:
             ss_count = len(cls.ContactsForTKA_SS)
             
             # Calculate unique members across all key types
-            all_members = set()
+            all_members: set[str] = set()
             all_members.update(cls.ContactsForTKA_SK.keys())
             all_members.update(cls.ContactsForTKA_BUG.keys())
             all_members.update(cls.ContactsForTKA_SS.keys())
@@ -1827,7 +1827,7 @@ class cQSO:
         ss_count = len(cls.ContactsForTKA_SS)
         
         # Calculate unique members across all key types (for the 300 unique requirement)
-        all_members = set()
+        all_members: set[str] = set()
         all_members.update(cls.ContactsForTKA_SK.keys())
         all_members.update(cls.ContactsForTKA_BUG.keys())
         all_members.update(cls.ContactsForTKA_SS.keys())
