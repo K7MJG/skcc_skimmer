@@ -1432,7 +1432,7 @@ class cQSO:
                 Award_P_Level = cSKCC.prefix_level[cConfig.MY_CALLSIGN]
 
                 if P_Level > Award_P_Level:
-                    print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}')
+                    print(f'FYI: You qualify for Px{P_Level} but have only applied for Px{Award_P_Level}.')
             elif P_Level >= 1:
                 print(f'FYI: You qualify for Px{P_Level} but have not yet applied for it.')
 
@@ -1445,7 +1445,7 @@ class cQSO:
                 if cls.MyMemberNumber in cSKCC.dxc_level:
                     Award_DXC_Level = cSKCC.dxc_level[cls.MyMemberNumber]
                     if DXC_Level > Award_DXC_Level:
-                        print(f'FYI: You qualify for DXCx{DXC_Level} but have only applied for DXCx{Award_DXC_Level}')
+                        print(f'FYI: You qualify for DXCx{DXC_Level} but have only applied for DXCx{Award_DXC_Level}.')
                 else:
                     print(f'FYI: You qualify for DXCx{DXC_Level} but have not yet applied for it.')
 
@@ -1456,7 +1456,7 @@ class cQSO:
                 if cls.MyMemberNumber in cSKCC.dxq_level:
                     Award_DXQ_Level = cSKCC.dxq_level[cls.MyMemberNumber]
                     if DXQ_Level > Award_DXQ_Level:
-                        print(f'FYI: You qualify for DXQx{DXQ_Level} but have only applied for DXQx{Award_DXQ_Level}')
+                        print(f'FYI: You qualify for DXQx{DXQ_Level} but have only applied for DXQx{Award_DXQ_Level}.')
                 else:
                     print(f'FYI: You qualify for DXQx{DXQ_Level} but have not yet applied for it.')
 
@@ -1484,7 +1484,7 @@ class cQSO:
                 if cls.MyMemberNumber in cSKCC.qrp_1x_level:
                     Award_QRP_1x_Level = cSKCC.qrp_1x_level[cls.MyMemberNumber]
                     if QRP_1x_Level > Award_QRP_1x_Level:
-                        print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have only applied for 1xQRP x{Award_QRP_1x_Level}')
+                        print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have only applied for 1xQRP x{Award_QRP_1x_Level}.')
                 else:
                     print(f'FYI: You qualify for 1xQRP x{QRP_1x_Level} but have not yet applied for it.')
 
@@ -1494,7 +1494,7 @@ class cQSO:
                 if cls.MyMemberNumber in cSKCC.qrp_2x_level:
                     Award_QRP_2x_Level = cSKCC.qrp_2x_level[cls.MyMemberNumber]
                     if QRP_2x_Level > Award_QRP_2x_Level:
-                        print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have only applied for 2xQRP x{Award_QRP_2x_Level}')
+                        print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have only applied for 2xQRP x{Award_QRP_2x_Level}.')
                 else:
                     print(f'FYI: You qualify for 2xQRP x{QRP_2x_Level} but have not yet applied for it.')
 
