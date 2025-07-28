@@ -2172,11 +2172,56 @@ class cQSO:
 
                 # Check DXC (unique countries)
                 if dxcc_code not in cls.ContactsForDXC:
-                    GoalHitList.append('DXC')
+                    # Get current DXC count and next level
+                    dxc_count = len(cls.ContactsForDXC)
+                    _, next_level, _ = cls.get_dx_award_level_and_next(dxc_count + 1)
+                    GoalHitList.append(f'DXCx{next_level}')
 
                 # Check DXQ (foreign member QSOs)
                 if dxcc_code != home_dxcc and TheirMemberNumber not in cls.ContactsForDXQ:
-                    GoalHitList.append('DXQ')
+                    # Get current DXQ count and next level
+                    dxq_count = len(cls.ContactsForDXQ)
+                    _, next_level, _ = cls.get_dx_award_level_and_next(dxq_count + 1)
+                    GoalHitList.append(f'DXQx{next_level}')
+
+        # QRP award processing
+        if 'QRP' in cConfig.GOALS and fFrequency:
+            # For QRP, we need to check if we've worked this member on this band
+            # QRP contacts are stored with key: membernumber_band
+            band = cSKCC.which_arrl_band(fFrequency)
+            if band:
+                qrp_key = f"{TheirMemberNumber}_{band}"
+                if qrp_key not in cls.ContactsForQRP:
+                    # Calculate current QRP points to determine which level we're working toward
+                    # QRP awards are points-based: 300 points per level for 1xQRP, 150 for 2xQRP
+                    
+                    # Calculate current points for both 1x and 2x
+                    points_1x = 0.0
+                    points_2x = 0.0
+                    band_points = cls._QRP_BAND_POINTS_AWARDS
+                    
+                    for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
+                        key_parts = qso_key.split('_')
+                        if len(key_parts) >= 2:
+                            qso_band = key_parts[1]
+                            if qso_band in band_points:
+                                points = band_points[qso_band]
+                                points_1x += points
+                                if qrp_type == 2:  # 2 means 2xQRP
+                                    points_2x += points
+                    
+                    # Determine which QRP level we're working toward
+                    # 1xQRP: 300 points per level
+                    current_1x_level = int(points_1x // 300)
+                    next_1x_level = current_1x_level + 1
+                    
+                    # 2xQRP: 150 points per level (but only if they've made 2x contacts)
+                    if points_2x > 0:
+                        current_2x_level = int(points_2x // 150)
+                        next_2x_level = current_2x_level + 1
+                        GoalHitList.append(f'1xQRP x{next_1x_level},2xQRP x{next_2x_level}')
+                    else:
+                        GoalHitList.append(f'1xQRP x{next_1x_level}')
 
         return GoalHitList
 
