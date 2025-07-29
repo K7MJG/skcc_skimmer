@@ -61,7 +61,7 @@ from collections.abc import AsyncGenerator, Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from math import atan2, cos, radians, sin, sqrt
 from pathlib import Path
 from typing import (
@@ -413,7 +413,7 @@ class cConfig:
         if 'K3Y_YEAR' in cls.config_file:
             cls.K3Y_YEAR = cls.config_file['K3Y_YEAR']
         else:
-            cls.K3Y_YEAR = datetime.now(timezone.utc).year
+            cls.K3Y_YEAR = datetime.now(UTC).year
 
         cls._parse_args(argv_v)
         cls._validate_config()
@@ -719,7 +719,7 @@ class cFastDateTime:
         return int(self.FastDateTime[4:6])
 
     def to_datetime(self) -> datetime:
-        return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc)
+        return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S').replace(tzinfo=UTC)
 
     def first_weekday_from_date(self, TargetWeekday: str) -> 'cFastDateTime':
         TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
