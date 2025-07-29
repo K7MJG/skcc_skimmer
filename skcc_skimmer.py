@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-'''
+"""
 
      The MIT License (MIT)
 
@@ -26,7 +26,7 @@
      Mark Glenn
      mglenn@cox.net
 
-'''
+"""
 #
 # skcc_skimmer.py
 #
@@ -44,28 +44,41 @@
 
 
 
-from datetime import timedelta, datetime
-from typing import Any, NoReturn, Literal, get_args, AsyncGenerator, ClassVar, Final, Coroutine, TypedDict, Self, Iterator
-from math import radians, sin, cos, atan2, sqrt
-from dataclasses import dataclass, field
-
-import asyncio
-import aiohttp
-from aiohttp import ClientTimeout
-import aiofiles
-import aiofiles.os
 import argparse
-import signal
-import socket
-import time
-import sys
-import os
-import re
-import string
-import textwrap
+import asyncio
 import calendar
 import json
+import os
 import platform
+import re
+import signal
+import socket
+import string
+import sys
+import textwrap
+import time
+from collections.abc import AsyncGenerator, Coroutine, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from math import atan2, cos, radians, sin, sqrt
+from pathlib import Path
+from typing import (
+    Any,
+    ClassVar,
+    Final,
+    Literal,
+    NoReturn,
+    Self,
+    TypedDict,
+    get_args,
+)
+
+import aiofiles
+import aiofiles.os
+import aiohttp
+from aiohttp import ClientTimeout
 
 RBN_SERVER = "telnet.reversebeacon.net"
 RBN_PORT   = 7000
@@ -203,7 +216,7 @@ class cUtil:
         """Runs in the event loop to detect Ctrl+C on Windows."""
         try:
             # Just wait indefinitely until KeyboardInterrupt
-            while True:
+            while True:  # noqa: ASYNC110
                 await asyncio.sleep(0.1)
         except KeyboardInterrupt:
             # Print a clean exit message and force immediate exit
@@ -258,15 +271,15 @@ class cConfig:
 
     @dataclass
     class cHighWpm:
-        tAction = Literal['suppress', 'warn', 'always-display']
-        ACTION: tAction = 'always-display'
+        t_action = Literal['suppress', 'warn', 'always-display']
+        ACTION: t_action = 'always-display'
         THRESHOLD: int = 15
     @classmethod
     def init_high_wpm(cls) -> None:
         high_wpm_config = cls.config_file.get("HIGH_WPM", {})
-        action: cConfig.cHighWpm.tAction = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
-        if action not in get_args(cConfig.cHighWpm.tAction):
-            print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.cHighWpm.tAction)}.")
+        action: cConfig.cHighWpm.t_action = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
+        if action not in get_args(cConfig.cHighWpm.t_action):
+            print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.cHighWpm.t_action)}.")
             action = cConfig.cHighWpm.ACTION
 
         cls.HIGH_WPM = cConfig.cHighWpm(
@@ -300,7 +313,7 @@ class cConfig:
 
     @dataclass
     class cNotification:
-        DEFAULT_CONDITION = ['goals', 'targets', 'friends']  # Class-level default
+        DEFAULT_CONDITION: ClassVar[list[str]] = ['goals', 'targets', 'friends']  # Class-level default
         ENABLED: bool = True
         CONDITION: list[str] = field(default_factory=lambda: cConfig.cNotification.DEFAULT_CONDITION)
         RENOTIFICATION_DELAY_SECONDS: int = 30
@@ -341,7 +354,7 @@ class cConfig:
         async def read_skcc_skimmer_cfg_async() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
-            ConfigFileAbsolute = os.path.abspath('skcc_skimmer.cfg')
+            ConfigFileAbsolute = Path('skcc_skimmer.cfg').resolve()
             cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
 
             async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as config_file:
@@ -363,7 +376,7 @@ class cConfig:
         cls.SPOTTERS_NEARBY = set()
 
         if 'SPOTTERS_NEARBY' in cls.config_file:
-            cls.SPOTTERS_NEARBY = {spotter for spotter in cUtil.split(cls.config_file['SPOTTERS_NEARBY'])}
+            cls.SPOTTERS_NEARBY = set(cUtil.split(cls.config_file['SPOTTERS_NEARBY']))
 
         if 'SPOTTER_RADIUS' in cls.config_file:
             cls.SPOTTER_RADIUS = int(cls.config_file['SPOTTER_RADIUS'])
@@ -378,10 +391,10 @@ class cConfig:
             cls.BANDS = [int(Band) for Band in cUtil.split(cls.config_file['BANDS'])]
 
         if 'FRIENDS' in cls.config_file:
-            cls.FRIENDS = {friend for friend in cUtil.split(cls.config_file['FRIENDS'])}
+            cls.FRIENDS = set(cUtil.split(cls.config_file['FRIENDS']))
 
         if 'EXCLUSIONS' in cls.config_file:
-            cls.EXCLUSIONS = {friend for friend in cUtil.split(cls.config_file['EXCLUSIONS'])}
+            cls.EXCLUSIONS = set(cUtil.split(cls.config_file['EXCLUSIONS']))
 
         cls.init_logfile()
         cls.init_progress_dots()
@@ -400,7 +413,7 @@ class cConfig:
         if 'K3Y_YEAR' in cls.config_file:
             cls.K3Y_YEAR = cls.config_file['K3Y_YEAR']
         else:
-            cls.K3Y_YEAR = datetime.now().year
+            cls.K3Y_YEAR = datetime.now(timezone.utc).year
 
         cls._parse_args(argv_v)
         cls._validate_config()
@@ -601,13 +614,15 @@ class cConfig:
 
     @staticmethod
     def parse_goals(string: str, all_str: str, type_str: str) -> list[str]:
-        all: list[str] = all_str.split()
+        all_list: list[str] = all_str.split()
         parsed: list[str] = cUtil.split(string.upper())
 
         # Using pattern matching simplifies the logic
         match parsed:
-            case ['ALL']: return all
-            case ['NONE']: return []
+            case ['ALL']:
+                return all_list
+            case ['NONE']:
+                return []
             case items:
                 # Handle deprecation warnings and convert CXN/TXN/SXN to C/T/S
                 deprecated_mappings = {'CXN': 'C', 'TXN': 'T', 'SXN': 'S'}
@@ -629,7 +644,7 @@ class cConfig:
                     if item.startswith('-'):
                         # Remove the '-' prefix and add to negated list
                         negated_item: str = item[1:]
-                        if negated_item in all:
+                        if negated_item in all_list:
                             negated.append(negated_item)
                         else:
                             print(f"Unrecognized {type_str} '{item}' (negated item '{negated_item}' not found).")
@@ -638,8 +653,8 @@ class cConfig:
                         # Regular item
                         if item == 'ALL':
                             has_all = True
-                            result.extend(all)
-                        elif item in all:
+                            result.extend(all_list)
+                        elif item in all_list:
                             result.append(item)
                         else:
                             print(f"Unrecognized {type_str} '{item}'.")
@@ -661,7 +676,7 @@ class cConfig:
 class cFastDateTime:
     FastDateTime: str
 
-    MONTH_NAMES: Final = 'January February March April May June July August September October November December'.split()
+    MONTH_NAMES: Final = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
     def __init__(self, Object: datetime | time.struct_time | tuple[int, int, int] | tuple[int, int, int, int, int, int] | str | None) -> None:
         if isinstance(Object, datetime):
@@ -704,7 +719,7 @@ class cFastDateTime:
         return int(self.FastDateTime[4:6])
 
     def to_datetime(self) -> datetime:
-        return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S')
+        return datetime.strptime(self.FastDateTime, '%Y%m%d%H%M%S').replace(tzinfo=timezone.utc)
 
     def first_weekday_from_date(self, TargetWeekday: str) -> 'cFastDateTime':
         TargetWeekdayNumber = time.strptime(TargetWeekday, '%a').tm_wday
@@ -795,8 +810,8 @@ class cSked:
             cDisplay.print('=========== ' + Heading + ' Sked Page ' + '=' * (16-len(Heading)))
 
             for CallSign in sorted(SkedHit):
-                GoalList = list(hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for"))
-                TargetList = list(hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for"))
+                GoalList = [hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for")]
+                TargetList = [hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for")]
                 IsFriend = "friend" in SkedHit[CallSign]
 
                 if CallSign in NewLogins:
@@ -870,7 +885,7 @@ class cSked:
                         FrequencyKHz = float(FrequencyStr.replace('.', '', 1)) if match.group(1) else float(FrequencyStr) * (1000 if match.group(2) else 1)
                         Band = cSKCC.which_band(FrequencyKHz)
                         if Band:
-                            if (not Station in cQSO.ContactsForK3Y) or (not Band in cQSO.ContactsForK3Y[Station]):
+                            if (Station not in cQSO.ContactsForK3Y) or (Band not in cQSO.ContactsForK3Y[Station]):
                                 GoalList.append(f'{"SKM-" + Station if Type == "SKM" else "K3Y/" + Station} ({Band}m)')
                 else:
                     GoalList.append(f'{"SKM-" + Station if Type == "SKM" else "K3Y/" + Station}')
@@ -923,7 +938,7 @@ class cSked:
 
     @classmethod
     async def sked_page_scraper_task_async(cls) -> NoReturn:
-        """Updated async task for the sked page scraper."""
+        """Update async task for the sked page scraper."""
         while True:
             try:
                 await cls.display_logins_async()
@@ -937,7 +952,7 @@ class cSPOTS:
     _Notified:    ClassVar[dict[str, float]] = {}
 
     _Zulu_RegEx:  ClassVar[re.Pattern[str]] = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
-    _dB_RegEx:    ClassVar[re.Pattern[str]] = re.compile(r'^\s{0,1}\d{1,2} dB$')
+    _db_regex:    ClassVar[re.Pattern[str]] = re.compile(r'^\s{0,1}\d{1,2} dB$')
 
     @classmethod
     async def handle_spots_task(cls) -> None:
@@ -973,7 +988,7 @@ class cSPOTS:
             Zulu = Line[70:75]
 
             # Validation
-            if not (cSPOTS._Zulu_RegEx.match(Zulu) and cSPOTS._dB_RegEx.match(Line[47:52])):
+            if not (cSPOTS._Zulu_RegEx.match(Zulu) and cSPOTS._db_regex.match(Line[47:52])):
                 await cUtil.log_error_async(Line)
                 return None
 
@@ -1037,7 +1052,7 @@ class cSPOTS:
 
         # Check if spotter is nearby
         SpottedNearby = Spotter in cConfig.SPOTTERS_NEARBY
-        
+
         # Process spotter information
         if SpottedNearby or CallSign == cConfig.MY_CALLSIGN:
             if Spotter in cSpotters.spotters:
@@ -1094,8 +1109,8 @@ class cSPOTS:
 
         # Record and report spot if relevant
         # Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
-        if ((SpottedNearby and (GoalList or TargetList)) or 
-            CallSign == cConfig.MY_CALLSIGN or 
+        if ((SpottedNearby and (GoalList or TargetList)) or
+            CallSign == cConfig.MY_CALLSIGN or
             CallSign in cConfig.FRIENDS):
             cSPOTS.last_spotted[CallSign] = (FrequencyKHz, time.time())
             ZuluDate = time.strftime('%Y-%m-%d', time.gmtime())
@@ -1114,6 +1129,7 @@ class cSPOTS:
 
 class QRPQSOData(TypedDict):
     """Type definition for QRP-qualified QSO data."""
+
     date: str
     member_number: str
     callsign: str
@@ -1126,9 +1142,9 @@ class cQSO:
     MyDXCC_Code: str
 
     # Compiled regex patterns for ADI parsing (hoisted for efficiency)
-    _EOH_PATTERN = re.compile(r'<eoh>', re.I)
-    _EOR_PATTERN = re.compile(r'<eor>', re.I)
-    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.I | re.S)
+    _EOH_PATTERN = re.compile(r'<eoh>', re.IGNORECASE)
+    _EOR_PATTERN = re.compile(r'<eor>', re.IGNORECASE)
+    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.IGNORECASE | re.DOTALL)
 
     # QRP band point values (hoisted for efficiency) - includes both upper/lowercase for ADI compatibility
     _QRP_BAND_POINTS_AWARDS: ClassVar[dict[str, float]] = {
@@ -1266,14 +1282,14 @@ class cQSO:
     async def watch_logfile_task(cls) -> NoReturn:
         while True:
             try:
-                if await aiofiles.os.path.exists(cConfig.ADI_FILE) and os.path.getmtime(cConfig.ADI_FILE) != cQSO.AdiFileReadTimeStamp:
+                if await aiofiles.os.path.exists(cConfig.ADI_FILE) and Path(cConfig.ADI_FILE).stat().st_mtime != cQSO.AdiFileReadTimeStamp:
                     cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
 
                     # Wait until file size stabilizes
                     while True:
-                        Size = os.path.getsize(cConfig.ADI_FILE)
+                        Size = Path(cConfig.ADI_FILE).stat().st_size
                         await asyncio.sleep(1)
-                        if os.path.getsize(cConfig.ADI_FILE) == Size:
+                        if Path(cConfig.ADI_FILE).stat().st_size == Size:
                             break
 
                     await cls.refresh_async()
@@ -1359,9 +1375,7 @@ class cQSO:
 
     @classmethod
     def awards_check(cls) -> None:
-        """
-        Updated awards check that properly handles official SKCC award requirements.
-        """
+        """Update awards check that properly handles official SKCC award requirements."""
         C_Level = cls.calculate_current_award_level('C', len(cls.ContactsForC))
         T_Level = cls.calculate_current_award_level('T', len(cls.ContactsForT))
         S_Level = cls.calculate_current_award_level('S', len(cls.ContactsForS))
@@ -1504,14 +1518,14 @@ class cQSO:
             sk_count = len(cls.ContactsForTKA_SK)
             bug_count = len(cls.ContactsForTKA_BUG)
             ss_count = len(cls.ContactsForTKA_SS)
-            
+
             # Calculate unique members across all key types
             all_members: set[str] = set()
             all_members.update(cls.ContactsForTKA_SK.keys())
             all_members.update(cls.ContactsForTKA_BUG.keys())
             all_members.update(cls.ContactsForTKA_SS.keys())
             unique_total = len(all_members)
-            
+
             # Check if they qualify (100 of each type and 300 unique total)
             if sk_count >= 100 and bug_count >= 100 and ss_count >= 100 and unique_total >= 300:
                 if cls.MyMemberNumber not in cSKCC.tka_level:
@@ -1687,10 +1701,8 @@ class cQSO:
             # Parse frequency
             frequency = 0.0
             if freq_str := fields.get('FREQ', ''):
-                try:
+                with suppress(ValueError):
                     frequency = float(freq_str) * 1000
-                except ValueError:
-                    pass
 
             # Clean SKCC number
             skcc_number = ''.join(filter(str.isdigit, fields.get('SKCC', '')))
@@ -1713,22 +1725,19 @@ class cQSO:
     @classmethod
     async def read_qsos_async(cls) -> None:
         """Fast, simple QSO reading using generator."""
-        AdiFileAbsolute = os.path.abspath(cConfig.ADI_FILE)
+        AdiFileAbsolute = Path(cConfig.ADI_FILE).resolve()
         cDisplay.print(f"\nReading QSOs for {cConfig.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
         cls.QSOs = []
-        cls.AdiFileReadTimeStamp = os.path.getmtime(cConfig.ADI_FILE)
+        cls.AdiFileReadTimeStamp = Path(cConfig.ADI_FILE).stat().st_mtime
 
         try:
             # Use generator in thread pool for async operation
-            import asyncio
-            from concurrent.futures import ThreadPoolExecutor
-
             loop = asyncio.get_event_loop()
             with ThreadPoolExecutor(max_workers=1) as executor:
                 cls.QSOs = await loop.run_in_executor(
                     executor,
-                    lambda: list(cls._parse_adi_generator(AdiFileAbsolute))
+                    lambda: list(cls._parse_adi_generator(str(AdiFileAbsolute)))
                 )
 
         except Exception as e:
@@ -1740,8 +1749,8 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, call_sign, _, _, _, _, _, _, _, _, _ in cls.QSOs:
-            call_sign = cSKCC.extract_callsign(call_sign)
+        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _ in cls.QSOs:
+            call_sign = cSKCC.extract_callsign(raw_call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
 
@@ -1759,9 +1768,9 @@ class cQSO:
     @staticmethod
     def get_dx_award_level_and_next(count: int) -> tuple[int, int, int]:
         """Calculate DX award level and next target based on count.
-        
+
         DX award progression: 10, 25, 50, then increment by 25 (75, 100, 125, 150, etc.)
-        
+
         Returns:
             Tuple of (current_level, next_level, next_target)
         """
@@ -1787,7 +1796,7 @@ class cQSO:
             print('DXC: Have 0 countries. Need DXCC codes in ADI file or member data.')
         else:
             current_level, next_level, next_target = cls.get_dx_award_level_and_next(dxc_count)
-            
+
             if current_level == 0:
                 # Working toward initial DXC
                 remaining = next_target - dxc_count
@@ -1806,7 +1815,7 @@ class cQSO:
             print('DXQ: Have 0 foreign member QSOs.')
         else:
             current_level, next_level, next_target = cls.get_dx_award_level_and_next(dxq_count)
-            
+
             if current_level == 0:
                 # Working toward initial DXQ
                 remaining = next_target - dxq_count
@@ -1825,14 +1834,14 @@ class cQSO:
         sk_count = len(cls.ContactsForTKA_SK)
         bug_count = len(cls.ContactsForTKA_BUG)
         ss_count = len(cls.ContactsForTKA_SS)
-        
+
         # Calculate unique members across all key types (for the 300 unique requirement)
         all_members: set[str] = set()
         all_members.update(cls.ContactsForTKA_SK.keys())
         all_members.update(cls.ContactsForTKA_BUG.keys())
         all_members.update(cls.ContactsForTKA_SS.keys())
         unique_total = len(all_members)
-        
+
         # Simple, clear format showing progress toward requirements
         print(f'TKA: SK:{sk_count}/100 BUG:{bug_count}/100 SS:{ss_count}/100. Unique:{unique_total}/300')
 
@@ -1851,11 +1860,7 @@ class cQSO:
         # Process each band separately (matching Xojo's for loop)
         for xojo_band in xojo_bands:
             # Select all QRP QSOs for this band using UPPER(Log_BAND) = xojo_band logic
-            band_qsos: list[QRPQSOData] = []
-
-            for qso in cls.QRPQualifiedQSOs:
-                if qso['band'].upper() == xojo_band:
-                    band_qsos.append(qso)
+            band_qsos: list[QRPQSOData] = [qso for qso in cls.QRPQualifiedQSOs if qso['band'].upper() == xojo_band]
 
             # Process QSOs for this band - one entry per member per band
             # But we need to ensure 2xQRP contacts are properly identified
@@ -2041,7 +2046,7 @@ class cQSO:
                     case _:
                         print(f'{Class}: Have {Total:,}. Need {Remaining:,} more for next level.')
 
-        print('')
+        print()
 
         if cConfig.GOALS:
             # Sort goals in preferred display order
@@ -2057,7 +2062,7 @@ class cQSO:
 
         print(f'BANDS: {", ".join(str(Band) for Band in sorted(cConfig.BANDS, reverse=True))}')
 
-        print('')
+        print()
         print('*** Awards Progress ***')
 
         print_remaining('C', len(cls.ContactsForC))
@@ -2128,7 +2133,7 @@ class cQSO:
     @classmethod
     def _check_cts_target(cls, award_type: str, member_number: str, their_award_date: str,
                           level_dict: dict[str, int], date1: str, date2: str) -> str | None:
-        """Helper method to check C/T/S target awards - reduces code duplication."""
+
         if not their_award_date:
             # They're working toward initial award
             if member_number not in cls.QSOsByMemberNumber or all(
@@ -2240,12 +2245,12 @@ class cQSO:
                 if qrp_key not in cls.ContactsForQRP:
                     # Calculate current QRP points to determine which level we're working toward
                     # QRP awards are points-based: 300 points per level for 1xQRP, 150 for 2xQRP
-                    
+
                     # Calculate current points for both 1x and 2x
                     points_1x = 0.0
                     points_2x = 0.0
                     band_points = cls._QRP_BAND_POINTS_AWARDS
-                    
+
                     for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
                         key_parts = qso_key.split('_')
                         if len(key_parts) >= 2:
@@ -2255,12 +2260,12 @@ class cQSO:
                                 points_1x += points
                                 if qrp_type == 2:  # 2 means 2xQRP
                                     points_2x += points
-                    
+
                     # Determine which QRP level we're working toward
                     # 1xQRP: 300 points per level
                     current_1x_level = int(points_1x // 300)
                     next_1x_level = current_1x_level + 1
-                    
+
                     # 2xQRP: 150 points per level (but only if they've made 2x contacts)
                     if points_2x > 0:
                         current_2x_level = int(points_2x // 150)
@@ -2320,7 +2325,7 @@ class cQSO:
         cls.print_progress()
 
     @classmethod
-    def get_brag_qsos(cls, PrevMonth: int = 0, Print: bool = False) -> None:
+    def get_brag_qsos(cls, PrevMonth: int = 0, should_print: bool = False) -> None:
         cls.Brag = {}
 
         DateOfInterestGMT = cFastDateTime.now_gmt()
@@ -2377,7 +2382,7 @@ class cQSO:
                     if TheirMemberNumber not in cls.Brag and BragOkay:
                         cls.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
 
-        if Print and 'BRAG' in cConfig.GOALS:
+        if should_print and 'BRAG' in cConfig.GOALS:
             Year = DateOfInterestGMT.year()
             MonthIndex = DateOfInterestGMT.month()-1
             MonthAbbrev = cFastDateTime.MONTH_NAMES[MonthIndex][:3]
@@ -2415,10 +2420,10 @@ class cQSO:
         # Process BRAG QSOs
         if 'BRAG_MONTHS' in globals() and 'BRAG' in cConfig.GOALS:
             for PrevMonth in range(abs(cConfig.BRAG_MONTHS), 0, -1):
-                cQSO.get_brag_qsos(PrevMonth=PrevMonth, Print=True)
+                cQSO.get_brag_qsos(PrevMonth=PrevMonth, should_print=True)
 
         # Process current month as well
-        cQSO.get_brag_qsos(PrevMonth=0, Print=False)
+        cQSO.get_brag_qsos(PrevMonth=0, should_print=False)
 
         # Define key dates once for efficiency
         eligible_dates = {
@@ -2633,7 +2638,7 @@ class cQSO:
                     if QsoDate >= '20181110' and QsoKeyType:
                         # QsoKeyType should contain 'SK', 'BUG', or 'SS' from APP_SKCCLOGGER_KEYTYPE field
                         key_type_upper = QsoKeyType.upper().strip()
-                        
+
                         if key_type_upper == 'SK' and TheirMemberNumber not in cls.ContactsForTKA_SK:
                             cls.ContactsForTKA_SK[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
                         elif key_type_upper == 'BUG' and TheirMemberNumber not in cls.ContactsForTKA_BUG:
@@ -2644,7 +2649,7 @@ class cQSO:
         # Generate output files
         QSOs_Dir = 'QSOs'
         if not await aiofiles.os.path.exists(QSOs_Dir):
-            os.makedirs(QSOs_Dir)
+            Path(QSOs_Dir).mkdir(parents=True)
 
         # Award files
         await cls.award_cts_async('C', cls.ContactsForC)
@@ -2705,17 +2710,16 @@ class cQSO:
     @classmethod
     async def award_tka_async(cls) -> None:
         """Write TKA (Triple Key Award) files."""
-        import aiofiles
-        
+
         # Only generate files if we have TKA contacts
         if not (cls.ContactsForTKA_SK or cls.ContactsForTKA_BUG or cls.ContactsForTKA_SS):
             return
-            
+
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-TKA.txt', 'w', encoding='utf-8') as file:
             await file.write(f"TKA Award Progress for {cConfig.MY_CALLSIGN}\n")
-            await file.write(f"Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members\n")
+            await file.write("Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members\n")
             await file.write("=" * 70 + "\n\n")
-            
+
             # Write SK contacts
             await file.write("STRAIGHT KEY (SK) CONTACTS\n")
             await file.write("-" * 30 + "\n")
@@ -2723,7 +2727,7 @@ class cQSO:
                 date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                 await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
             await file.write(f"Total SK: {len(cls.ContactsForTKA_SK)}\n\n")
-            
+
             # Write BUG contacts
             await file.write("BUG CONTACTS\n")
             await file.write("-" * 30 + "\n")
@@ -2731,7 +2735,7 @@ class cQSO:
                 date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                 await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
             await file.write(f"Total BUG: {len(cls.ContactsForTKA_BUG)}\n\n")
-            
+
             # Write SS contacts
             await file.write("SIDESWIPER/COOTIE (SS) CONTACTS\n")
             await file.write("-" * 30 + "\n")
@@ -2739,21 +2743,20 @@ class cQSO:
                 date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                 await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
             await file.write(f"Total SS: {len(cls.ContactsForTKA_SS)}\n\n")
-            
+
             # Calculate unique members
             all_members: set[str] = set()
             all_members.update(cls.ContactsForTKA_SK.keys())
             all_members.update(cls.ContactsForTKA_BUG.keys())
             all_members.update(cls.ContactsForTKA_SS.keys())
             unique_total = len(all_members)
-            
+
             await file.write("=" * 70 + "\n")
             await file.write(f"SUMMARY: SK:{len(cls.ContactsForTKA_SK)} BUG:{len(cls.ContactsForTKA_BUG)} SS:{len(cls.ContactsForTKA_SS)} Total unique:{unique_total}/300\n")
 
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
         """Generate QRP award files with point calculations using generator-based streaming."""
-        import aiofiles
 
         if not QSOs:
             return
@@ -2843,7 +2846,6 @@ class cQSO:
     @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
         """Async version of award_p to write files using aiofiles"""
-        import aiofiles  # You'll need to add this to your imports
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
             iPoints = 0
@@ -2856,7 +2858,6 @@ class cQSO:
     @classmethod
     async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
         """Async version of award_cts to write files using aiofiles"""
-        import aiofiles
 
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
@@ -2869,7 +2870,6 @@ class cQSO:
     @classmethod
     async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
         """Async version of award_was to write files using aiofiles"""
-        import aiofiles
 
         QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
@@ -2884,7 +2884,6 @@ class cQSO:
     @classmethod
     async def track_brag_async(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
         """Async version of track_brag to write files using aiofiles"""
-        import aiofiles
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
@@ -2899,7 +2898,7 @@ class cQSO:
     @classmethod
     def print_k3y_contacts(cls) -> None:
         # Could be cleaner, but want to match order on the SKCC K3Y website.
-        print('')
+        print()
         print(f'K3Y {cConfig.K3Y_YEAR}')
         print('========')
         print(f'{"Station": <8}|', end = '')
@@ -2962,7 +2961,7 @@ class cSpotters:
     _columns_regex: ClassVar[re.Pattern[str]] = re.compile(
         r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*'
         r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
-        re.S
+        re.DOTALL
     )
 
     @staticmethod
@@ -3033,7 +3032,7 @@ class cSpotters:
             print(f'*** Fatal Error: Unable to retrieve spotters from RBN: {e}')
             sys.exit()
 
-        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.S)
+        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.DOTALL)
 
         # Use hoisted regex pattern
         columns_regex = cls._columns_regex
@@ -3054,22 +3053,19 @@ class cSpotters:
     @classmethod
     async def _process_spotter(cls, spotter: str, csv_bands: str, grid: str) -> None:
         """Process a single spotter entry asynchronously."""
-        try:
+        with suppress(ValueError):
             miles = int(cSpotters.calculate_distance(cConfig.MY_GRIDSQUARE, grid) * 0.62137)
 
             # Parse bands from csv string
             valid_bands = {"160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
-            bands = list(int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands)
+            bands = [int(b[:-1]) for b in csv_bands.split(',') if b in valid_bands]
 
             cls.spotters[spotter] = (miles, bands)
-        except ValueError:
-            pass
 
     @classmethod
     def get_nearby_spotters(cls) -> list[tuple[str, int]]:
         spotters_sorted = sorted(cls.spotters.items(), key=lambda item: item[1][0])
-        nearbySpotters = list((spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS)
-        return nearbySpotters
+        return [(spotter, miles) for spotter, (miles, _) in spotters_sorted if miles <= cConfig.SPOTTER_RADIUS]
 
     @classmethod
     def get_distance(cls, Spotter: str) -> int:
@@ -3077,7 +3073,7 @@ class cSpotters:
         return Miles
 
 class cSKCC:
-    _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.I | re.S)
+    _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.IGNORECASE | re.DOTALL)
 
     class cMemberEntry(TypedDict):
         name: str
@@ -3234,13 +3230,13 @@ class cSKCC:
             while time_now_gmt() % 20000 == 0:
                 await asyncio.sleep(2)  # Non-blocking sleep
                 sys.stderr.write('.')
-            else:
-                print('')
 
-    ''' The SKCC month abbreviations are always in US format.  We
+            print()
+
+    """ The SKCC month abbreviations are always in US format.  We
             don't want to use the built in date routines because they are
             locale sensitive and could be misinterpreted in other countries.
-    '''
+    """
     @staticmethod
     def normalize_skcc_date(Date: str) -> str:
         if not Date:
@@ -3306,7 +3302,7 @@ class cSKCC:
         return level
 
     @staticmethod
-    async def read_roster_async(Name: str, URL: str) -> dict[str, int] | NoReturn:
+    async def read_roster_async(Name: str, URL: str) -> dict[str, int]:
         """Read roster with async HTTP request."""
         print(f"Retrieving SKCC {Name} roster...")
 
@@ -3322,7 +3318,7 @@ class cSKCC:
             print(f"Error retrieving {Name} roster: {e}")
             return {}
 
-        rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.I | re.S)
+        rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.IGNORECASE | re.DOTALL)
         # Use hoisted regex pattern
         columns_regex = cSKCC._roster_columns_regex
 
@@ -3375,7 +3371,7 @@ class cSKCC:
                 print("Error parsing SKCC data line. Skipping.")
                 continue
 
-            all_calls = [current_call] + list(x.strip() for x in other_calls.split(",")) if other_calls else [current_call]
+            all_calls = [current_call, *[x.strip() for x in other_calls.split(",")]] if other_calls else [current_call]
 
             # Derive plain number by removing suffix letters from SKCCNR
             plain_number = re.sub(r'[A-Z]+$', '', number)
@@ -3401,7 +3397,7 @@ class cSKCC:
     def is_on_skcc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
         return any(
             ((Band == 60) and ((5332 - 1.5) <= frequency_khz <= (5405 + 1.5))) or
-            any((((MidPoint - tolerance_khz) <= frequency_khz) and (frequency_khz <= (MidPoint + tolerance_khz))) for MidPoint in MidPoints)
+            any(((MidPoint - tolerance_khz) <= frequency_khz <= (MidPoint + tolerance_khz)) for MidPoint in MidPoints)
             for Band, MidPoints in cls._calling_frequencies_khz.items()
         )
 
@@ -3534,7 +3530,7 @@ class cSKCC:
         if tasks:
             await asyncio.gather(*tasks)
 
-        print('')
+        print()
 
 class cRBN:
 
@@ -3556,7 +3552,8 @@ class cRBN:
     @classmethod
     async def feed_generator(cls, callsign: str) -> AsyncGenerator[bytes, None]:
         """Try to connect to the RBN server, preferring IPv6 but falling back to IPv4.
-        Includes robust connection handling with keepalive and timeout management."""
+           Includes robust connection handling with keepalive and timeout management.
+        """
 
         reader: asyncio.StreamReader | None = None
         writer: asyncio.StreamWriter | None = None
@@ -3652,10 +3649,8 @@ class cRBN:
                     cls._connected = False
                     if writer is not None:
                         writer.close()
-                        try:
+                        with suppress(asyncio.TimeoutError, Exception):
                             await asyncio.wait_for(writer.wait_closed(), timeout=2.0)
-                        except (asyncio.TimeoutError, Exception):
-                            pass
 
                 if connection_succeeded:  # If connection worked, stop trying other IPs
                     break
@@ -3679,7 +3674,7 @@ class cRBN:
     @classmethod
     async def write_dots_task(cls) -> NoReturn:
         while True:
-            await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)
+            await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)  # noqa: ASYNC110
 
             if cls._connected:
                 global _progress_dot_count
@@ -3687,7 +3682,7 @@ class cRBN:
                 _progress_dot_count += 1
 
                 if _progress_dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
-                    print('', flush=True)
+                    print(flush=True)
 
     @classmethod
     def dot_count_reset(cls) -> None:
@@ -3701,7 +3696,7 @@ async def get_version_async() -> str:
     While GenerateVersionStamp.py is excluded from releases, cVersion.py must be
     included to provide accurate version information to the user.
     """
-    if os.path.isfile("GenerateVersionStamp.py"):
+    if Path("GenerateVersionStamp.py").is_file():
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "GenerateVersionStamp.py",
             stdout=asyncio.subprocess.PIPE,
@@ -3714,15 +3709,13 @@ async def get_version_async() -> str:
 
     VERSION = "<development>"
 
-    try:
+    with suppress(ImportError):
         from cVersion import VERSION
-    except ImportError:
-        pass
 
     return VERSION
 
 async def main_loop() -> None:
-    global config, Spotters
+    global config
 
     print(f'SKCC Skimmer version {await get_version_async()}\n')
 
@@ -3758,7 +3751,7 @@ async def main_loop() -> None:
     await cQSO.get_goal_qsos_async()
     cQSO.print_progress()
 
-    print('')
+    print()
     cQSO.awards_check()
 
     # Handle interactive mode if enabled
@@ -3778,7 +3771,7 @@ async def main_loop() -> None:
                     case '':
                         continue
                     case cmd:
-                        print('')
+                        print()
                         await cSKCC.lookups_async(cmd)
             except KeyboardInterrupt:
                 os._exit(0)
@@ -3787,7 +3780,7 @@ async def main_loop() -> None:
     await cSpotters.get_spotters_async()
 
     nearby_list_with_distance = cSpotters.get_nearby_spotters()
-    formatted_nearby_list_with_distance = list(f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance)
+    formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
     cConfig.SPOTTERS_NEARBY = {Spotter for Spotter, _ in nearby_list_with_distance}
 
     print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
@@ -3801,7 +3794,7 @@ async def main_loop() -> None:
     if cConfig.LOG_FILE.DELETE_ON_STARTUP:
         Filename = cConfig.LOG_FILE.FILE_NAME
         if Filename is not None and await aiofiles.os.path.exists(Filename):
-            os.remove(Filename)
+            Path(Filename).unlink()
 
     print()
     print('Running...')
