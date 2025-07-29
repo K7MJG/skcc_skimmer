@@ -762,7 +762,7 @@ class cFastDateTime:
 class cDisplay:
     @staticmethod
     def print(text: str) -> None:
-        global _progress_dot_count
+        global _progress_dot_count  # noqa: PLW0603
         if _progress_dot_count > 0:
             print()
 
@@ -1003,7 +1003,7 @@ class cSPOTS:
                 CallSign, CallSignSuffix = CallSign.split('/', 1)
                 CallSignSuffix = CallSignSuffix.upper()
 
-            return Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM
+            return Zulu, Spotter, FrequencyKHz, CallSign, CallSignSuffix, dB, WPM  # noqa: TRY300
 
         except (ValueError, IndexError):
             await cUtil.log_error_async(Line)
@@ -2998,7 +2998,7 @@ class cSpotters:
             lat1, lon1 = cSpotters.locator_to_latlong(locator1)
             lat2, lon2 = cSpotters.locator_to_latlong(locator2)
         except Exception as e:
-            raise ValueError(f"Invalid Maidenhead locator: {e}")
+            raise ValueError(f"Invalid Maidenhead locator: {e}") from e
 
         # Compute differences in latitude and longitude
         lat_diff: float = lat2 - lat1
@@ -3677,7 +3677,7 @@ class cRBN:
             await asyncio.sleep(cConfig.PROGRESS_DOTS.DISPLAY_SECONDS)  # noqa: ASYNC110
 
             if cls._connected:
-                global _progress_dot_count
+                global _progress_dot_count  # noqa: PLW0603
                 print('.', end='', flush=True)
                 _progress_dot_count += 1
 
@@ -3686,7 +3686,7 @@ class cRBN:
 
     @classmethod
     def dot_count_reset(cls) -> None:
-        global _progress_dot_count
+        global _progress_dot_count  # noqa: PLW0603
         _progress_dot_count = 0
 
 async def get_version_async() -> str:
@@ -3710,12 +3710,12 @@ async def get_version_async() -> str:
     VERSION = "<development>"
 
     with suppress(ImportError):
-        from cVersion import VERSION
+        from cVersion import VERSION  # noqa: PLC0415
 
     return VERSION
 
 async def main_loop() -> None:
-    global config
+    global config  # noqa: PLW0603
 
     print(f'SKCC Skimmer version {await get_version_async()}\n')
 
