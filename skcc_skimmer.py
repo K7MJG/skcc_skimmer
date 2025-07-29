@@ -928,7 +928,7 @@ class cSked:
                         try:
                             SkedLogins: list[tuple[str, str]] = json.loads(Content)
                             Hits = await cls.handle_logins_async(SkedLogins, 'SKCC')
-                        except Exception as ex:
+                        except json.JSONDecodeError as ex:
                             print(f"*** Problem parsing data sent from the SKCC Sked Page: '{Content}'.  Details: '{ex}'.")
 
                     cls._PreviousLogins = Hits
