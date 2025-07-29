@@ -92,13 +92,13 @@ SKCC_BASE_URL = 'https://www.skccgroup.com/'
 # Global state for progress dot display
 _progress_dot_count: int = 0
 
-US_STATES: Final[set[str]] = {
+US_STATES: Final[tuple[str, ...]] = (
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
     'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
     'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
     'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
-}
+)
 
 # Award level requirements
 Levels: Final[dict[str, int]] = {
