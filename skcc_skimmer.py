@@ -169,6 +169,19 @@ class cUtil:
         return Class
 
     @staticmethod
+    def delayed_exit(exit_code: int = 1) -> NoReturn:
+        """Exit with a 10-second delay to allow Windows Explorer users to read error messages."""
+        print()  # Blank line for spacing
+        try:
+            for i in range(10, 0, -1):
+                print(f"\rProgram will close in {i} seconds...", end='', flush=True)
+                time.sleep(1)
+            print()
+        except KeyboardInterrupt:
+            print("\n\nExiting...")
+        sys.exit(exit_code)
+
+    @staticmethod
     async def file_check_async(Filename: str) -> None | NoReturn:
         if await aiofiles.os.path.exists(Filename):
             return
@@ -176,7 +189,7 @@ class cUtil:
         print()
         print(f"File '{Filename}' does not exist.")
         print()
-        sys.exit()
+        cUtil.delayed_exit()
 
     @staticmethod
     def is_in_bands(FrequencyKHz: float) -> bool:
@@ -324,7 +337,7 @@ class cConfig:
         invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
         if invalid_conditions:
             print(f"Invalid NOTIFICATION CONDITION(s): {invalid_conditions}. Must be 'goals', 'targets', or 'friends'.")
-            sys.exit()
+            cUtil.delayed_exit()
         cls.NOTIFICATION = cConfig.cNotification(
             ENABLED                      = bool(notification_config.get("ENABLED", cConfig.cNotification.ENABLED)),
             CONDITION                    = conditions,
@@ -487,94 +500,94 @@ class cConfig:
 
         if not cls.GOALS and not cls.TARGETS:
             print('You must specify at least one goal or target.')
-            sys.exit()
+            cUtil.delayed_exit()
 
         if not cls.MY_GRIDSQUARE:
             print("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SPOTTER_RADIUS' not in cls.config_file:
             print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'QUALIFIERS' in cls.config_file:
             print("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'NEARBY' in cls.config_file:
             print("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SPOTTER_PREFIXES' in cls.config_file:
             print("'SPOTTER_PREFIXES' has been deprecated.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SPOTTERS_NEARBY' in cls.config_file:
             print("'SPOTTERS_NEARBY' has been deprecated.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SKCC_FREQUENCIES' in cls.config_file:
             print("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'HITS_FILE' in cls.config_file:
             print("'HITS_FILE' is no longer supported.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'HitCriteria' in cls.config_file:
             print("'HitCriteria' is no longer supported.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'StatusCriteria' in cls.config_file:
             print("'StatusCriteria' is no longer supported.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SkedCriteria' in cls.config_file:
             print("'SkedCriteria' is no longer supported.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SkedStatusCriteria' in cls.config_file:
             print("'SkedStatusCriteria' is no longer supported.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SERVER' in cls.config_file:
             print('SERVER is no longer supported.')
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'SPOT_PERSISTENCE_MINUTES' not in cls.config_file:
             cls.SPOT_PERSISTENCE_MINUTES = 15
 
         if 'GOAL' in cls.config_file:
             print("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'GOALS' not in cls.config_file:
             print("GOALS must be defined in 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'TARGETS' not in cls.config_file:
             print("TARGETS must be defined in 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'HIGH_WPM' not in cls.config_file:
             print("HIGH_WPM must be defined in 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if cls.HIGH_WPM.ACTION not in ('suppress', 'warn', 'always-display'):
             print("HIGH_WPM['ACTION'] must be one of ('suppress', 'warn', 'always-display')")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'OFF_FREQUENCY' not in cls.config_file:
             print("OFF_FREQUENCY must be defined in 'skcc_skimmer.cfg'.")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if cls.OFF_FREQUENCY.ACTION not in ('suppress', 'warn'):
             print("OFF_FREQUENCY['ACTION'] must be one of ('suppress', 'warn')")
-            sys.exit()
+            cUtil.delayed_exit()
 
         if 'NOTIFICATION' not in cls.config_file:
             print("'NOTIFICATION' must be defined in skcc_skimmer.cfg.")
-            sys.exit()
+            cUtil.delayed_exit()
 
     @staticmethod
     def usage() -> NoReturn:
@@ -610,7 +623,7 @@ class cConfig:
         print('                   [-t <targets>]')
         print('                   [-v]')
         print()
-        sys.exit()
+        cUtil.delayed_exit()
 
     @staticmethod
     def parse_goals(string: str, all_str: str, type_str: str) -> list[str]:
@@ -648,7 +661,7 @@ class cConfig:
                             negated.append(negated_item)
                         else:
                             print(f"Unrecognized {type_str} '{item}' (negated item '{negated_item}' not found).")
-                            sys.exit()
+                            cUtil.delayed_exit()
                     else:
                         # Regular item
                         if item == 'ALL':
@@ -658,12 +671,12 @@ class cConfig:
                             result.append(item)
                         else:
                             print(f"Unrecognized {type_str} '{item}'.")
-                            sys.exit()
+                            cUtil.delayed_exit()
 
                 # Check if negation was used without ALL
                 if negated and not has_all:
                     print("Negation syntax (e.g., '-BRAG') can only be used with 'ALL'. Example: 'ALL,-BRAG'")
-                    sys.exit()
+                    cUtil.delayed_exit()
 
                 # Remove duplicates and apply negations
                 result = list(set(result))  # Remove duplicates
@@ -3027,11 +3040,11 @@ class cSpotters:
                 async with session.get(RBN_STATUS_URL) as response:
                     if response.status != 200:
                         print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
-                        sys.exit()
+                        cUtil.delayed_exit()
                     html = await response.text()
         except aiohttp.ClientError as e:
             print(f'*** Fatal Error: Unable to retrieve spotters from RBN: {e}')
-            sys.exit()
+            cUtil.delayed_exit()
 
         rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.DOTALL)
 
@@ -3172,10 +3185,10 @@ class cSKCC:
             print("Successfully downloaded all award rosters.")
         except asyncio.TimeoutError:
             print("Timeout error downloading rosters.")
-            sys.exit(1)
+            cUtil.delayed_exit(1)
         except Exception as e:
             print(f"Error downloading rosters: {e}")
-            sys.exit(1)
+            cUtil.delayed_exit(1)
 
     @classmethod
     def build_member_info(cls, CallSign: str) -> str:
@@ -3350,11 +3363,11 @@ class cSKCC:
                 async with session.get(url) as response:
                     if response.status != 200:
                         print(f"Unexpected response code {response.status} from SKCC website")
-                        sys.exit(1)
+                        cUtil.delayed_exit(1)
                     text = await response.text()
         except aiohttp.ClientError as e:
             print(f"Error retrieving SKCC data: {e}")
-            sys.exit(1)
+            cUtil.delayed_exit(1)
 
         lines = text.splitlines()
 
@@ -3745,7 +3758,7 @@ async def main_loop() -> None:
 
     if cConfig.MY_CALLSIGN not in cSKCC.members:
         print(f"'{cConfig.MY_CALLSIGN}' is not a member of SKCC.")
-        sys.exit()
+        cUtil.delayed_exit()
 
     # Initialize QSO data
     await cQSO.initialize_async()
@@ -3831,14 +3844,25 @@ if __name__ == "__main__":
         except:
             pass
         os._exit(0)
-    except SystemExit:
-        # Allow normal sys.exit() calls to proceed
-        raise
+    except SystemExit as e:
+        # Allow normal sys.exit() calls to proceed, but NOT during delayed_exit countdown
+        # Check if we're already in a delayed exit (exit code will be set)
+        if e.code is not None and e.code != 0:
+            # This is from delayed_exit, let it proceed normally
+            raise
+        # Otherwise add delay for Windows Explorer users
+        exit_code = 1
+        if e.code is not None:
+            if isinstance(e.code, int):
+                exit_code = e.code
+            elif e.code.isdigit():
+                exit_code = int(e.code)
+        cUtil.delayed_exit(exit_code)
     except Exception as e:
-        # Show unexpected errors but exit cleanly
+        # Show unexpected errors with delay for Windows Explorer users
         try:
             print(f"\nUnexpected error: {e}")
             sys.stdout.flush()
+            cUtil.delayed_exit(1)
         except:
-            pass
-        os._exit(1)
+            os._exit(1)
