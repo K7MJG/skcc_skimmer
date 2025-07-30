@@ -92,13 +92,13 @@ SKCC_BASE_URL = 'https://www.skccgroup.com/'
 # Global state for progress dot display
 _progress_dot_count: int = 0
 
-US_STATES: Final[tuple[str, ...]] = (
+US_STATES: Final[set[str]] = {
     'AK', 'AL', 'AR', 'AZ', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
     'HI', 'IA', 'ID', 'IL', 'IN', 'KS', 'KY', 'LA', 'MA', 'MD',
     'ME', 'MI', 'MN', 'MO', 'MS', 'MT', 'NC', 'ND', 'NE', 'NH',
     'NJ', 'NM', 'NV', 'NY', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
     'SD', 'TN', 'TX', 'UT', 'VA', 'VT', 'WA', 'WI', 'WV', 'WY',
-)
+}
 
 # Award level requirements
 Levels: Final[dict[str, int]] = {
@@ -2874,7 +2874,8 @@ class cQSO:
         QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
-            for state in US_STATES:
+            # Sort states alphabetically for consistent output
+            for state in sorted(US_STATES):
                 if state in QSOsByState:
                     spc, date, callsign = QSOsByState[state]
                     await file.write(f"{spc}    {callsign:<12}  {date[:4]}-{date[4:6]}-{date[6:8]}\n")
