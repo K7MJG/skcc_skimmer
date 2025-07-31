@@ -356,6 +356,7 @@ class cConfig:
     SPOT_PERSISTENCE_MINUTES: int
     VERBOSE:                  bool
     LOG_BAD_SPOTS:            bool
+    AWARDS_ONLY:              bool = False
     SPOTTER_RADIUS:           int
     SPOTTERS_NEARBY:          set[str]
     K3Y_YEAR:                 int
@@ -449,11 +450,13 @@ class cConfig:
         parser.add_argument("-s", "--sked", type=str, choices=["on", "off"], help="Enable scheduled mode (on/off)")
         parser.add_argument("-t", "--targets", type=str, help="Targets")
         parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode")
+        parser.add_argument("--awards-only", action="store_true", help="Exit after displaying awards progress")
 
         args = parser.parse_args(arg_v)
 
         cls.INTERACTIVE = args.interactive
         cls.VERBOSE = args.verbose
+        cls.AWARDS_ONLY = args.awards_only
 
         if args.adi:
             cls.ADI_FILE = args.adi
@@ -3856,6 +3859,11 @@ async def main_loop() -> None:
 
     print()
     cQSO.awards_check()
+
+    # Exit if awards-only mode
+    if cConfig.AWARDS_ONLY:
+        print("\nQSO files generated, terminating skcc_skimmer.py...")
+        return
 
     # Handle interactive mode if enabled
     if cConfig.INTERACTIVE:
