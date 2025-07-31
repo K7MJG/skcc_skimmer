@@ -1191,7 +1191,7 @@ class cQSO:
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band, key_type)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band, key_type, name)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1720,7 +1720,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str]]:
         """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
@@ -1766,7 +1766,8 @@ class cQSO:
                 fields.get('RX_PWR', ''),
                 fields.get('DXCC', ''),
                 fields.get('BAND', ''),  # Add BAND field from ADI file
-                fields.get('APP_SKCCLOGGER_KEYTYPE', '')  # Add KEY_TYPE field for TKA
+                fields.get('APP_SKCCLOGGER_KEYTYPE', ''),  # Add KEY_TYPE field for TKA
+                fields.get('NAME', '')  # Add NAME field from ADI file
             )
 
     @classmethod
@@ -1796,7 +1797,7 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(raw_call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -2396,7 +2397,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2494,7 +2495,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType, QsoName = Contact
 
             # Treat "DC" as "MD" for WAS Awards (matching Xojo AwardProcessorThreadWindow lines 364-367)
             if QsoSPC == "DC":
@@ -2575,8 +2576,8 @@ class cQSO:
 
                             # Update if this is a new prefix or higher SKCC number (line 499-503)
                             if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
-                                # Use the name from the segment's member data if found
-                                seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
+                                # Use ADI NAME field first, fall back to member database name (matches Xojo lines 344-347)
+                                seg_name = QsoName if QsoName else (cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else '')
                                 # Get band for prefix award
                                 simple_band = cls._normalize_band(QsoBand)
                                 cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name, pfx_call, simple_band)
@@ -2924,8 +2925,9 @@ class cQSO:
             ):
                 iPoints += member_number
                 date = f'{qso_date[0:4]}-{qso_date[4:6]}-{qso_date[6:8]}'
-                # Format to match gold standard
-                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {first_name:<12} {prefix:<12} {band:>2}  {iPoints:>10,}\n")
+                # Format to match gold standard - truncate name to exactly 12 characters
+                name_display = first_name[:12] if first_name else ''
+                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band:>2}  {iPoints:>10,}\n")
 
     @classmethod
     async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
