@@ -2612,27 +2612,30 @@ class cQSO:
                     # Base WAS - basic validation already done above
                     # Use member's primary callsign instead of logged callsign (matching Xojo line 2449)
                     if QsoSPC not in cls.ContactsForWAS:
-                        # Include SKCC number with suffix and member name for gold standard format
-                        skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
-                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
+                        # WAS uses plain number (no suffix)
+                        plain_number = TheirMemberEntry.get('plain_number', TheirMemberNumber)
+                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, plain_number, member_name, simple_band)
 
                     # WAS variants
                     if QsoDate >= eligible_dates['was_c']:
                         if TheirC_Date and QsoDate >= TheirC_Date:
                             if QsoSPC not in cls.ContactsForWAS_C:
-                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
-                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
+                                # WAS-C uses C suffix
+                                skcc_with_c_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'C'
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_c_suffix, member_name, simple_band)
 
                     if QsoDate >= eligible_dates['was_ts']:
                         if TheirT_Date and QsoDate >= TheirT_Date:
                             if QsoSPC not in cls.ContactsForWAS_T:
-                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
-                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
+                                # WAS-T uses T suffix
+                                skcc_with_t_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'T'
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_t_suffix, member_name, simple_band)
 
                         if TheirS_Date and QsoDate >= TheirS_Date:
                             if QsoSPC not in cls.ContactsForWAS_S:
-                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
-                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
+                                # WAS-S uses S suffix
+                                skcc_with_s_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'S'
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_s_suffix, member_name, simple_band)
 
                 # Phase 1: Mark QRP QSOs during processing (matching Xojo AwardProcessorThreadWindow logic)
                 if QsoTxPwr and QsoFreq > 0:
@@ -3162,6 +3165,7 @@ class cSKCC:
     class cMemberEntry(TypedDict):
         name: str
         plain_number: str
+        skcc_number: str
         spc: str
         dxcode: str
         join_date: str
@@ -3464,6 +3468,7 @@ class cSKCC:
                 cls.members[call] = {
                     'name'         : name,
                     'plain_number' : plain_number,
+                    'skcc_number'  : number,  # Store original number with suffix
                     'spc'          : spc,
                     'dxcode'       : dxcode,
                     'join_date'    : cls.normalize_skcc_date(join_date),
