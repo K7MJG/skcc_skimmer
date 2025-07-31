@@ -1171,10 +1171,10 @@ class cQSO:
     ContactsForT:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
     ContactsForS:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
 
-    ContactsForWAS:   dict[str, tuple[str, str, str]]
-    ContactsForWAS_C: dict[str, tuple[str, str, str]]
-    ContactsForWAS_T: dict[str, tuple[str, str, str]]
-    ContactsForWAS_S: dict[str, tuple[str, str, str]]
+    ContactsForWAS:   dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
+    ContactsForWAS_C: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
+    ContactsForWAS_T: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
+    ContactsForWAS_S: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
     ContactsForP:     dict[str, tuple[str, str, int, str, str, str]]  # (date, prefix, member_number, name, callsign, band)
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
@@ -1224,6 +1224,40 @@ class cQSO:
             return "2m"
         else:
             return None
+
+    @classmethod
+    def _normalize_band(cls, raw_band: str | None) -> str:
+        """Normalize band string to simple format (e.g., '20m' -> '20', 'NS8' -> '')
+        
+        Returns empty string for invalid bands.
+        """
+        if not raw_band:
+            return ''
+        
+        # Valid amateur radio bands (both with and without 'm' suffix)
+        valid_bands = {
+            '160', '160m', '80', '80m', '60', '60m', '40', '40m',
+            '30', '30m', '20', '20m', '17', '17m', '15', '15m',
+            '12', '12m', '10', '10m', '6', '6m', '2', '2m'
+        }
+        
+        # Clean the input and check if it's valid
+        clean_band = raw_band.strip().lower()
+        
+        # Check if it's already a valid band
+        if clean_band in valid_bands:
+            # Return without 'm' suffix
+            return clean_band.replace('m', '')
+        
+        # Try removing common suffixes/prefixes that might make it invalid
+        # Remove 'M' (case insensitive already handled)
+        if clean_band.endswith('m'):
+            without_m = clean_band[:-1]
+            if without_m in valid_bands:
+                return without_m
+        
+        # Invalid band - return empty string
+        return ''
 
     @classmethod
     def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
@@ -2097,7 +2131,7 @@ class cQSO:
         if 'TKA' in cConfig.GOALS:
             cls.print_tka_award_progress()
 
-        def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str]]) -> None:
+        def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str, str, str, str]]) -> None:
             if len(QSOs) == len(US_STATES):
                 Need = 'none needed'
             else:
@@ -2462,6 +2496,9 @@ class cQSO:
         for Contact in cls.QSOs:
             QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType = Contact
 
+            # Treat "DC" as "MD" for WAS Awards (matching Xojo AwardProcessorThreadWindow lines 364-367)
+            if QsoSPC == "DC":
+                QsoSPC = "MD"
 
             # Skip invalid callsigns
             if QsoCallSign in ('K9SKC', 'K3Y'):
@@ -2541,8 +2578,8 @@ class cQSO:
                                 # Use the name from the segment's member data if found
                                 seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
                                 # Get band for prefix award
-                                simple_band = QsoBand.replace('m', '').replace('M', '') if QsoBand else ''
-                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name, QsoCallSign, simple_band)
+                                simple_band = cls._normalize_band(QsoBand)
+                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name, pfx_call, simple_band)
 
                             break  # Only process first valid segment (line 510)
 
@@ -2551,7 +2588,7 @@ class cQSO:
                 # Only add if member not already worked (first QSO wins, matches Xojo behavior)
                 # Get member name and convert band to simple format (e.g., "20m" -> "20")
                 member_name = TheirMemberEntry.get('name', '')
-                simple_band = QsoBand.replace('m', '').replace('M', '') if QsoBand else ''
+                simple_band = cls._normalize_band(QsoBand)
                 # For state/country: use QsoSPC if available, otherwise use member's SPC
                 state_or_country = QsoSPC if QsoSPC else TheirMemberEntry.get('spc', '')
 
@@ -2568,24 +2605,33 @@ class cQSO:
 
                 # Process WAS entries for states
                 if QsoSPC in US_STATES:
+                    # Get band for WAS awards (matching Xojo Log_BAND output)
+                    simple_band = cls._normalize_band(QsoBand)
+
                     # Base WAS - basic validation already done above
+                    # Use member's primary callsign instead of logged callsign (matching Xojo line 2449)
                     if QsoSPC not in cls.ContactsForWAS:
-                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                        # Include SKCC number with suffix and member name for gold standard format
+                        skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
+                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
 
                     # WAS variants
                     if QsoDate >= eligible_dates['was_c']:
                         if TheirC_Date and QsoDate >= TheirC_Date:
                             if QsoSPC not in cls.ContactsForWAS_C:
-                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
 
                     if QsoDate >= eligible_dates['was_ts']:
                         if TheirT_Date and QsoDate >= TheirT_Date:
                             if QsoSPC not in cls.ContactsForWAS_T:
-                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
 
                         if TheirS_Date and QsoDate >= TheirS_Date:
                             if QsoSPC not in cls.ContactsForWAS_S:
-                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, QsoCallSign)
+                                skcc_with_suffix = TheirMemberEntry.get('skcc_number', TheirMemberNumber)
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_suffix, member_name, simple_band)
 
                 # Phase 1: Mark QRP QSOs during processing (matching Xojo AwardProcessorThreadWindow logic)
                 if QsoTxPwr and QsoFreq > 0:
@@ -2897,17 +2943,23 @@ class cQSO:
                 await File.write(f'{Count+1:<6} {Date:>11}   {MainCallSign:<13} {TheirMemberNumber:<8} {name_display:<12} {State:<12} {Band:>2}\n')
 
     @classmethod
-    async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+    async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
         """Async version of award_was to write files using aiofiles"""
 
-        QSOsByState = {spc: (spc, date, callsign) for spc, date, callsign in sorted(QSOs_dict.values(), key=lambda q: q[0])}
+        QSOsByState = {spc: qso_data for spc, qso_data in [(data[0], data) for data in sorted(QSOs_dict.values(), key=lambda q: q[0])]}
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
             # Sort states alphabetically for consistent output
             for state in sorted(US_STATES):
                 if state in QSOsByState:
-                    spc, date, callsign = QSOsByState[state]
-                    await file.write(f"{spc}    {callsign:<12}  {date[:4]}-{date[4:6]}-{date[6:8]}\n")
+                    spc, date, callsign, skcc_number, name, band = QSOsByState[state]
+                    # Format to match gold standard: "AK       KL7IYD       1103      Jim           2007-11-16       20M"
+                    # Truncate name to 12 chars for alignment
+                    name_display = name[:12] if name else ''
+                    # Format band with 'M' suffix to match gold standard
+                    band_str = f"{band}M" if band and band.replace('m', '') else ''
+                    date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+                    await file.write(f"{spc:<8} {callsign:<12} {skcc_number:<9} {name_display:<13} {date_str:<16} {band_str}\n")
                 else:
                     await file.write(f"{state}\n")
 
