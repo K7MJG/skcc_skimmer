@@ -1167,15 +1167,15 @@ class cQSO:
         "10M": 3.0, "10m": 3.0, "6M": 0.5, "6m": 0.5, "2M": 0.5, "2m": 0.5
     }
 
-    ContactsForC:     dict[str, tuple[str, str, str]]
-    ContactsForT:     dict[str, tuple[str, str, str]]
-    ContactsForS:     dict[str, tuple[str, str, str]]
+    ContactsForC:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
+    ContactsForT:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
+    ContactsForS:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
 
     ContactsForWAS:   dict[str, tuple[str, str, str]]
     ContactsForWAS_C: dict[str, tuple[str, str, str]]
     ContactsForWAS_T: dict[str, tuple[str, str, str]]
     ContactsForWAS_S: dict[str, tuple[str, str, str]]
-    ContactsForP:     dict[str, tuple[str, str, int, str]]
+    ContactsForP:     dict[str, tuple[str, str, int, str, str, str]]  # (date, prefix, member_number, name, callsign, band)
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
     QRPQualifiedQSOs: list[QRPQSOData]  # Phase 1: QRP-qualified QSOs for band-by-band processing
@@ -2540,20 +2540,31 @@ class cQSO:
                             if Prefix not in cls.ContactsForP or iTheirMemberNumber > cls.ContactsForP[Prefix][2]:
                                 # Use the name from the segment's member data if found
                                 seg_name = cSKCC.members[pfx_call].get('name', '') if pfx_call in cSKCC.members else ''
-                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name)
+                                # Get band for prefix award
+                                simple_band = QsoBand.replace('m', '').replace('M', '') if QsoBand else ''
+                                cls.ContactsForP[Prefix] = (QsoDate, Prefix, iTheirMemberNumber, seg_name, QsoCallSign, simple_band)
 
                             break  # Only process first valid segment (line 510)
 
                 # Process C, T, S in one batch
                 # For Centurion award: basic validation already done above
-                # Always update (last QSO wins, matching potential reference behavior)
-                cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                # Only add if member not already worked (first QSO wins, matches Xojo behavior)
+                # Get member name and convert band to simple format (e.g., "20m" -> "20")
+                member_name = TheirMemberEntry.get('name', '')
+                simple_band = QsoBand.replace('m', '').replace('M', '') if QsoBand else ''
+                # For state/country: use QsoSPC if available, otherwise use member's SPC
+                state_or_country = QsoSPC if QsoSPC else TheirMemberEntry.get('spc', '')
+
+                if TheirMemberNumber not in cls.ContactsForC:
+                    cls.ContactsForC[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign, member_name, state_or_country, simple_band)
 
                 if good(QsoDate, TheirC_Date, cls.MyC_Date, eligible_dates['tribune']):
-                    cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                    if TheirMemberNumber not in cls.ContactsForT:
+                        cls.ContactsForT[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign, member_name, state_or_country, simple_band)
 
                 if good(QsoDate, TheirT_Date, cls.MyTX8_Date, eligible_dates['senator']):
-                    cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                    if TheirMemberNumber not in cls.ContactsForS:
+                        cls.ContactsForS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign, member_name, state_or_country, simple_band)
 
                 # Process WAS entries for states
                 if QsoSPC in US_STATES:
@@ -2633,17 +2644,17 @@ class cQSO:
                             if dxcc_code == home_dxcc:
                                 # Home country - only allow one contact
                                 if not cls.DXC_HomeCountryUsed:
-                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, QsoCallSign)
                                     cls.DXC_HomeCountryUsed = True
                             else:
                                 # Foreign country - count all unique DXCC entities
                                 if dxcc_code not in cls.ContactsForDXC:
-                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, MainCallSign)
+                                    cls.ContactsForDXC[dxcc_code] = (QsoDate, TheirMemberNumber, QsoCallSign)
 
                         # DXQ: Count unique member QSOs from foreign countries (date >= 20090614, no home country)
                         if QsoDate >= '20090614' and dxcc_code != home_dxcc:
                             if TheirMemberNumber not in cls.ContactsForDXQ:
-                                cls.ContactsForDXQ[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                                cls.ContactsForDXQ[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign)
 
                 if 'TKA' in cConfig.GOALS:
                     # TKA: Triple Key Award - need 100 each of SK, BUG, SS from unique members
@@ -2653,11 +2664,11 @@ class cQSO:
                         key_type_upper = QsoKeyType.upper().strip()
 
                         if key_type_upper == 'SK' and TheirMemberNumber not in cls.ContactsForTKA_SK:
-                            cls.ContactsForTKA_SK[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                            cls.ContactsForTKA_SK[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign)
                         elif key_type_upper == 'BUG' and TheirMemberNumber not in cls.ContactsForTKA_BUG:
-                            cls.ContactsForTKA_BUG[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                            cls.ContactsForTKA_BUG[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign)
                         elif key_type_upper == 'SS' and TheirMemberNumber not in cls.ContactsForTKA_SS:
-                            cls.ContactsForTKA_SS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign)
+                            cls.ContactsForTKA_SS[TheirMemberNumber] = (QsoDate, TheirMemberNumber, QsoCallSign)
 
         # Generate output files
         QSOs_Dir = 'QSOs'
@@ -2857,28 +2868,33 @@ class cQSO:
                 await file.write(f"Progress: {total_points*2/3:.1f}%\n")
 
     @classmethod
-    async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str]]) -> None:
+    async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str, str, str]]) -> None:
         """Async version of award_p to write files using aiofiles"""
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
             iPoints = 0
-            for index, (_qso_date, prefix, member_number, first_name) in enumerate(
+            for index, (qso_date, prefix, member_number, first_name, callsign, band) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
             ):
                 iPoints += member_number
-                await file.write(f"{index:>4} {member_number:>8} {first_name:<10.10} {prefix:<6} {iPoints:>12,}\n")
+                date = f'{qso_date[0:4]}-{qso_date[4:6]}-{qso_date[6:8]}'
+                # Format to match gold standard
+                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {first_name:<12} {prefix:<12} {band:>2}  {iPoints:>10,}\n")
 
     @classmethod
-    async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
+    async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
         """Async version of award_cts to write files using aiofiles"""
 
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
-            for Count, (QsoDate, TheirMemberNumber, MainCallSign) in enumerate(QSOs):
+            for Count, (QsoDate, TheirMemberNumber, MainCallSign, MemberName, State, Band) in enumerate(QSOs):
                 Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
-                await File.write(f'{Count+1:<4}  {Date}   {MainCallSign:<9}   {TheirMemberNumber:<7}\n')
+                # Format to match gold standard: line_num date callsign member_num name state band
+                # Truncate name to 12 chars and ensure proper alignment
+                name_display = MemberName[:12] if MemberName else ''
+                await File.write(f'{Count+1:<6} {Date:>11}   {MainCallSign:<13} {TheirMemberNumber:<8} {name_display:<12} {State:<12} {Band:>2}\n')
 
     @classmethod
     async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str]]) -> None:
