@@ -1191,7 +1191,7 @@ class cQSO:
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, tx_pwr, rx_pwr, dxcc, band, key_type, name)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1225,6 +1225,7 @@ class cQSO:
         else:
             return None
 
+    
     @classmethod
     def _normalize_band(cls, raw_band: str | None) -> str:
         """Normalize band string to simple format (e.g., '20m' -> '20', 'NS8' -> '')
@@ -1720,7 +1721,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str]]:
         """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
@@ -1751,8 +1752,12 @@ class cQSO:
                 with suppress(ValueError):
                     frequency = float(freq_str) * 1000
 
-            # Clean SKCC number
-            skcc_number = ''.join(filter(str.isdigit, fields.get('SKCC', '')))
+            # Get SKCC number - preserve the full value including suffix
+            skcc_field = fields.get('SKCC', '')
+            # Extract numeric part for member lookup
+            skcc_number = ''.join(filter(str.isdigit, skcc_field))
+            # Extract suffix if present
+            skcc_suffix = skcc_field[len(skcc_number):] if skcc_number else ''
 
             # Yield QSO tuple
             yield (
@@ -1762,6 +1767,7 @@ class cQSO:
                 frequency,
                 fields.get('COMMENT', ''),
                 skcc_number,
+                skcc_suffix,  # Add suffix from SKCC field
                 fields.get('TX_PWR', ''),
                 fields.get('RX_PWR', ''),
                 fields.get('DXCC', ''),
@@ -1797,7 +1803,7 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(raw_call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -2397,7 +2403,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2495,7 +2501,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType, QsoName = Contact
+            QsoDate, QsoCallSign, QsoSPC, QsoFreq, QsoComment, QsoSKCC, QsoSuffix, QsoTxPwr, QsoRxPwr, QsoDXCC, QsoBand, QsoKeyType, QsoName = Contact
 
             # Treat "DC" as "MD" for WAS Awards (matching Xojo AwardProcessorThreadWindow lines 364-367)
             if QsoSPC == "DC":
@@ -2609,33 +2615,41 @@ class cQSO:
                     # Get band for WAS awards (matching Xojo Log_BAND output)
                     simple_band = cls._normalize_band(QsoBand)
 
+                    # Look up the current callsign for this member (matching Xojo logic)
+                    # Xojo substitutes current primary callsign from member database
+                    current_callsign = QsoCallSign  # Default to logged callsign
+                    # Find the main call for this member number
+                    for member_data in cSKCC.members.values():
+                        if member_data['plain_number'] == TheirMemberNumber:
+                            current_callsign = member_data['main_call']
+                            break
+
                     # Base WAS - basic validation already done above
-                    # Use member's primary callsign instead of logged callsign (matching Xojo line 2449)
                     if QsoSPC not in cls.ContactsForWAS:
-                        # WAS uses plain number (no suffix)
-                        plain_number = TheirMemberEntry.get('plain_number', TheirMemberNumber)
-                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, plain_number, member_name, simple_band)
+                        # WAS uses member's suffix from the ADI file (stored at QSO time)
+                        member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
+                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
 
                     # WAS variants
                     if QsoDate >= eligible_dates['was_c']:
                         if TheirC_Date and QsoDate >= TheirC_Date:
                             if QsoSPC not in cls.ContactsForWAS_C:
-                                # WAS-C uses C suffix
-                                skcc_with_c_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'C'
-                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_c_suffix, member_name, simple_band)
+                                # WAS-C uses member's suffix from the ADI file (stored at QSO time)
+                                member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
 
                     if QsoDate >= eligible_dates['was_ts']:
                         if TheirT_Date and QsoDate >= TheirT_Date:
                             if QsoSPC not in cls.ContactsForWAS_T:
-                                # WAS-T uses T suffix
-                                skcc_with_t_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'T'
-                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_t_suffix, member_name, simple_band)
+                                # WAS-T uses member's suffix from the ADI file (stored at QSO time)
+                                member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
 
                         if TheirS_Date and QsoDate >= TheirS_Date:
                             if QsoSPC not in cls.ContactsForWAS_S:
-                                # WAS-S uses S suffix
-                                skcc_with_s_suffix = TheirMemberEntry.get('plain_number', TheirMemberNumber) + 'S'
-                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, MainCallSign, skcc_with_s_suffix, member_name, simple_band)
+                                # WAS-S uses member's suffix from the ADI file (stored at QSO time)
+                                member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
 
                 # Phase 1: Mark QRP QSOs during processing (matching Xojo AwardProcessorThreadWindow logic)
                 if QsoTxPwr and QsoFreq > 0:
@@ -2930,7 +2944,7 @@ class cQSO:
                 date = f'{qso_date[0:4]}-{qso_date[4:6]}-{qso_date[6:8]}'
                 # Format to match gold standard - truncate name to exactly 12 characters
                 name_display = first_name[:12] if first_name else ''
-                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band:>2}  {iPoints:>10,}\n")
+                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band:>3}  {iPoints:>10,}\n")
 
     @classmethod
     async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
