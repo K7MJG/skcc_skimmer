@@ -353,7 +353,7 @@ wheels = [
 [[package]]
 name = "skcc-skimmer"
 version = "8.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
