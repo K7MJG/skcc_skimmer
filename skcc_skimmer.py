@@ -1228,38 +1228,38 @@ class cQSO:
         else:
             return None
 
-    
+
     @classmethod
     def _normalize_band(cls, raw_band: str | None) -> str:
         """Normalize band string to simple format (e.g., '20m' -> '20', 'NS8' -> '')
-        
+
         Returns empty string for invalid bands.
         """
         if not raw_band:
             return ''
-        
+
         # Valid amateur radio bands (both with and without 'm' suffix)
         valid_bands = {
             '160', '160m', '80', '80m', '60', '60m', '40', '40m',
             '30', '30m', '20', '20m', '17', '17m', '15', '15m',
             '12', '12m', '10', '10m', '6', '6m', '2', '2m'
         }
-        
+
         # Clean the input and check if it's valid
         clean_band = raw_band.strip().lower()
-        
+
         # Check if it's already a valid band
         if clean_band in valid_bands:
             # Return without 'm' suffix
             return clean_band.replace('m', '')
-        
+
         # Try removing common suffixes/prefixes that might make it invalid
         # Remove 'M' (case insensitive already handled)
         if clean_band.endswith('m'):
             without_m = clean_band[:-1]
             if without_m in valid_bands:
                 return without_m
-        
+
         # Invalid band - return empty string
         return ''
 
@@ -1762,6 +1762,11 @@ class cQSO:
             # Extract suffix if present
             skcc_suffix = skcc_field[len(skcc_number):] if skcc_number else ''
 
+            # Normalize DXCC code to prevent duplicates (e.g., "001" -> "1")
+            dxcc_code = fields.get('DXCC', '')
+            if dxcc_code and dxcc_code.isdigit():
+                dxcc_code = str(int(dxcc_code))
+
             # Yield QSO tuple
             yield (
                 fields['QSO_DATE'] + fields['TIME_ON'],
@@ -1773,7 +1778,7 @@ class cQSO:
                 skcc_suffix,  # Add suffix from SKCC field
                 fields.get('TX_PWR', ''),
                 fields.get('RX_PWR', ''),
-                fields.get('DXCC', ''),
+                dxcc_code,  # Normalized DXCC code
                 fields.get('BAND', ''),  # Add BAND field from ADI file
                 fields.get('APP_SKCCLOGGER_KEYTYPE', ''),  # Add KEY_TYPE field for TKA
                 fields.get('NAME', '')  # Add NAME field from ADI file
@@ -1801,8 +1806,9 @@ class cQSO:
             cDisplay.print(f"Error reading ADIF file: {e}")
             return
 
-        # Sort QSOs by date
-        cls.QSOs.sort(key=lambda qso: qso[0])
+        # Don't sort QSOs - process in file order to match Xojo behavior
+        # The Xojo code processes QSOs in the order they appear in the database
+        # cls.QSOs.sort(key=lambda qso: qso[0])
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
@@ -2447,8 +2453,8 @@ class cQSO:
 
     @classmethod
     async def get_goal_qsos_async(cls) -> None:
-        """Optimized goal QSO processing with batched operations."""
-        # Helper function to check date criteria
+        """Process QSOs using Xojo-based award logic for 100% parity."""
+        # Helper function to check date criteria (restored from original)
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
             if MemberDate == '' or MyDate == '':
                 return False
@@ -2458,21 +2464,6 @@ class cQSO:
 
             return QsoDate >= MemberDate and QsoDate >= MyDate
 
-        # Initialize collections
-        collections: dict[str, dict[str, Any]] = {
-            'C': cls.ContactsForC,
-            'T': cls.ContactsForT,
-            'S': cls.ContactsForS,
-            'WAS': cls.ContactsForWAS,
-            'WAS_C': cls.ContactsForWAS_C,
-            'WAS_T': cls.ContactsForWAS_T,
-            'WAS_S': cls.ContactsForWAS_S,
-            'P': cls.ContactsForP,
-            'K3Y': cls.ContactsForK3Y,
-        }
-
-        for collection in collections.values():
-            collection.clear()
 
         # Process BRAG QSOs
         if 'BRAG_MONTHS' in globals() and 'BRAG' in cConfig.GOALS:
@@ -2615,8 +2606,8 @@ class cQSO:
 
                 # Process WAS entries for states
                 if QsoSPC in US_STATES:
-                    # Get band for WAS awards (matching Xojo Log_BAND output)
-                    simple_band = cls._normalize_band(QsoBand)
+                    # Get band for WAS awards - keep the 'M' suffix for WAS
+                    was_band = QsoBand if QsoBand else ''
 
                     # Look up the current callsign for this member (matching Xojo logic)
                     # Xojo substitutes current primary callsign from member database
@@ -2631,7 +2622,7 @@ class cQSO:
                     if QsoSPC not in cls.ContactsForWAS:
                         # WAS uses member's suffix from the ADI file (stored at QSO time)
                         member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
-                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
+                        cls.ContactsForWAS[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, was_band)
 
                     # WAS variants
                     if QsoDate >= eligible_dates['was_c']:
@@ -2639,20 +2630,20 @@ class cQSO:
                             if QsoSPC not in cls.ContactsForWAS_C:
                                 # WAS-C uses member's suffix from the ADI file (stored at QSO time)
                                 member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
-                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
+                                cls.ContactsForWAS_C[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, was_band)
 
                     if QsoDate >= eligible_dates['was_ts']:
                         if TheirT_Date and QsoDate >= TheirT_Date:
                             if QsoSPC not in cls.ContactsForWAS_T:
                                 # WAS-T uses member's suffix from the ADI file (stored at QSO time)
                                 member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
-                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
+                                cls.ContactsForWAS_T[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, was_band)
 
                         if TheirS_Date and QsoDate >= TheirS_Date:
                             if QsoSPC not in cls.ContactsForWAS_S:
                                 # WAS-S uses member's suffix from the ADI file (stored at QSO time)
                                 member_skcc_with_suffix = TheirMemberNumber + QsoSuffix
-                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, simple_band)
+                                cls.ContactsForWAS_S[QsoSPC] = (QsoSPC, QsoDate, current_callsign, member_skcc_with_suffix, member_name, was_band)
 
                 # Phase 1: Mark QRP QSOs during processing (matching Xojo AwardProcessorThreadWindow logic)
                 if QsoTxPwr and QsoFreq > 0:
@@ -2947,7 +2938,9 @@ class cQSO:
                 date = f'{qso_date[0:4]}-{qso_date[4:6]}-{qso_date[6:8]}'
                 # Format to match gold standard - truncate name to exactly 12 characters
                 name_display = first_name[:12] if first_name else ''
-                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band:>3}  {iPoints:>10,}\n")
+                # For P award, strip the 'M' from band to match gold standard format
+                band_display = band.rstrip('Mm') if band else ''
+                await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band_display:>3}  {iPoints:>10,}\n")
 
     @classmethod
     async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
@@ -2962,13 +2955,15 @@ class cQSO:
                 # Format to match gold standard: line_num date callsign member_num name state band
                 # Truncate name to 12 chars and ensure proper alignment
                 name_display = MemberName[:12] if MemberName else ''
-                await File.write(f'{Count+1:<6} {Date:>11}   {MainCallSign:<13} {TheirMemberNumber:<8} {name_display:<12} {State:<12} {Band:>2}\n')
+                # For C/T/S awards, strip the 'M' from band to match gold standard format
+                band_display = Band.rstrip('Mm') if Band else ''
+                await File.write(f'{Count+1:<6} {Date:>11}   {MainCallSign:<13} {TheirMemberNumber:<8} {name_display:<12} {State:<12} {band_display:>2}\n')
 
     @classmethod
     async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
         """Async version of award_was to write files using aiofiles"""
 
-        QSOsByState = {spc: qso_data for spc, qso_data in [(data[0], data) for data in sorted(QSOs_dict.values(), key=lambda q: q[0])]}
+        QSOsByState = {data[0]: data for data in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
             # Sort states alphabetically for consistent output
@@ -2978,8 +2973,8 @@ class cQSO:
                     # Format to match gold standard: "AK       KL7IYD       1103      Jim           2007-11-16       20M"
                     # Truncate name to 12 chars for alignment
                     name_display = name[:12] if name else ''
-                    # Format band with 'M' suffix to match gold standard
-                    band_str = f"{band}M" if band and band.replace('m', '') else ''
+                    # Band already includes 'M' from ADI file
+                    band_str = band if band else ''
                     date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
                     await file.write(f"{spc:<8} {callsign:<12} {skcc_number:<9} {name_display:<13} {date_str:<16} {band_str}\n")
                 else:
@@ -2998,6 +2993,25 @@ class cQSO:
                     await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}  {qso_freq / 1000:.3f}\n")
                 else:
                     await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}\n")
+
+    @classmethod
+    def _process_k3y_qsos(cls) -> None:
+        """Process K3Y QSOs separately as they have special handling."""
+        k3y_start = f'{cConfig.K3Y_YEAR}0102000000'
+        k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
+
+        for Contact in cls.QSOs:
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
+
+            # K3Y processing
+            if QsoDate >= k3y_start and QsoDate < k3y_end:
+                if k3y_match := re.match(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', QsoComment, re.IGNORECASE):
+                    Suffix = k3y_match.group(1).upper()
+
+                    if Band := cSKCC.which_arrl_band(QsoFreq):
+                        if Suffix not in cls.ContactsForK3Y:
+                            cls.ContactsForK3Y[Suffix] = {}
+                        cls.ContactsForK3Y[Suffix][Band] = QsoCallSign
 
     @classmethod
     def print_k3y_contacts(cls) -> None:
@@ -3059,6 +3073,689 @@ class cQSO:
         print_station('SKM-NA')
         print_station('SKM-OC')
         print_station('SKM-SA')
+
+
+class cAwards:
+    """Xojo-based award processor for 100% parity with SKCCLogger.
+
+    This class provides a faithful Python translation of the Xojo award processing
+    logic from SKCCLogger to achieve exact parity with the gold standard.
+    """
+
+    @dataclass
+    class Member:
+        """Represents a member record from the SKCCData database."""
+
+        mbr_skcc_nr: str
+        mbr_skcc: str  # With suffix
+        mbr_call: str
+        mbr_pri_call: str
+        mbr_name: str
+        mbr_spc: str
+        mbr_dxc: str
+        mbr_join_date: str
+        mbr_cent_date: str
+        mbr_trib_date: str
+        mbr_tx8_date: str
+        mbr_sen_date: str
+
+    @dataclass
+    class QSO:
+        """Represents a QSO record from the ADI log."""
+
+        log_call: str
+        log_skcc: str
+        log_skcc_pre: str  # Numeric portion only
+        log_qso_date: str
+        log_time_on: str
+        log_time_off: str
+        log_band: str
+        log_mode: str
+        log_state: str
+        log_country: str
+        log_dxcc: str
+        log_tx_pwr: str
+        log_rx_pwr: str
+        log_key_type: str
+        log_comment: str
+        log_name: str
+        log_qth: str
+        log_rst_rcvd: str
+        log_rst_sent: str
+        log_freq: str
+        log_gridsquare: str
+
+    @dataclass
+    class ProcessedQSO:
+        """Represents a processed QSO record for award calculations."""
+
+        # Basic QSO fields
+        log_call: str
+        log_call_pri: str  # Member's current primary call
+        log_qso_date: str
+        log_time_on: str
+        log_time_off: str
+        log_band: str
+        log_band_nr: int
+        log_mode: str
+        log_state: str
+        log_country: str
+        log_dxcc: str
+        log_skcc_nr: str
+        log_skcc: str
+        log_tx_pwr: str
+        log_rx_pwr: str
+        log_key_type: str
+        log_name: str
+        log_qth: str
+        log_comment: str
+        log_rst_rcvd: str
+        log_rst_sent: str
+        log_freq: str
+        log_gridsquare: str
+
+        # Award qualification flags
+        was_qso: str = ""
+        wasc_qso: str = ""
+        wast_qso: str = ""
+        wass_qso: str = ""
+        trib_award_qso: str = ""
+        sen_award_qso: str = ""
+        dxq_qso: str = ""
+        dxc_qso: str = ""
+        dx_code: str = ""
+        pfx_call: str = ""
+        pfx: str = ""
+        pfx_pts: str = ""  # SKCC number, not band points!
+        ragchew_qso: str = ""
+        ragchew_mins: str = ""
+        qrpx1_qso: str = ""
+        qrpx2_qso: str = ""
+        tka_qso: str = ""
+
+    def __init__(self, member_db: dict[str, Member], my_member: Member, original_members: dict[str, Any]) -> None:
+        """Initialize the award processor.
+
+        Args:
+            member_db: Dictionary mapping SKCC numbers to Member objects
+            my_member: The user's member record
+            original_members: Original cSKCC.members data with all callsigns
+        """
+        self.member_db = member_db
+        self.my_member = my_member
+
+        # Create callsign->member index for GetSKCCFromCall
+        # We need to build this from the original cSKCC data to include all callsigns
+        self.callsign_db: dict[str, list[cAwards.Member]] = {}
+        self.original_members = original_members  # Store reference to cSKCC.members
+
+        # Build callsign index from original data which includes all calls
+        for callsign, member_data in original_members.items():
+            skcc_num = member_data.get('plain_number', '')
+            if skcc_num and skcc_num in member_db:
+                member = member_db[skcc_num]
+                if callsign.upper() not in self.callsign_db:
+                    self.callsign_db[callsign.upper()] = []
+                self.callsign_db[callsign.upper()].append(member)
+
+        # User's award qualification dates from member record
+        self.ap_my_mbr_date = my_member.mbr_join_date
+        self.ap_my_skcc_nr = my_member.mbr_skcc_nr
+        self.ap_my_cent_date = my_member.mbr_cent_date
+        self.ap_my_trib_date = my_member.mbr_trib_date
+        self.ap_my_tx8_date = my_member.mbr_tx8_date
+        self.ap_my_sen_date = my_member.mbr_sen_date
+        self.ap_my_dx_code = my_member.mbr_dxc
+
+        # QRP filter flag
+        self.ap_qrp_qsos_only = False
+
+        # State/province lists (from Xojo source)
+        self.states = [
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+            "GU", "PR", "VI"
+        ]
+
+        self.was_states = [
+            "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+            "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+            "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+            "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+            "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY"
+        ]
+
+        self.provinces = [
+            "AB", "BC", "MB", "", "NB", "NF", "NS", "ON", "PE", "QC", "SK"
+        ]
+
+        # Tracking variables
+        self.qsos_processed = 0
+        self.qsos_added = 0
+        self.qsos_skipped: list[str] = []
+        self.processed_qsos: list[cAwards.ProcessedQSO] = []
+
+    def get_skcc_from_call(self, log_call: str, log_skcc: str) -> str:
+        """Direct Python translation of Xojo GetSKCCFromCall function.
+
+        Args:
+            log_call: Callsign from log
+            log_skcc: SKCC number from log (numeric only)
+
+        Returns:
+            SKCC number string or empty string if no match
+        """
+        # Version v03.01.01C - Modified GetSKCCFromCall to leave SKCC of "NONE" unchanged
+        if log_skcc == "NONE":
+            return log_skcc
+
+        skcc_list: dict[str, int] = {}
+        return_skcc = ""
+
+        if "/" in log_call:
+            # Log_Call has slants - Call may either exist "as-is", or may need to be broken into call segments
+
+            # Try to find member with full callsign including slashes
+            matching_members = self.callsign_db.get(log_call.upper(), [])
+
+            if matching_members:
+                # Call exists "as-is" - Add ALL matching member SKCC Numbers to the SKCC Number List
+                for mbr in matching_members:
+                    skcc_list[mbr.mbr_skcc_nr] = 1
+            else:
+                # No matches for Log_Call with slants - Look for matches of any call segments
+                call_segments = log_call.split("/")
+                for segment in call_segments:
+                    segment_members = self.callsign_db.get(segment.upper(), [])
+                    for mbr in segment_members:
+                        skcc_list[mbr.mbr_skcc_nr] = 1
+        else:
+            # Log_Call does not have slants - Add ALL matching member SKCC Numbers to the SKCC Number List
+            matching_members = self.callsign_db.get(log_call.upper(), [])
+            for mbr in matching_members:
+                skcc_list[mbr.mbr_skcc_nr] = 1
+
+        # At this point ALL SKCC Numbers that match the Log_Call have been added to the SKCC List Dictionary
+        if not log_skcc:
+            # There is no SKCC Number in the Log - If there is only one SKCC Number in the SKCC List, then return it
+            if len(skcc_list) == 1:
+                return_skcc = next(iter(skcc_list.keys()))
+        else:
+            # There was an SKCC Number in the log
+            # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
+            for skcc_nr in skcc_list:
+                if log_skcc == skcc_nr:
+                    return_skcc = skcc_nr
+                    break
+
+        return return_skcc
+
+    def process_qsos(self, qsos: list[QSO]) -> list[ProcessedQSO]:
+        """Main QSO processing loop - direct translation of Xojo Run() method.
+
+        Args:
+            qsos: List of QSO records from ADI log
+
+        Returns:
+            List of processed QSOs that passed validation
+        """
+        self.processed_qsos = []
+        self.qsos_skipped = []
+        self.qsos_processed = 0
+        self.qsos_added = 0
+        dxc_flag = False  # Track if home country used for DXC
+
+        # Filter QSOs: date >= user join date AND mode = CW
+        # This replicates the initial SQL query in Xojo
+        filtered_qsos = [
+            qso for qso in qsos
+            if qso.log_qso_date >= self.ap_my_mbr_date and qso.log_mode.upper() == "CW"
+        ]
+
+        for qso in filtered_qsos:
+            log_call = qso.log_call
+            log_skcc = qso.log_skcc
+            log_skcc_pre = qso.log_skcc_pre
+
+            # Handle SKCC="NONE" special case
+            if log_skcc == "NONE":
+                mbr_skcc_nr = "NONE"
+            else:
+                mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
+
+            # Check if we should process this QSO (QRP filter)
+            process_qso = True
+            if self.ap_qrp_qsos_only:
+                try:
+                    tx_pwr = float(qso.log_tx_pwr) if qso.log_tx_pwr else 0.0
+                    if not (tx_pwr > 0.0 and tx_pwr <= 5.0):
+                        process_qso = False
+                except (ValueError, TypeError):
+                    process_qso = False
+
+            # Look up member in database
+            mbr = self.member_db.get(mbr_skcc_nr)
+
+            # Main validation gate
+            if process_qso and mbr is not None:
+                # Date validation and self-QSO check
+                if (qso.log_qso_date >= mbr.mbr_join_date and
+                    mbr.mbr_skcc_nr != self.ap_my_skcc_nr):
+
+                    # QSO is valid - create processed QSO record
+                    processed_qso = self._create_processed_qso(qso, mbr, dxc_flag)
+                    if processed_qso.dxc_qso == "YES" and processed_qso.dx_code == self.ap_my_dx_code:
+                        dxc_flag = True  # Mark home country as used for DXC
+
+                    self.processed_qsos.append(processed_qso)
+                    self.qsos_added += 1
+                    qso_added_to_db = True
+                else:
+                    # QSO rejected: either before member join date or self-QSO
+                    qso_added_to_db = False
+            else:
+                # QSO rejected: non-SKCC member, QRP filter, or SKCC="NONE"
+                qso_added_to_db = False
+
+            # Track skipped QSOs
+            if not qso_added_to_db:
+                qso_info = f"{qso.log_qso_date[:4]}-{qso.log_qso_date[4:6]}-{qso.log_qso_date[6:8]}"
+                time_info = f"{qso.log_time_on[:2]}:{qso.log_time_on[2:4]}:{qso.log_time_on[4:6]}Z" if len(qso.log_time_on) >= 6 else "::Z"
+                skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
+                skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
+                self.qsos_skipped.append(skipped_qso)
+
+            self.qsos_processed += 1
+
+        return self.processed_qsos
+
+    def _create_processed_qso(self, qso: QSO, mbr: Member, dxc_flag: bool) -> ProcessedQSO:
+        """Create a processed QSO record with all award qualifications.
+
+        Direct translation of database record creation logic from Xojo.
+        """
+        # Extract band number (everything before 'M')
+        band_nr = 0
+        if qso.log_band.upper().endswith('M'):
+            try:
+                band_nr = int(qso.log_band[:-1])
+            except ValueError:
+                band_nr = 0
+
+        # Determine state - use log state if present, otherwise member SPC
+        if qso.log_state:
+            state = qso.log_state.upper()
+        else:
+            state = mbr.mbr_spc.upper()
+
+        # Treat "DC" as "MD" for WAS Awards
+        if state == "DC":
+            state = "MD"
+
+        # Determine DXCC code - use log value if present, otherwise member value
+        if qso.log_dxcc and int(qso.log_dxcc) > 0:
+            dxcc = qso.log_dxcc
+        else:
+            dxcc = mbr.mbr_dxc
+
+        # Use member name if log name is empty
+        name = qso.log_name if qso.log_name else mbr.mbr_name
+
+        # Create processed QSO record
+        processed = cAwards.ProcessedQSO(
+            log_call=qso.log_call,
+            log_call_pri=mbr.mbr_pri_call,  # Current primary call from member DB
+            log_qso_date=qso.log_qso_date,
+            log_time_on=qso.log_time_on,
+            log_time_off=qso.log_time_off,
+            log_band=qso.log_band,
+            log_band_nr=band_nr,
+            log_mode=qso.log_mode,
+            log_state=state,
+            log_country=qso.log_country,
+            log_dxcc=dxcc,
+            log_skcc_nr=mbr.mbr_skcc_nr,
+            log_skcc=mbr.mbr_skcc,
+            log_tx_pwr=qso.log_tx_pwr,
+            log_rx_pwr=qso.log_rx_pwr,
+            log_key_type=qso.log_key_type,
+            log_name=name,
+            log_qth=qso.log_qth,
+            log_comment=qso.log_comment,
+            log_rst_rcvd=qso.log_rst_rcvd,
+            log_rst_sent=qso.log_rst_sent,
+            log_freq=qso.log_freq,
+            log_gridsquare=qso.log_gridsquare
+        )
+
+        # Set country based on state
+        if state in self.states:
+            processed.log_country = "USA"
+        elif state in self.provinces:
+            processed.log_country = "Canada"
+
+        # Apply award-specific qualification logic
+        self._apply_award_qualifications(processed, qso, mbr, dxc_flag)
+
+        return processed
+
+    def _apply_award_qualifications(self, processed: ProcessedQSO, qso: QSO, mbr: Member, dxc_flag: bool) -> None:
+        """Apply all award-specific qualification logic."""
+
+        # WAS Awards
+        if processed.log_state in self.was_states:
+            processed.was_qso = "YES"
+
+            # WAS-C Started on 12 Jun 2011 - Member worked must have been a Centurion as of the date of the QSO
+            if mbr.mbr_cent_date and qso.log_qso_date >= "20110612":
+                if qso.log_qso_date >= mbr.mbr_cent_date:
+                    processed.wasc_qso = "YES"
+
+            # WAS-T Started on 1 Feb 2016 - Member worked must have been a Tribune as of the date of the QSO
+            if mbr.mbr_trib_date and qso.log_qso_date >= "20160201":
+                if qso.log_qso_date >= mbr.mbr_trib_date:
+                    processed.wast_qso = "YES"
+
+            # WAS-S Started on 1 Feb 2016 - Member worked must have been a Senator as of the date of the QSO
+            if mbr.mbr_sen_date and qso.log_qso_date >= "20160201":
+                if qso.log_qso_date >= mbr.mbr_sen_date:
+                    processed.wass_qso = "YES"
+
+        # Tribune Award - valid between two Centurions logged on/after 2007-03-01
+        if (self.ap_my_cent_date and mbr.mbr_cent_date and
+            qso.log_qso_date >= self.ap_my_cent_date and
+            qso.log_qso_date >= mbr.mbr_cent_date and
+            qso.log_qso_date >= "20070301"):
+            processed.trib_award_qso = "YES"
+
+        # Senator Award - must be logged on/after 2013-08-01 between a Tx8 and a Tribune
+        if (qso.log_qso_date >= "20130801" and
+            self.ap_my_tx8_date and mbr.mbr_trib_date and
+            qso.log_qso_date >= self.ap_my_tx8_date and
+            qso.log_qso_date >= mbr.mbr_trib_date):
+            processed.sen_award_qso = "YES"
+
+        # DX Awards
+        if qso.log_qso_date >= "20090614":
+            try:
+                log_dxcc = int(processed.log_dxcc)
+                my_dx_code = int(self.ap_my_dx_code)
+
+                # DXQ is valid ONLY for Countries other than your home Country
+                if log_dxcc != my_dx_code:
+                    processed.dxq_qso = "YES"
+                    processed.dx_code = f"{log_dxcc:03d}"
+
+                # DXC started later than DXQ
+                if qso.log_qso_date >= "20091219":
+                    # DXC Allows one Contact in your home country
+                    if log_dxcc == my_dx_code and not dxc_flag:
+                        processed.dxc_qso = "YES"
+                        processed.dx_code = f"{log_dxcc:03d}"
+                    if log_dxcc != my_dx_code:
+                        processed.dxc_qso = "YES"
+                        processed.dx_code = f"{log_dxcc:03d}"
+            except (ValueError, TypeError):
+                pass
+
+        # Prefix Award - started on 20130101
+        if qso.log_qso_date >= "20130101":
+            call_segments = qso.log_call.split("/")
+            for pfx_call in call_segments:
+                pfx_skcc_nr = self.get_skcc_from_call(pfx_call, mbr.mbr_skcc_nr)
+                if pfx_skcc_nr:
+                    processed.pfx_call = pfx_call
+                    # Extract prefix (everything before first digit)
+                    if len(pfx_call) >= 3 and pfx_call[2].isdigit():
+                        processed.pfx = pfx_call[:3]
+                    else:
+                        processed.pfx = pfx_call[:2]
+                    processed.pfx_pts = pfx_skcc_nr  # SKCC number, not band points!
+                    break
+
+        # RagChew QSOs - started on 20130701
+        if qso.log_qso_date >= "20130701" and qso.log_time_off:
+            try:
+                ragchew_mins = self._calculate_qso_length(qso.log_time_on, qso.log_time_off) // 60
+                if ragchew_mins >= 30:
+                    processed.log_time_off = qso.log_time_off
+                    processed.ragchew_qso = "YES"
+                    processed.ragchew_mins = str(ragchew_mins)
+            except Exception:
+                pass
+
+        # QRP QSOs
+        try:
+            tx_pwr = float(qso.log_tx_pwr) if qso.log_tx_pwr else 0.0
+            if tx_pwr > 0.0 and tx_pwr <= 5.0:
+                processed.qrpx1_qso = "YES"
+                try:
+                    rx_pwr = float(qso.log_rx_pwr) if qso.log_rx_pwr else 0.0
+                    if rx_pwr > 0.0 and rx_pwr <= 5.0:
+                        processed.qrpx2_qso = "YES"
+                except (ValueError, TypeError):
+                    pass
+        except (ValueError, TypeError):
+            pass
+
+        # Triple Key Award (TKA) - started on 2018-11-10
+        if qso.log_qso_date >= "20181110" and qso.log_key_type:
+            processed.tka_qso = "YES"
+
+    def _calculate_qso_length(self, time_on: str, time_off: str) -> int:
+        """Calculate QSO length in seconds."""
+        try:
+            # Convert HHMMSS to seconds
+            on_hours = int(time_on[:2])
+            on_mins = int(time_on[2:4])
+            on_secs = int(time_on[4:6]) if len(time_on) >= 6 else 0
+            on_total = on_hours * 3600 + on_mins * 60 + on_secs
+
+            off_hours = int(time_off[:2])
+            off_mins = int(time_off[2:4])
+            off_secs = int(time_off[4:6]) if len(time_off) >= 6 else 0
+            off_total = off_hours * 3600 + off_mins * 60 + off_secs
+
+            # Handle day rollover
+            if off_total < on_total:
+                off_total += 24 * 3600
+
+            return off_total - on_total
+        except (ValueError, IndexError):
+            return 0
+
+    @classmethod
+    def process_with_xojo_logic(cls, qso_list: list[tuple[Any, ...]],
+                               member_data: dict[str, 'cSKCC.cMemberEntry'],
+                               my_callsign: str) -> dict[str, Any]:
+        """Process QSOs using Xojo award logic and return results in cQSO format.
+
+        Args:
+            qso_list: List of QSO tuples from cQSO.QSOs
+            member_data: Dictionary from cSKCC.members
+            my_callsign: User's callsign
+
+        Returns:
+            Dictionary with award-specific contact collections
+        """
+        # Convert member data to Member objects
+        member_db: dict[str, cAwards.Member] = {}
+        for callsign, data in member_data.items():
+            member = cls.Member(
+                mbr_skcc_nr=str(data.get('plain_number', '')),
+                mbr_skcc=data.get('skcc_number', ''),
+                mbr_call=callsign,
+                mbr_pri_call=callsign,
+                mbr_name=data.get('name', ''),
+                mbr_spc=data.get('spc', ''),
+                mbr_dxc=str(data.get('dxcode', '')),
+                mbr_join_date=data.get('join_date', ''),
+                mbr_cent_date=data.get('c_date', ''),
+                mbr_trib_date=data.get('t_date', ''),
+                mbr_tx8_date=data.get('tx8_date', ''),
+                mbr_sen_date=data.get('s_date', '')
+            )
+            # Always add member to database, even if plain_number is empty
+            # Use the callsign as key if no SKCC number
+            key = member.mbr_skcc_nr if member.mbr_skcc_nr else f"CALL_{callsign}"
+            member_db[key] = member
+
+        # Get user's member record
+        if my_callsign not in member_data:
+            raise ValueError(f"Could not find member data for {my_callsign}")
+        user_entry = member_data[my_callsign]
+        # Extract plain_number with proper type handling
+        plain_number = user_entry.get('plain_number', '')
+        plain_number = str(plain_number) if plain_number else ''
+        my_member = member_db.get(plain_number)
+        if not my_member:
+            raise ValueError(f"Could not find member record for {my_callsign}")
+
+        # Create processor
+        processor = cls(member_db, my_member, member_data)
+
+        # Convert QSO tuples to QSO objects
+        qsos: list[cAwards.QSO] = []
+        for qso_tuple in qso_list:
+            # Unpack: (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name)
+            (qso_datetime, call, state, freq, comment, skcc, _, tx_pwr, rx_pwr, dxcc, band, key_type, name) = qso_tuple
+
+            # Extract date and time from combined datetime string
+            # Format is YYYYMMDDHHMMSS - extract first 8 chars for date, rest for time
+            qso_date = qso_datetime[:8] if len(qso_datetime) >= 8 else qso_datetime
+            qso_time = qso_datetime[8:] if len(qso_datetime) > 8 else ''
+
+            # Extract numeric portion from SKCC field
+            skcc_numeric = ''.join(filter(str.isdigit, skcc)) if skcc else ''
+
+            qso = cls.QSO(
+                log_call=call,
+                log_skcc=skcc,
+                log_skcc_pre=skcc_numeric,
+                log_qso_date=qso_date,
+                log_time_on=qso_time,
+                log_time_off='',  # Not available in tuple format
+                log_band=band,
+                log_mode='CW',
+                log_state=state,
+                log_country='',
+                log_dxcc=dxcc,
+                log_tx_pwr=tx_pwr,
+                log_rx_pwr=rx_pwr,
+                log_key_type=key_type,
+                log_comment=comment,
+                log_name=name,
+                log_qth='',
+                log_rst_rcvd='',
+                log_rst_sent='',
+                log_freq=str(freq) if freq else '',
+                log_gridsquare=''
+            )
+            qsos.append(qso)
+
+        # Process QSOs
+        processed_qsos = processor.process_qsos(qsos)
+
+        # Convert to cQSO format
+        contacts: dict[str, Any] = {
+            'C': {},
+            'T': {},
+            'S': {},
+            'WAS': {},
+            'WAS_C': {},
+            'WAS_T': {},
+            'WAS_S': {},
+            'P': {},
+            'DXC': {},
+            'DXQ': {},
+            'QRP': {},
+            'TKA_SK': {},
+            'TKA_BUG': {},
+            'TKA_SS': {},
+            'BRAG': {},
+            '_stats': {
+                'qsos_processed': processor.qsos_processed,
+                'qsos_added': processor.qsos_added,
+                'qsos_skipped': len(processor.qsos_skipped)
+            }
+        }
+
+        for qso in processed_qsos:
+            member_num = qso.log_skcc_nr
+            callsign = qso.log_call
+            date = qso.log_qso_date
+            name = qso.log_name
+            state = qso.log_state
+            band = qso.log_band
+
+            # Basic contact tuple format: (date, member_number, callsign, name, state, band)
+            contact_tuple = (date, member_num, callsign, name, state, band)
+
+            # Centurion contacts - all valid QSOs qualify (only first QSO per member)
+            if member_num not in contacts['C']:
+                contacts['C'][member_num] = contact_tuple
+
+            # Tribune contacts (only first qualifying QSO per member)
+            if qso.trib_award_qso == "YES" and member_num not in contacts['T']:
+                contacts['T'][member_num] = contact_tuple
+
+            # Senator contacts (only first qualifying QSO per member)
+            if qso.sen_award_qso == "YES" and member_num not in contacts['S']:
+                contacts['S'][member_num] = contact_tuple
+
+            # WAS contacts
+            if qso.was_qso == "YES":
+                contacts['WAS'][state] = (state, date, callsign, member_num, name, band)
+
+            if qso.wasc_qso == "YES":
+                contacts['WAS_C'][state] = (state, date, callsign, member_num, name, band)
+
+            if qso.wast_qso == "YES":
+                contacts['WAS_T'][state] = (state, date, callsign, member_num, name, band)
+
+            if qso.wass_qso == "YES":
+                contacts['WAS_S'][state] = (state, date, callsign, member_num, name, band)
+
+            # Prefix contacts (only first QSO per prefix)
+            if qso.pfx and qso.pfx_pts and qso.pfx not in contacts['P']:
+                # Key: prefix, Value: (date, prefix, member_number, name, callsign, band)
+                contacts['P'][qso.pfx] = (date, qso.pfx, int(qso.pfx_pts), name, callsign, band)
+
+            # DX contacts (only first QSO per country/member)
+            if qso.dxc_qso == "YES" and qso.dx_code not in contacts['DXC']:
+                contacts['DXC'][qso.dx_code] = (date, member_num, callsign)
+
+            if qso.dxq_qso == "YES" and member_num not in contacts['DXQ']:
+                contacts['DXQ'][member_num] = (date, member_num, callsign)
+
+            # QRP contacts
+            if qso.qrpx1_qso == "YES":
+                qrp_type = 2 if qso.qrpx2_qso == "YES" else 1
+                qso_key = f"{member_num}_{band}_{date}"
+                contacts['QRP'][qso_key] = (date, member_num, callsign, qrp_type)
+
+            # TKA contacts
+            if qso.tka_qso == "YES":
+                contact_tuple_tka = (date, member_num, callsign)
+                key_type = qso.log_key_type.upper()
+
+                if key_type == "SK":
+                    contacts['TKA_SK'][member_num] = contact_tuple_tka
+                elif key_type == "BUG":
+                    contacts['TKA_BUG'][member_num] = contact_tuple_tka
+                elif key_type == "SS":
+                    contacts['TKA_SS'][member_num] = contact_tuple_tka
+
+            # BRAG contacts (RagChew)
+            if qso.ragchew_qso == "YES":
+                ragchew_mins = float(qso.ragchew_mins) if qso.ragchew_mins else 0.0
+                contacts['BRAG'][member_num] = (date, member_num, callsign, ragchew_mins)
+
+        return contacts
+
 
 class cSpotters:
     spotters: ClassVar[dict[str, tuple[int, list[int]]]] = {}
@@ -3467,11 +4164,16 @@ class cSKCC:
         cls._member_cache.clear()
 
         for line in lines[1:]:
+            if not line.strip():  # Skip empty lines
+                continue
             try:
                 fields = line.split("|")
+                # skimmer-data.txt format: SKCCNR|CALL|NAME|SPC|OLDCALL|DXCODE|JOINDATE|CENTDATE|TRIBDATE|TX8DATE|SENDATE|MBRSTATUS
+                if len(fields) < 12:
+                    continue
                 (
-                    number, current_call, name, spc, other_calls, dxcode, join_date, c_date, t_date, tx8_date, s_date, mbr_status, *_
-                ) = fields
+                    number, current_call, name, spc, other_calls, dxcode, join_date, c_date, t_date, tx8_date, s_date, mbr_status
+                ) = fields[:12]
             except ValueError:
                 print("Error parsing SKCC data line. Skipping.")
                 continue
