@@ -57,6 +57,7 @@ import string
 import sys
 import textwrap
 import time
+import traceback
 from collections.abc import AsyncGenerator, Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -2461,11 +2462,10 @@ class cQSO:
         try:
             # Use cAwards processor for 100% Xojo parity
             contacts = cAwards.process_with_xojo_logic(cls.QSOs, cSKCC.members, cConfig.MY_CALLSIGN)
-        except Exception as e:
-            import traceback
+        except Exception:
             traceback.print_exc()
             return  # Fall back to legacy processing
-        
+
         # Update class contact collections with results
         cls.ContactsForC = contacts['C']
         cls.ContactsForT = contacts['T'] 
@@ -2482,7 +2482,7 @@ class cQSO:
         cls.ContactsForTKA_BUG = contacts['TKA_BUG']
         cls.ContactsForTKA_SS = contacts['TKA_SS']
         cls.ContactsForBRAG = contacts['BRAG']
-        
+
         # Generate output files using cAwards results
         QSOs_Dir = 'QSOs'
         if not await aiofiles.os.path.exists(QSOs_Dir):
@@ -2501,14 +2501,14 @@ class cQSO:
         await cls.award_dx_async()
         await cls.award_tka_async()
         await cls.track_brag_async(cls.Brag)
-        
+
         # Print K3Y contacts if needed
         if 'K3Y' in cConfig.GOALS:
             cls.print_k3y_contacts()
-        
+
         # cAwards processing and file generation complete - return to prevent legacy processing from overwriting results
         return
-        
+
         print("ERROR: THIS SHOULD NEVER BE REACHED - LEGACY PROCESSING STARTING")
         # Helper function to check date criteria (restored from original)
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
@@ -3286,7 +3286,7 @@ class cAwards:
 
         skcc_list: dict[str, int] = {}
         return_skcc = ""
-        
+
 
         if "/" in log_call:
             # Log_Call has slants - Call may either exist "as-is", or may need to be broken into call segments
@@ -3324,7 +3324,7 @@ class cAwards:
                 if log_skcc == skcc_nr:
                     return_skcc = skcc_nr
                     break
-            
+
 
         return return_skcc
 
@@ -3385,7 +3385,7 @@ class cAwards:
                 # Normalize dates to 8 characters for proper comparison
                 qso_date = qso.log_qso_date[:8] if len(qso.log_qso_date) > 8 else qso.log_qso_date
                 mbr_join_date = mbr.mbr_join_date[:8] if len(mbr.mbr_join_date) > 8 else mbr.mbr_join_date
-                
+
                 if (qso_date >= mbr_join_date and
                     mbr.mbr_skcc_nr != self.ap_my_skcc_nr):
 
@@ -3397,7 +3397,7 @@ class cAwards:
                     self.processed_qsos.append(processed_qso)
                     self.qsos_added += 1
                     qso_added_to_db = True
-                    
+
                     if mbr_skcc_nr in ["6586", "7322", "14962", "967"]:
                         pass
                 else:
@@ -3520,20 +3520,20 @@ class cAwards:
         # Normalize dates to 8 chars for comparison
         ap_cent_date_norm = self.ap_my_cent_date[:8] if self.ap_my_cent_date and len(self.ap_my_cent_date) > 8 else self.ap_my_cent_date
         mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
-        
+
         if (ap_cent_date_norm and mbr_cent_date_norm and
             qso.log_qso_date >= ap_cent_date_norm and
             qso.log_qso_date >= mbr_cent_date_norm and
             qso.log_qso_date >= "20070301"):
             processed.trib_award_qso = "YES"
-            
+
         if mbr.mbr_skcc_nr in ["3893", "2373", "2622"]:
             pass
         # Senator Award - must be logged on/after 2013-08-01 between a Tx8 and a Tribune
         # Normalize dates to 8 chars for comparison
         ap_tx8_date_norm = self.ap_my_tx8_date[:8] if self.ap_my_tx8_date and len(self.ap_my_tx8_date) > 8 else self.ap_my_tx8_date
         mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
-        
+
         if (qso.log_qso_date >= "20130801" and
             ap_tx8_date_norm and mbr_trib_date_norm and
             qso.log_qso_date >= ap_tx8_date_norm and
@@ -3809,7 +3809,7 @@ class cAwards:
                     mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
                     mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
                     mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-                    
+
                     if mbr_cent_date_norm and date >= mbr_cent_date_norm:
                         skcc_with_suffix = member_num + "C"
                     if mbr_trib_date_norm and date >= mbr_trib_date_norm:
@@ -3831,7 +3831,7 @@ class cAwards:
                     mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
                     mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
                     mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-                    
+
                     if mbr_cent_date_norm and date >= mbr_cent_date_norm:
                         skcc_with_suffix = member_num + "C"
                     if mbr_trib_date_norm and date >= mbr_trib_date_norm:
@@ -3853,7 +3853,7 @@ class cAwards:
                     mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
                     mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
                     mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-                    
+
                     if mbr_cent_date_norm and date >= mbr_cent_date_norm:
                         skcc_with_suffix = member_num + "C"
                     if mbr_trib_date_norm and date >= mbr_trib_date_norm:
@@ -3875,7 +3875,7 @@ class cAwards:
                     mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
                     mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
                     mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-                    
+
                     if mbr_cent_date_norm and date >= mbr_cent_date_norm:
                         skcc_with_suffix = member_num + "C"
                     if mbr_trib_date_norm and date >= mbr_trib_date_norm:
@@ -4372,7 +4372,7 @@ class cSKCC:
                 'main_call'    : current_call,
                 'mbr_status'   : mbr_status,
             }
-            
+
             # Store all callsign->member mappings for GetSKCCFromCall
             for call in all_calls:
                 cls.all_callsign_mappings.append((call, member_entry))
