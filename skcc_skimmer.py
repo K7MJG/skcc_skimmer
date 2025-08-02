@@ -1584,6 +1584,26 @@ class cQSO:
             if sk_count >= 100 and bug_count >= 100 and ss_count >= 100 and unique_total >= 300:
                 if cls.MyMemberNumber not in cSKCC.tka_level:
                     print('FYI: You qualify for TKA but have not yet applied for it.')
+        
+        ### RC (Rag Chew) ###
+        if 'RC' in cConfig.GOALS:
+            # Calculate total RC minutes
+            total_rc_minutes = sum(
+                int(qso[5]) if len(qso) > 5 else 0  # ragchew_mins is at index 5 in the tuple
+                for qso in cls.ContactsForRC.values()
+            )
+            
+            if total_rc_minutes >= 300:
+                RC_Level = total_rc_minutes // 300
+                if cls.MyMemberNumber in cSKCC.rc_level:
+                    Award_RC_Level = cSKCC.rc_level[cls.MyMemberNumber]
+                    if RC_Level > Award_RC_Level:
+                        level_name = 'RC' if RC_Level == 1 else f'RCx{RC_Level}'
+                        applied_name = 'RC' if Award_RC_Level == 1 else f'RCx{Award_RC_Level}'
+                        print(f'FYI: You qualify for {level_name} but have only applied for {applied_name}.')
+                else:
+                    level_name = 'RC' if RC_Level == 1 else f'RCx{RC_Level}'
+                    print(f'FYI: You qualify for {level_name} but have not yet applied for it.')
 
     @staticmethod
     def calculate_numerics(Class: str, Total: int) -> tuple[int, int]:
@@ -1928,7 +1948,7 @@ class cQSO:
     def print_rc_award_progress(cls) -> None:
         """Print Rag Chew award progress."""
         if not cls.ContactsForRC:
-            print('RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged.')
+            print('RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged')
             return
             
         total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
@@ -3983,6 +4003,7 @@ class cSKCC:
     qrp_1x_level:    ClassVar[dict[str, int]] = {}
     qrp_2x_level:    ClassVar[dict[str, int]] = {}
     tka_level:       ClassVar[dict[str, int]] = {}  # Triple Key Award roster
+    rc_level:        ClassVar[dict[str, int]] = {}  # Rag Chew Award roster
 
 
     # Cache for frequently accessed member data
@@ -4031,7 +4052,8 @@ class cSKCC:
                 cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'),
                 cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'),
                 cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php'),
-                cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php')
+                cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php'),
+                cls.read_roster_async('RC', 'operating_awards/rag_chew/ragchew_roster.php')
             ]
 
             try:
@@ -4044,7 +4066,7 @@ class cSKCC:
             cls.centurion_level, cls.tribune_level, cls.senator_level, \
             cls.was_level, cls.was_c_level, cls.was_t_level, \
             cls.was_s_level, cls.prefix_level, cls.dxq_level, \
-            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level, cls.tka_level = results
+            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level, cls.tka_level, cls.rc_level = results
 
         except asyncio.TimeoutError:
             print("Timeout error downloading rosters.")
@@ -4199,8 +4221,10 @@ class cSKCC:
         # Use hoisted regex pattern
         columns_regex = cSKCC._roster_columns_regex
 
-        # For DX and QRP rosters, use SKCC number (column 2) as key
-        if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x']:
+        # For DX, QRP, and RC rosters, use SKCC number as key
+        # RC roster format: "107 x35    K0AF    22366    ..." - SKCC# is in column 3 (index 2)
+        # DX/QRP roster format: "... SKCC# ..." - SKCC# is in column 3 (index 2)
+        if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x', 'RC']:
             return {
                 (cols := columns_regex.findall(row))[2]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
                 for row in rows[1:]
