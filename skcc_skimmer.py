@@ -1759,10 +1759,15 @@ class cQSO:
             # Get SKCC number - preserve the full value including suffix
             skcc_field = fields.get('SKCC', '')
 
-            # Extract numeric part for member lookup
-            skcc_number = ''.join(filter(str.isdigit, skcc_field))
-            # Extract suffix if present
-            skcc_suffix = skcc_field[len(skcc_number):] if skcc_number else ''
+            # Handle special case of SKCC="NONE" (Version v03.01.01C)
+            if skcc_field.upper() == 'NONE':
+                skcc_number = 'NONE'
+                skcc_suffix = ''
+            else:
+                # Extract numeric part for member lookup
+                skcc_number = ''.join(filter(str.isdigit, skcc_field))
+                # Extract suffix if present
+                skcc_suffix = skcc_field[len(skcc_number):] if skcc_number else ''
 
             # Normalize DXCC code to prevent duplicates (e.g., "001" -> "1")
             dxcc_code = fields.get('DXCC', '')
@@ -3319,11 +3324,9 @@ class cAwards:
         else:
             # There was an SKCC Number in the log
             # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
-            # First, check if the log SKCC matches any in our list
-            for skcc_nr in skcc_list:
-                if log_skcc == skcc_nr:
-                    return_skcc = skcc_nr
-                    break
+            # CRITICAL: If any member is found for this callsign, trust the log SKCC (Xojo behavior)
+            if len(skcc_list) > 0:
+                return_skcc = log_skcc
 
 
         return return_skcc
@@ -3361,8 +3364,9 @@ class cAwards:
             else:
                 mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
 
-            # Skip QSOs where GetSKCCFromCall returns empty (no valid member match)
-            if not mbr_skcc_nr or mbr_skcc_nr == "":
+            # Skip QSOs where GetSKCCFromCall returns empty or "NONE" (no valid member match)
+            # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
+            if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
                 self.qsos_skipped.append(f"No valid SKCC match for {log_call}")
                 continue
 
@@ -3711,8 +3715,11 @@ class cAwards:
             qso_date = qso_datetime[:8] if len(qso_datetime) >= 8 else qso_datetime
             qso_time = qso_datetime[8:] if len(qso_datetime) > 8 else ''
 
-            # Extract numeric portion from SKCC field
-            skcc_numeric = ''.join(filter(str.isdigit, skcc)) if skcc else ''
+            # Extract numeric portion from SKCC field (unless it's "NONE")
+            if skcc == 'NONE':
+                skcc_numeric = 'NONE'
+            else:
+                skcc_numeric = ''.join(filter(str.isdigit, skcc)) if skcc else ''
 
             qso = cls.QSO(
                 log_call=call,
