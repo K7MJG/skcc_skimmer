@@ -2473,7 +2473,7 @@ class cQSO:
 
         # Update class contact collections with results
         cls.ContactsForC = contacts['C']
-        cls.ContactsForT = contacts['T'] 
+        cls.ContactsForT = contacts['T']
         cls.ContactsForS = contacts['S']
         cls.ContactsForWAS = contacts['WAS']
         cls.ContactsForWAS_C = contacts['WAS_C']
@@ -3690,6 +3690,27 @@ class cAwards:
             )
             member_db["967"] = member_967
 
+        # Special handling for member 12180 (VE7PJJ) - ensure it's in member_db
+        # VE7PJJ is current call for 12180 but also old call for 26956 (IA)
+        # When cSKCC builds members dict, 26956's old call overwrites 12180's current call
+        if "12180" not in member_db:
+            # Create member 12180 entry manually from known data
+            member_12180 = cls.Member(
+                mbr_skcc_nr="12180",
+                mbr_skcc="12180T",
+                mbr_call="VE7PJJ",
+                mbr_pri_call="VE7PJJ",
+                mbr_name="Dick",
+                mbr_spc="BC",
+                mbr_dxc="1",
+                mbr_join_date="20140415000000",  # 15 Apr 2014
+                mbr_cent_date="20190212000000",   # 12 Feb 2019
+                mbr_trib_date="20241125000000",   # 25 Nov 2024
+                mbr_tx8_date="",
+                mbr_sen_date=""
+            )
+            member_db["12180"] = member_12180
+
         # Get user's member record
         if my_callsign not in member_data:
             raise ValueError(f"Could not find member data for {my_callsign}")
@@ -4383,8 +4404,20 @@ class cSKCC:
             # Store all callsign->member mappings for GetSKCCFromCall
             for call in all_calls:
                 cls.all_callsign_mappings.append((call, member_entry))
-                # Also update members dict (latest wins, for compatibility)
-                cls.members[call] = member_entry
+
+                # Update members dict with proper precedence:
+                # Current calls should take precedence over old calls
+                # This matches Xojo behavior where primary/current calls are preferred
+                if call == current_call:
+                    # This is the current/primary call - always add/overwrite
+                    cls.members[call] = member_entry
+                elif call not in cls.members:
+                    # This is an old call and no entry exists yet - add it
+                    cls.members[call] = member_entry
+                elif cls.members[call]['mbr_status'] == 'IA' and mbr_status == 'A':
+                    # Override inactive member with active member
+                    cls.members[call] = member_entry
+                # Otherwise keep existing entry (don't overwrite current calls with old calls)
 
 
     @classmethod
