@@ -397,7 +397,7 @@ class cConfig:
             cls.SPOTTER_RADIUS = int(cls.config_file['SPOTTER_RADIUS'])
 
         if 'GOALS' in cls.config_file:
-            cls.GOALS = set(cls.parse_goals(cls.config_file['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA', 'goal'))
+            cls.GOALS = set(cls.parse_goals(cls.config_file['GOALS'], 'C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA RC', 'goal'))
 
         if 'TARGETS' in cls.config_file:
             cls.TARGETS = set(cls.parse_goals(cls.config_file['TARGETS'], 'C T S', 'target'))
@@ -470,7 +470,7 @@ class cConfig:
         if args.distance_units:
             cls.DISTANCE_UNITS = args.distance_units
         if args.goals:
-            cls.GOALS = set(cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA", "goal"))
+            cls.GOALS = set(cls.parse_goals(args.goals, "C T S WAS WAS-C WAS-T WAS-S P BRAG K3Y QRP DX TKA RC", "goal"))
         if args.logfile:
             cls.LOG_FILE.ENABLED = True
             cls.LOG_FILE.DELETE_ON_STARTUP = True
@@ -1189,13 +1189,14 @@ class cQSO:
     ContactsForTKA_SK:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Straight Key
     ContactsForTKA_BUG: dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Bug
     ContactsForTKA_SS:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Sideswiper
+    ContactsForRC:      dict[str, tuple[str, str, str, str, str, int]]  # Key: member_number, Value: (date, member_number, call, name, band, minutes) - Rag Chew
 
 
     Brag:             dict[str, tuple[str, str, str, float]]
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1316,6 +1317,7 @@ class cQSO:
         cls.ContactsForTKA_SK  = {}
         cls.ContactsForTKA_BUG = {}
         cls.ContactsForTKA_SS  = {}
+        cls.ContactsForRC      = {}
         cls.QSOsByMemberNumber = {}
 
         await cls.read_qsos_async()
@@ -1811,7 +1813,8 @@ class cQSO:
                 dxcc_code,  # Normalized DXCC code
                 fields.get('BAND', ''),  # Add BAND field from ADI file
                 fields.get('APP_SKCCLOGGER_KEYTYPE', ''),  # Add KEY_TYPE field for TKA
-                fields.get('NAME', '')  # Add NAME field from ADI file
+                fields.get('NAME', ''),  # Add NAME field from ADI file
+                fields.get('TIME_OFF', '')  # Add TIME_OFF for RagChew calculations
             )
 
     @classmethod
@@ -1842,7 +1845,7 @@ class cQSO:
 
         # Process and map QSOs by member number
         cls.QSOsByMemberNumber = {}
-        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _, _, _ in cls.QSOs:
+        for qso_date, raw_call_sign, _, _, _, _, _, _, _, _, _, _, _, _ in cls.QSOs:
             call_sign = cSKCC.extract_callsign(raw_call_sign)
             if not call_sign or call_sign == 'K3Y':
                 continue
@@ -1921,6 +1924,26 @@ class cQSO:
                 else:
                     print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target} ({remaining} more)')
 
+    @classmethod
+    def print_rc_award_progress(cls) -> None:
+        """Print Rag Chew award progress."""
+        if not cls.ContactsForRC:
+            print('RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged.')
+            return
+            
+        total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
+        qso_count = len(cls.ContactsForRC)
+        
+        if total_minutes >= 300:
+            current_level = total_minutes // 300
+            next_level = current_level + 1
+            next_required = next_level * 300
+            remaining = next_required - total_minutes
+            print(f'RC: Have {qso_count} QSOs ({total_minutes:,} mins) which qualifies for RCx{current_level}. RCx{next_level} requires {next_required:,} mins ({remaining:,} more)')
+        else:
+            remaining = 300 - total_minutes
+            print(f'RC: Have {qso_count} QSOs ({total_minutes:,} mins). RC requires 300 mins ({remaining:,} more)')
+    
     @classmethod
     def print_tka_award_progress(cls) -> None:
         """Print TKA (Triple Key Award) progress."""
@@ -2143,7 +2166,7 @@ class cQSO:
 
         if cConfig.GOALS:
             # Sort goals in preferred display order
-            goal_order = ['C', 'T', 'S', 'P', 'DX', 'QRP', 'WAS', 'WAS-C', 'WAS-T', 'WAS-S', 'BRAG', 'K3Y']
+            goal_order = ['C', 'T', 'S', 'P', 'DX', 'QRP', 'RC', 'WAS', 'WAS-C', 'WAS-T', 'WAS-S', 'BRAG', 'K3Y']
             sorted_goals = sorted(cConfig.GOALS, key=lambda x: goal_order.index(x) if x in goal_order else len(goal_order))
             print(f'GOAL{"S" if len(cConfig.GOALS) > 1 else ""}: {", ".join(sorted_goals)}')
 
@@ -2170,6 +2193,9 @@ class cQSO:
 
         if 'QRP' in cConfig.GOALS:
             cls.print_qrp_awards_progress()
+            
+        if 'RC' in cConfig.GOALS:
+            cls.print_rc_award_progress()
 
         if 'DX' in cConfig.GOALS:
             cls.print_dx_awards_progress()
@@ -2442,7 +2468,7 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName, _QsoTimeOff = Contact
 
             if QsoCallSign in ('K9SKC'):
                 continue
@@ -2507,6 +2533,7 @@ class cQSO:
         cls.ContactsForTKA_BUG = contacts['TKA_BUG']
         cls.ContactsForTKA_SS = contacts['TKA_SS']
         cls.ContactsForBRAG = contacts['BRAG']
+        cls.ContactsForRC = contacts['RC']
 
         # Process K3Y QSOs separately if needed
         if 'K3Y' in cConfig.GOALS:
@@ -2529,6 +2556,7 @@ class cQSO:
         await cls.award_qrp_async(cls.ContactsForQRP)
         await cls.award_dx_async()
         await cls.award_tka_async()
+        await cls.award_rc_async()
         await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
@@ -2624,6 +2652,43 @@ class cQSO:
 
             await file.write("=" * 70 + "\n")
             await file.write(f"SUMMARY: SK:{len(cls.ContactsForTKA_SK)} BUG:{len(cls.ContactsForTKA_BUG)} SS:{len(cls.ContactsForTKA_SS)} Total unique:{unique_total}/300\n")
+
+    @classmethod
+    async def award_rc_async(cls) -> None:
+        """Write Rag Chew (RC) award file."""
+        if not cls.ContactsForRC:
+            return
+            
+        # Calculate total minutes
+        total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
+        
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-RC.txt', 'w', encoding='utf-8') as file:
+            await file.write(f"Rag Chew Award Progress for {cConfig.MY_CALLSIGN}\n")
+            await file.write("=" * 60 + "\n\n")
+            await file.write(f"Total QSOs: {len(cls.ContactsForRC)}\n")
+            await file.write(f"Total Minutes: {total_minutes:,}\n")
+            await file.write(f"Award Level: {'RC' if total_minutes >= 300 else 'Not yet qualified'}")
+            if total_minutes >= 300:
+                x_level = total_minutes // 300
+                await file.write(f" x{x_level}")
+            await file.write("\n\n")
+            
+            await file.write("Date        Call         SKCC#     Name         Band  Minutes\n")
+            await file.write("-" * 60 + "\n")
+            
+            # Sort by date
+            for rc_key, (date, member_num, callsign, name, band, minutes) in sorted(
+                cls.ContactsForRC.items(), 
+                key=lambda x: x[1][0]  # Sort by date
+            ):
+                date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+                band_str = band.replace('M', '') if band else ''
+                await file.write(
+                    f"{date_str}  {callsign:<12} {member_num:<8} {name[:12]:<12} {band_str:>3}  {minutes:>4}\n"
+                )
+            
+            await file.write("-" * 60 + "\n")
+            await file.write(f"TOTAL MINUTES: {total_minutes:,}\n")
 
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
@@ -2790,7 +2855,7 @@ class cQSO:
         k3y_end = f'{cConfig.K3Y_YEAR}0201000000'
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName, _QsoTimeOff = Contact
 
             # K3Y processing
             if QsoDate >= k3y_start and QsoDate < k3y_end:
@@ -3483,7 +3548,7 @@ class cAwards:
         qsos: list[cAwards.QSO] = []
         for qso_tuple in qso_list:
             # Unpack: (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name)
-            (qso_datetime, call, state, freq, comment, skcc, _, tx_pwr, rx_pwr, dxcc, band, key_type, name) = qso_tuple
+            (qso_datetime, call, state, freq, comment, skcc, _, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off) = qso_tuple
 
             # Extract date and time from combined datetime string
             # Format is YYYYMMDDHHMMSS - extract first 8 chars for date, rest for time
@@ -3502,7 +3567,7 @@ class cAwards:
                 log_skcc_pre=skcc_numeric,
                 log_qso_date=qso_date,
                 log_time_on=qso_time,
-                log_time_off='',  # Not available in tuple format
+                log_time_off=time_off,  # TIME_OFF from ADI file
                 log_band=band,
                 log_mode='CW',
                 log_state=state,
@@ -3550,6 +3615,7 @@ class cAwards:
             'TKA_BUG': {},
             'TKA_SS': {},
             'BRAG': {},
+            'RC': {},
             '_stats': {
                 'qsos_processed': processor.qsos_processed,
                 'qsos_added': processor.qsos_added,
@@ -3589,6 +3655,48 @@ class cAwards:
             if qso.dxq_qso == "YES" and member_num not in contacts['DXQ']:
                 contacts['DXQ'][member_num] = (date, member_num, callsign)
 
+        # Process RC awards with Xojo's exact logic (ADI file order)
+        # If same member as previous: only keep if longer than previous
+        last_rc_member = None
+        last_rc_key = None
+        last_rc_mins = 0
+        
+        for qso in processed_qsos_adi_order:
+            if qso.ragchew_qso == "YES":
+                member_num = qso.log_skcc_nr
+                ragchew_mins = int(qso.ragchew_mins) if qso.ragchew_mins else 0
+                rc_key = f"{member_num}_{qso.log_qso_date}_{qso.log_time_on}"
+                
+                if member_num != last_rc_member:
+                    # Different member - add it
+                    contacts['RC'][rc_key] = (
+                        qso.log_qso_date, 
+                        member_num, 
+                        qso.log_call, 
+                        qso.log_name, 
+                        qso.log_band, 
+                        ragchew_mins
+                    )
+                    last_rc_member = member_num
+                    last_rc_key = rc_key
+                    last_rc_mins = ragchew_mins
+                else:
+                    # Same member as last - only keep if longer
+                    if ragchew_mins > last_rc_mins:
+                        # Remove the previous QSO and add this one
+                        if last_rc_key and last_rc_key in contacts['RC']:
+                            del contacts['RC'][last_rc_key]
+                        contacts['RC'][rc_key] = (
+                            qso.log_qso_date, 
+                            member_num, 
+                            qso.log_call, 
+                            qso.log_name, 
+                            qso.log_band, 
+                            ragchew_mins
+                        )
+                        last_rc_key = rc_key
+                        last_rc_mins = ragchew_mins
+        
         # Process WAS, P, QRP, TKA, BRAG awards using ADI file order QSOs
         for qso in processed_qsos_adi_order:
             member_num = qso.log_skcc_nr
@@ -3716,8 +3824,9 @@ class cAwards:
 
             # BRAG contacts (RagChew)
             if qso.ragchew_qso == "YES":
-                ragchew_mins = float(qso.ragchew_mins) if qso.ragchew_mins else 0.0
-                contacts['BRAG'][member_num] = (date, member_num, callsign, ragchew_mins)
+                ragchew_mins = int(qso.ragchew_mins) if qso.ragchew_mins else 0
+                # BRAG is something different - keeping for compatibility
+                contacts['BRAG'][member_num] = (date, member_num, callsign, float(ragchew_mins))
 
         return contacts
 
