@@ -214,7 +214,7 @@ class cUtil:
         )
 
     @staticmethod
-    def handle_shutdown(_signum: int, _frame: object | None = None) -> None:
+    def handle_shutdown(_signum: int, _frame: object | None = None) -> None:  # noqa: ARG004
         """Exits immediately when Ctrl+C is detected."""
         # Print a clean exit message and force immediate exit
         try:
@@ -2511,10 +2511,8 @@ class cQSO:
         if 'K3Y' in cConfig.GOALS:
             cls.print_k3y_contacts()
 
-        # cAwards processing and file generation complete - return to prevent legacy processing from overwriting results
-        return
+        # cAwards processing and file generation complete
 
-        print("ERROR: THIS SHOULD NEVER BE REACHED - LEGACY PROCESSING STARTING")
         # Helper function to check date criteria (restored from original)
         def good(QsoDate: str, MemberDate: str, MyDate: str, EligibleDate: str | None = None) -> bool:
             if MemberDate == '' or MyDate == '':
@@ -2524,7 +2522,6 @@ class cQSO:
                 return False
 
             return QsoDate >= MemberDate and QsoDate >= MyDate
-
 
         # Process BRAG QSOs
         if 'BRAG_MONTHS' in globals() and 'BRAG' in cConfig.GOALS:
