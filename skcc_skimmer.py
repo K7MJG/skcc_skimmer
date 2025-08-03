@@ -3163,8 +3163,8 @@ class cAwards:
         else:
             # There was an SKCC Number in the log
             # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
-            # CRITICAL: If any member is found for this callsign, trust the log SKCC (Xojo behavior)
-            if len(skcc_list) > 0:
+            # Check if the log's SKCC number is valid for this callsign
+            if log_skcc in skcc_list:
                 return_skcc = log_skcc
 
 
