@@ -2587,7 +2587,7 @@ class cQSO:
         # Generate output files using cAwards results
         QSOs_Dir = 'QSOs'
         if not await aiofiles.os.path.exists(QSOs_Dir):
-            Path(QSOs_Dir).mkdir(parents=True)
+            await aiofiles.os.makedirs(QSOs_Dir, exist_ok=True)
 
         # Award files
         await cls.award_cts_async('C', cls.ContactsForC)
@@ -4655,7 +4655,7 @@ async def get_version_async() -> str:
     While GenerateVersionStamp.py is excluded from releases, cVersion.py must be
     included to provide accurate version information to the user.
     """
-    if Path("GenerateVersionStamp.py").is_file():
+    if await aiofiles.os.path.exists("GenerateVersionStamp.py"):
         proc = await asyncio.create_subprocess_exec(
             sys.executable, "GenerateVersionStamp.py",
             stdout=asyncio.subprocess.PIPE,
@@ -4758,7 +4758,7 @@ async def main_loop() -> None:
     if cConfig.LOG_FILE.DELETE_ON_STARTUP:
         Filename = cConfig.LOG_FILE.FILE_NAME
         if Filename is not None and await aiofiles.os.path.exists(Filename):
-            Path(Filename).unlink()
+            await aiofiles.os.remove(Filename)
 
     print()
     print('Running...')
