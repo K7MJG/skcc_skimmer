@@ -2577,6 +2577,12 @@ class cQSO:
         cls.ContactsForTKA_SK = contacts['TKA_SK']
         cls.ContactsForTKA_BUG = contacts['TKA_BUG']
         cls.ContactsForTKA_SS = contacts['TKA_SS']
+
+        # Apply Xojo's TKA duplicate removal logic
+        # Each member can only count for ONE key type
+        # Remove duplicates from the largest dictionary to balance counts
+        cls._remove_tka_duplicates()
+
         cls.ContactsForBRAG = contacts['BRAG']
         cls.ContactsForRC = contacts['RC']
 
@@ -2664,29 +2670,31 @@ class cQSO:
             await file.write("Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members\n")
             await file.write("=" * 70 + "\n\n")
 
-            # Write SK contacts
-            await file.write("STRAIGHT KEY (SK) CONTACTS\n")
-            await file.write("-" * 30 + "\n")
-            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_SK.items(), key=lambda x: x[1][0]):
+            # Write BUG contacts first with running count
+            bug_contacts = sorted(cls.ContactsForTKA_BUG.items(), key=lambda x: x[1][0])
+            for idx, (member_number, (qso_date, _, callsign)) in enumerate(bug_contacts, 1):
                 date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
-                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
-            await file.write(f"Total SK: {len(cls.ContactsForTKA_SK)}\n\n")
+                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} BUG\n")
 
-            # Write BUG contacts
-            await file.write("BUG CONTACTS\n")
-            await file.write("-" * 30 + "\n")
-            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_BUG.items(), key=lambda x: x[1][0]):
-                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
-                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
-            await file.write(f"Total BUG: {len(cls.ContactsForTKA_BUG)}\n\n")
+            # Blank line between sections
+            await file.write("\n")
 
-            # Write SS contacts
-            await file.write("SIDESWIPER/COOTIE (SS) CONTACTS\n")
-            await file.write("-" * 30 + "\n")
-            for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForTKA_SS.items(), key=lambda x: x[1][0]):
+            # Write SK contacts with running count
+            sk_contacts = sorted(cls.ContactsForTKA_SK.items(), key=lambda x: x[1][0])
+            for idx, (member_number, (qso_date, _, callsign)) in enumerate(sk_contacts, 1):
                 date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
-                await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
-            await file.write(f"Total SS: {len(cls.ContactsForTKA_SS)}\n\n")
+                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SK\n")
+
+            # Blank line between sections
+            await file.write("\n")
+
+            # Write SS contacts with running count
+            ss_contacts = sorted(cls.ContactsForTKA_SS.items(), key=lambda x: x[1][0])
+            for idx, (member_number, (qso_date, _, callsign)) in enumerate(ss_contacts, 1):
+                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SS\n")
+
+            await file.write("\n")
 
             # Calculate unique members
             all_members: set[str] = set()
@@ -2892,6 +2900,89 @@ class cQSO:
                     await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}  {qso_freq / 1000:.3f}\n")
                 else:
                     await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}\n")
+
+    @classmethod
+    def _remove_tka_duplicates(cls) -> None:
+        """Remove duplicate members from TKA dictionaries following exact Xojo logic.
+
+        When a member appears in multiple key type dictionaries, remove them from
+        the dictionary with the most entries to keep counts balanced. Uses the exact
+        same comparison order as Xojo for deterministic results.
+        """
+        # Find all members that appear in multiple dictionaries
+        sk_members = set(cls.ContactsForTKA_SK.keys())
+        bug_members = set(cls.ContactsForTKA_BUG.keys())
+        ss_members = set(cls.ContactsForTKA_SS.keys())
+
+        # Find duplicates - members in multiple dictionaries
+        all_duplicates = (
+            (sk_members & bug_members) |  # Members in both SK and BUG
+            (sk_members & ss_members) |    # Members in both SK and SS
+            (bug_members & ss_members)     # Members in both BUG and SS
+        )
+
+        # For each duplicate, remove from appropriate dictionaries
+        # Important: Process in reverse sorted order to match Xojo's iteration pattern
+        for member in sorted(all_duplicates, reverse=True):
+            # Check which dictionaries contain this member
+            bug_logged = member in cls.ContactsForTKA_BUG
+            sk_logged = member in cls.ContactsForTKA_SK
+            ss_logged = member in cls.ContactsForTKA_SS
+
+            # Count how many dictionaries contain this member
+            count = sum([bug_logged, sk_logged, ss_logged])
+
+            # Keep removing until member appears in only one dictionary
+            while count > 1:
+                # Determine which dictionary to remove from, following Xojo's exact logic
+                work_dict = None
+
+                if bug_logged and sk_logged and ss_logged:
+                    # Member in all 3 - use Xojo's exact comparison order
+                    if len(cls.ContactsForTKA_BUG) >= len(cls.ContactsForTKA_SK):
+                        work_dict = 'BUG'
+                    else:
+                        work_dict = 'SK'
+
+                    if len(cls.ContactsForTKA_SS) >= len(cls.ContactsForTKA_BUG if work_dict == 'BUG' else cls.ContactsForTKA_SK):
+                        work_dict = 'SS'
+
+                elif bug_logged and sk_logged:
+                    # Member in BUG and SK
+                    if len(cls.ContactsForTKA_BUG) >= len(cls.ContactsForTKA_SK):
+                        work_dict = 'BUG'
+                    else:
+                        work_dict = 'SK'
+
+                elif bug_logged and ss_logged:
+                    # Member in BUG and SS
+                    if len(cls.ContactsForTKA_BUG) >= len(cls.ContactsForTKA_SS):
+                        work_dict = 'BUG'
+                    else:
+                        work_dict = 'SS'
+
+                else:  # sk_logged and ss_logged
+                    # Member in SK and SS
+                    # When equal, prefer to remove from SS (opposite of >=)
+                    if len(cls.ContactsForTKA_SK) > len(cls.ContactsForTKA_SS):
+                        work_dict = 'SK'
+                    else:
+                        work_dict = 'SS'
+
+                # Remove from the selected dictionary
+
+                if work_dict == 'BUG':
+                    del cls.ContactsForTKA_BUG[member]
+                    bug_logged = False
+                elif work_dict == 'SK':
+                    del cls.ContactsForTKA_SK[member]
+                    sk_logged = False
+                else:  # SS
+                    del cls.ContactsForTKA_SS[member]
+                    ss_logged = False
+
+                # Update count
+                count = sum([bug_logged, sk_logged, ss_logged])
 
     @classmethod
     def _process_k3y_qsos(cls) -> None:
@@ -3750,6 +3841,8 @@ class cAwards:
             name = qso.log_name
             state = qso.log_state
             band = qso.log_band
+            # TKA uses primary callsign from member database (Log_Call_Pri in Xojo)
+            tka_callsign = qso.log_call_pri
 
             # WAS contacts (only first qualifying QSO per state)
             # Recreate SKCC number suffix based on QSO date (matching Xojo logic)
@@ -3857,15 +3950,21 @@ class cAwards:
 
             # TKA contacts
             if qso.tka_qso == "YES":
-                contact_tuple_tka = (date, member_num, callsign)
+                # Use primary callsign from member database for TKA (matching Xojo's Log_Call_Pri)
+                contact_tuple_tka = (date, member_num, tka_callsign)
                 key_type = qso.log_key_type.upper()
 
+                # Xojo uses LIMIT 1 in SQL, keeping only the FIRST QSO for each member/key-type
+                # Only add if this member isn't already in the dictionary for this key type
                 if key_type == "SK":
-                    contacts['TKA_SK'][member_num] = contact_tuple_tka
+                    if member_num not in contacts['TKA_SK']:
+                        contacts['TKA_SK'][member_num] = contact_tuple_tka
                 elif key_type == "BUG":
-                    contacts['TKA_BUG'][member_num] = contact_tuple_tka
+                    if member_num not in contacts['TKA_BUG']:
+                        contacts['TKA_BUG'][member_num] = contact_tuple_tka
                 elif key_type == "SS":
-                    contacts['TKA_SS'][member_num] = contact_tuple_tka
+                    if member_num not in contacts['TKA_SS']:
+                        contacts['TKA_SS'][member_num] = contact_tuple_tka
 
             # BRAG contacts (RagChew)
             if qso.ragchew_qso == "YES":
