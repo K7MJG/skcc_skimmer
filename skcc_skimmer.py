@@ -1710,9 +1710,16 @@ class cQSO:
                 elif Total <= 5_000_000:
                     # Px1 through Px10 - calculate next level
                     current_level = (Total - 1) // 500_000 + 1
-                    next_level = current_level + 1
-                    next_threshold = next_level * 500_000
-                    remaining = next_threshold + 1 - Total
+                    if current_level >= 10:
+                        # At Px10, next is Px15 at >7.5M
+                        next_level = 15
+                        next_threshold = 7_500_000
+                        remaining = next_threshold + 1 - Total
+                    else:
+                        # Px1 through Px9 - next level is current + 1
+                        next_level = current_level + 1
+                        next_threshold = next_level * 500_000
+                        remaining = next_threshold + 1 - Total
                     x_factor = next_level
                 else:
                     # After 5M (Px10): levels go 15, 20, 25... with 2.5M increments
