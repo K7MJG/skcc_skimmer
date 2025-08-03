@@ -2273,7 +2273,7 @@ class cQSO:
             last_month_name = cFastDateTime.MONTH_NAMES[last_month_index]
 
             # Display both months
-            print(f'BRAG: {last_month_name} {last_month_count}, {current_month_name} {current_month_count}')
+            print(f'BRAG: For {last_month_name}: {last_month_count}, For {current_month_name}: {current_month_count}')
 
 
     @classmethod
