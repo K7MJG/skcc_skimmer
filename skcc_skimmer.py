@@ -2249,10 +2249,31 @@ class cQSO:
             remaining_states('WAS-S', cls.ContactsForWAS_S)
 
         if 'BRAG' in cConfig.GOALS:
+            # Calculate both last month and current month BRAG totals
             NowGMT = cFastDateTime.now_gmt()
-            MonthIndex = NowGMT.month()-1
-            MonthName = cFastDateTime.MONTH_NAMES[MonthIndex]
-            print(f'{MonthName} Brag: Have {len(cls.Brag)}')
+
+            # Get current month name and count
+            current_month_index = NowGMT.month() - 1
+            current_month_name = cFastDateTime.MONTH_NAMES[current_month_index]
+
+            # Process current month's BRAG
+            cls.get_brag_qsos(PrevMonth=0, should_print=False)
+            current_month_count = len(cls.Brag)
+
+            # Process last month's BRAG
+            cls.get_brag_qsos(PrevMonth=1, should_print=False)
+            last_month_count = len(cls.Brag)
+
+            # Calculate last month name
+            _Year, Month, _Day, _Hour, _Minute, _Second = NowGMT.split_date_time()
+            if Month == 1:
+                last_month_index = 11  # December
+            else:
+                last_month_index = Month - 2
+            last_month_name = cFastDateTime.MONTH_NAMES[last_month_index]
+
+            # Display both months
+            print(f'BRAG: {last_month_name} {last_month_count}, {current_month_name} {current_month_count}')
 
 
     @classmethod
@@ -2488,9 +2509,13 @@ class cQSO:
         fastEndOfMonth   = DateOfInterestGMT.end_of_month()
 
         for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, _QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName, _QsoTimeOff = Contact
+            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName, _QsoTimeOff = Contact
 
             if QsoCallSign in ('K9SKC'):
+                continue
+
+            # Xojo only includes QSOs where SKCC field is not empty
+            if not QsoSKCC or QsoSKCC == 'NONE':
                 continue
 
             QsoCallSign = cSKCC.extract_callsign(QsoCallSign)
@@ -2505,7 +2530,7 @@ class cQSO:
 
             fastQsoDate = cFastDateTime(QsoDate)
 
-            if fastStartOfMonth < fastQsoDate < fastEndOfMonth:
+            if fastStartOfMonth <= fastQsoDate <= fastEndOfMonth:
                 TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
 
                 if TheirJoin_Date and TheirJoin_Date < QsoDate:
@@ -4084,8 +4109,10 @@ class cSKCC:
 
     @staticmethod
     def wes(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
+        # WES: 12:00 Saturday to 00:00 Monday (36 hours total)
         start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Sat').first_weekday_after_date('Sat') + timedelta(hours=12)
-        return start_time, start_time + timedelta(hours=35, minutes=59, seconds=59)
+        # End at midnight 2 days later (36 hours total)
+        return start_time, start_time + timedelta(hours=36)
 
     @staticmethod
     def sks(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
@@ -4098,13 +4125,20 @@ class cSKCC:
 
     @staticmethod
     def sksa(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
+        # SKS-A: 22:00 Friday to 00:00 Saturday (2 hours total)
         start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Fri').first_weekday_after_date('Fri') + timedelta(hours=22)
-        return start_time, start_time + timedelta(hours=1, minutes=59, seconds=59)
+        return start_time, start_time + timedelta(hours=2)
 
     @staticmethod
     def skse(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Thu') + timedelta(hours=20 if Month in {1, 2, 3, 11, 12} else 19)
-        return start_time, start_time + timedelta(hours=1, minutes=59, seconds=59)
+        # SKS-E: Summer (Apr-Oct) 18:45-21:15, Winter 19:45-22:15
+        is_summer = 4 <= Month <= 10
+        start_hours = 18 if is_summer else 19
+        start_minutes = 45
+        duration_hours = 2
+        duration_minutes = 30
+        start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Thu') + timedelta(hours=start_hours, minutes=start_minutes)
+        return start_time, start_time + timedelta(hours=duration_hours, minutes=duration_minutes)
 
     @staticmethod
     def is_during_sprint(fastDateTime: cFastDateTime) -> bool:
