@@ -1584,7 +1584,7 @@ class cQSO:
             if sk_count >= 100 and bug_count >= 100 and ss_count >= 100 and unique_total >= 300:
                 if cls.MyMemberNumber not in cSKCC.tka_level:
                     print('FYI: You qualify for TKA but have not yet applied for it.')
-        
+
         ### RC (Rag Chew) ###
         if 'RC' in cConfig.GOALS:
             # Calculate total RC minutes
@@ -1592,7 +1592,7 @@ class cQSO:
                 int(qso[5]) if len(qso) > 5 else 0  # ragchew_mins is at index 5 in the tuple
                 for qso in cls.ContactsForRC.values()
             )
-            
+
             if total_rc_minutes >= 300:
                 RC_Level = total_rc_minutes // 300
                 if cls.MyMemberNumber in cSKCC.rc_level:
@@ -1747,7 +1747,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]:
         """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
@@ -1950,10 +1950,10 @@ class cQSO:
         if not cls.ContactsForRC:
             print('RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged')
             return
-            
+
         total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
         qso_count = len(cls.ContactsForRC)
-        
+
         if total_minutes >= 300:
             current_level = total_minutes // 300
             next_level = current_level + 1
@@ -1963,7 +1963,7 @@ class cQSO:
         else:
             remaining = 300 - total_minutes
             print(f'RC: Have {qso_count} QSOs ({total_minutes:,} mins). RC requires 300 mins ({remaining:,} more)')
-    
+
     @classmethod
     def print_tka_award_progress(cls) -> None:
         """Print TKA (Triple Key Award) progress."""
@@ -2213,7 +2213,7 @@ class cQSO:
 
         if 'QRP' in cConfig.GOALS:
             cls.print_qrp_awards_progress()
-            
+
         if 'RC' in cConfig.GOALS:
             cls.print_rc_award_progress()
 
@@ -2678,10 +2678,10 @@ class cQSO:
         """Write Rag Chew (RC) award file."""
         if not cls.ContactsForRC:
             return
-            
+
         # Calculate total minutes
         total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
-        
+
         async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-RC.txt', 'w', encoding='utf-8') as file:
             await file.write(f"Rag Chew Award Progress for {cConfig.MY_CALLSIGN}\n")
             await file.write("=" * 60 + "\n\n")
@@ -2692,13 +2692,13 @@ class cQSO:
                 x_level = total_minutes // 300
                 await file.write(f" x{x_level}")
             await file.write("\n\n")
-            
+
             await file.write("Date        Call         SKCC#     Name         Band  Minutes\n")
             await file.write("-" * 60 + "\n")
-            
+
             # Sort by date
-            for rc_key, (date, member_num, callsign, name, band, minutes) in sorted(
-                cls.ContactsForRC.items(), 
+            for _rc_key, (date, member_num, callsign, name, band, minutes) in sorted(
+                cls.ContactsForRC.items(),
                 key=lambda x: x[1][0]  # Sort by date
             ):
                 date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
@@ -2706,7 +2706,7 @@ class cQSO:
                 await file.write(
                     f"{date_str}  {callsign:<12} {member_num:<8} {name[:12]:<12} {band_str:>3}  {minutes:>4}\n"
                 )
-            
+
             await file.write("-" * 60 + "\n")
             await file.write(f"TOTAL MINUTES: {total_minutes:,}\n")
 
@@ -3680,21 +3680,21 @@ class cAwards:
         last_rc_member = None
         last_rc_key = None
         last_rc_mins = 0
-        
+
         for qso in processed_qsos_adi_order:
             if qso.ragchew_qso == "YES":
                 member_num = qso.log_skcc_nr
                 ragchew_mins = int(qso.ragchew_mins) if qso.ragchew_mins else 0
                 rc_key = f"{member_num}_{qso.log_qso_date}_{qso.log_time_on}"
-                
+
                 if member_num != last_rc_member:
                     # Different member - add it
                     contacts['RC'][rc_key] = (
-                        qso.log_qso_date, 
-                        member_num, 
-                        qso.log_call, 
-                        qso.log_name, 
-                        qso.log_band, 
+                        qso.log_qso_date,
+                        member_num,
+                        qso.log_call,
+                        qso.log_name,
+                        qso.log_band,
                         ragchew_mins
                     )
                     last_rc_member = member_num
@@ -3707,16 +3707,16 @@ class cAwards:
                         if last_rc_key and last_rc_key in contacts['RC']:
                             del contacts['RC'][last_rc_key]
                         contacts['RC'][rc_key] = (
-                            qso.log_qso_date, 
-                            member_num, 
-                            qso.log_call, 
-                            qso.log_name, 
-                            qso.log_band, 
+                            qso.log_qso_date,
+                            member_num,
+                            qso.log_call,
+                            qso.log_name,
+                            qso.log_band,
                             ragchew_mins
                         )
                         last_rc_key = rc_key
                         last_rc_mins = ragchew_mins
-        
+
         # Process WAS, P, QRP, TKA, BRAG awards using ADI file order QSOs
         for qso in processed_qsos_adi_order:
             member_num = qso.log_skcc_nr
