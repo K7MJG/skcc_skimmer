@@ -4142,7 +4142,7 @@ class cSKCC:
             return ""
 
         sDay, sMonthAbbrev, sYear = Date.split()
-        return f"{int(sYear):04}{cSKCC._month_abbreviations[sMonthAbbrev]:02}{int(sDay):02}000000"
+        return f"{int(sYear):04}{cSKCC._month_abbreviations[sMonthAbbrev]:02}{int(sDay):02}"
 
     @classmethod
     def extract_callsign(cls, CallSign: str) -> str | None:
