@@ -1978,14 +1978,16 @@ class cQSO:
             if current_level == 0:
                 # Working toward initial DXC
                 remaining = next_target - dxc_count
-                print(f'DXC: Have {dxc_count}. DXCx{next_level} requires {next_target} ({remaining} more)')
+                country_word = "country" if dxc_count == 1 else "countries"
+                print(f'DXC: Have {dxc_count} {country_word}. DXCx{next_level} requires {next_target} ({remaining} more)')
             else:
                 remaining = next_target - dxc_count
+                country_word = "country" if dxc_count == 1 else "countries"
                 if remaining == 0:
                     # Exactly at a level
-                    print(f'DXC: Have {dxc_count} which qualifies for DXCx{current_level}.')
+                    print(f'DXC: Have {dxc_count} {country_word} which qualifies for DXCx{current_level}.')
                 else:
-                    print(f'DXC: Have {dxc_count} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target} ({remaining} more)')
+                    print(f'DXC: Have {dxc_count} {country_word} which qualifies for DXCx{current_level}. DXCx{next_level} requires {next_target} ({remaining} more)')
 
         # DXQ: Unique member QSOs from foreign countries
         dxq_count = len(cls.ContactsForDXQ)
@@ -1997,14 +1999,16 @@ class cQSO:
             if current_level == 0:
                 # Working toward initial DXQ
                 remaining = next_target - dxq_count
-                print(f'DXQ: Have {dxq_count}. DXQx{next_level} requires {next_target} ({remaining} more)')
+                qso_word = "foreign member QSO" if dxq_count == 1 else "foreign member QSOs"
+                print(f'DXQ: Have {dxq_count} {qso_word}. DXQx{next_level} requires {next_target} ({remaining} more)')
             else:
                 remaining = next_target - dxq_count
+                qso_word = "foreign member QSO" if dxq_count == 1 else "foreign member QSOs"
                 if remaining == 0:
                     # Exactly at a level
-                    print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}.')
+                    print(f'DXQ: Have {dxq_count} {qso_word} which qualifies for DXQx{current_level}.')
                 else:
-                    print(f'DXQ: Have {dxq_count} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target} ({remaining} more)')
+                    print(f'DXQ: Have {dxq_count} {qso_word} which qualifies for DXQx{current_level}. DXQx{next_level} requires {next_target} ({remaining} more)')
 
     @classmethod
     def print_rc_award_progress(cls) -> None:
@@ -2021,10 +2025,14 @@ class cQSO:
             next_level = current_level + 1
             next_required = next_level * 300
             remaining = next_required - total_minutes
-            print(f'RC: Have {qso_count} QSOs ({total_minutes:,} mins) which qualifies for RCx{current_level}. RCx{next_level} requires {next_required:,} mins ({remaining:,} more)')
+            qso_plural = "QSO" if qso_count == 1 else "QSOs"
+            min_plural = "min" if total_minutes == 1 else "mins"
+            print(f'RC: Have {qso_count} {qso_plural} ({total_minutes:,} {min_plural}) which qualifies for RCx{current_level}. RCx{next_level} requires {next_required:,} mins ({remaining:,} more)')
         else:
+            qso_plural = "QSO" if qso_count == 1 else "QSOs"
+            min_plural = "min" if total_minutes == 1 else "mins"
             remaining = 300 - total_minutes
-            print(f'RC: Have {qso_count} QSOs ({total_minutes:,} mins). RC requires 300 mins ({remaining:,} more)')
+            print(f'RC: Have {qso_count} {qso_plural} ({total_minutes:,} {min_plural}). RC requires 300 mins ({remaining:,} more)')
 
     @classmethod
     def print_tka_award_progress(cls) -> None:
@@ -2129,9 +2137,13 @@ class cQSO:
             next_target = next_level * 300
             remaining_next = next_target - points_all
             if current_level > 0:
-                print(f'QRP 1x: Have {count_all} contacts, {points_all:.1f} points which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
+                contact_plural = "contact" if count_all == 1 else "contacts"
+                point_plural = "point" if points_all == 1.0 else "points"
+                print(f'QRP 1x: Have {count_all} {contact_plural}, {points_all:.1f} {point_plural} which qualifies for 1xQRP x{current_level}. 1xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
             else:
-                print(f'QRP 1x: Have {count_all} contacts, {points_all:.1f} points. 1xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
+                contact_plural = "contact" if count_all == 1 else "contacts"
+                point_plural = "point" if points_all == 1.0 else "points"
+                print(f'QRP 1x: Have {count_all} {contact_plural}, {points_all:.1f} {point_plural}. 1xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
 
         # For 2xQRP: Show only 2xQRP contacts
         if count_2x_only > 0:
@@ -2140,9 +2152,13 @@ class cQSO:
             next_target = next_level * 150
             remaining_next = next_target - points_2x_only
             if current_level > 0:
-                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.1f} points which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
+                contact_plural = "contact" if count_2x_only == 1 else "contacts"
+                point_plural = "point" if points_2x_only == 1.0 else "points"
+                print(f'QRP 2x: Have {count_2x_only} {contact_plural}, {points_2x_only:.1f} {point_plural} which qualifies for 2xQRP x{current_level}. 2xQRP x{next_level} requires {next_target:.1f} points ({remaining_next:.1f} more)')
             else:
-                print(f'QRP 2x: Have {count_2x_only} contacts, {points_2x_only:.1f} points. 2xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
+                contact_plural = "contact" if count_2x_only == 1 else "contacts"
+                point_plural = "point" if points_2x_only == 1.0 else "points"
+                print(f'QRP 2x: Have {count_2x_only} {contact_plural}, {points_2x_only:.1f} {point_plural}. 2xQRP x1 requires {next_target:.1f} points ({remaining_next:.1f} more)')
 
         # If we have no qualifying contacts, show what's needed
         if count_all == 0:
@@ -2634,10 +2650,15 @@ class cQSO:
 
         # Print processing summary with WARNING if QSOs were skipped
         if qsos_skipped > 0:
-            print(f"\nWARNING: {qsos_skipped:,} QSOs were skipped (non-CW, pre-membership, non-SKCC, etc.)")
-            print(f"Processed {qsos_processed:,} QSOs: {qsos_added:,} added, {qsos_skipped:,} skipped")
-        else:
-            print(f"\nProcessed {qsos_processed:,} QSOs: {qsos_added:,} added")
+            qso_word = "QSO was" if qsos_skipped == 1 else "QSOs were"
+            skipped_file = cFilePathBuilder.skipped_file_path(cConfig.MY_CALLSIGN)
+            print(f"\nWARNING: {qsos_skipped:,} {qso_word} skipped (non-CW, pre-membership, non-SKCC, etc.)")
+            print(f"         See {skipped_file} for details")
+
+        # Show processing summary
+        qso_plural = "QSO" if qsos_processed == 1 else "QSOs"
+        qualify_word = "qualifies" if qsos_added == 1 else "qualify"
+        print(f"\nProcessed {qsos_processed:,} {qso_plural}: {qsos_added:,} {qualify_word} for awards")
 
         # Update class contact collections with results
         cls.ContactsForC = contacts['C']
@@ -4901,7 +4922,9 @@ async def main_loop() -> None:
     formatted_nearby_list_with_distance = [f'{Spotter}({cUtil.format_distance(Miles)})' for Spotter, Miles in nearby_list_with_distance]
     cConfig.SPOTTERS_NEARBY = {Spotter for Spotter, _ in nearby_list_with_distance}
 
-    print(f'  Found {len(formatted_nearby_list_with_distance)} nearby spotters:')
+    spotter_count = len(formatted_nearby_list_with_distance)
+    spotter_word = "spotter" if spotter_count == 1 else "spotters"
+    print(f'  Found {spotter_count} nearby {spotter_word}:')
 
     wrapped_spotter_lines = textwrap.wrap(', '.join(formatted_nearby_list_with_distance), width=80)
 
