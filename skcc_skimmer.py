@@ -2564,10 +2564,25 @@ class cQSO:
         """Process QSOs using Xojo-based award logic for 100% parity."""
         try:
             # Use cAwards processor for 100% Xojo parity
-            contacts = cAwards.process_with_xojo_logic(cls.QSOs, cSKCC.members, cConfig.MY_CALLSIGN)
+            result = cAwards.process_with_xojo_logic(cls.QSOs, cSKCC.members, cConfig.MY_CALLSIGN)
         except Exception:
             traceback.print_exc()
             return  # Fall back to legacy processing
+
+        # Extract contacts and stats
+        contacts = result['contacts']
+        stats = result['stats']
+        qsos_processed = stats.get('qsos_processed', 0)
+        qsos_added = stats.get('qsos_added', 0)
+        qsos_skipped = stats.get('qsos_skipped', 0)
+        skipped_list = stats.get('skipped_list', [])
+
+        # Print processing summary with WARNING if QSOs were skipped
+        if qsos_skipped > 0:
+            print(f"\nWARNING: {qsos_skipped:,} QSOs were skipped (non-CW, pre-membership, non-SKCC, etc.)")
+            print(f"Processed {qsos_processed:,} QSOs: {qsos_added:,} added, {qsos_skipped:,} skipped")
+        else:
+            print(f"\nProcessed {qsos_processed:,} QSOs: {qsos_added:,} added")
 
         # Update class contact collections with results
         cls.ContactsForC = contacts['C']
@@ -2602,6 +2617,10 @@ class cQSO:
         if not await aiofiles.os.path.exists(QSOs_Dir):
             await aiofiles.os.makedirs(QSOs_Dir, exist_ok=True)
 
+        # Write skipped QSOs file if any were skipped
+        if skipped_list:
+            await cls.write_skipped_qsos_async(skipped_list)
+
         # Award files
         await cls.award_cts_async('C', cls.ContactsForC)
         await cls.award_cts_async('T', cls.ContactsForT)
@@ -2630,6 +2649,21 @@ class cQSO:
 
         # Process current month as well
         cQSO.get_brag_qsos(PrevMonth=0, should_print=False)
+
+    @classmethod
+    async def write_skipped_qsos_async(cls, skipped_list: list[str]) -> None:
+        """Write skipped QSOs to a callsign-specific file in SKCCLogger format."""
+        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-Skipped_QSOs.txt', 'w', encoding='utf-8') as file:
+            await file.write(f"Skipped QSO Log Entries for {cConfig.MY_CALLSIGN}\n")
+            await file.write("=" * 70 + "\n\n")
+            await file.write("In addition to any non-CW QSOs or QSOs logged before you were a SKCC member,\n")
+            await file.write("the following QSOs were not valid:\n\n")
+
+            for skipped_qso in skipped_list:
+                await file.write(skipped_qso + "\n")
+
+            await file.write(f"\nTotal skipped: {len(skipped_list):,}\n")
+            await file.write("\nEnd of List\n")
 
     @classmethod
     async def award_dx_async(cls) -> None:
@@ -3329,7 +3363,12 @@ class cAwards:
             # Skip QSOs where GetSKCCFromCall returns empty or "NONE" (no valid member match)
             # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
             if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
-                self.qsos_skipped.append(f"No valid SKCC match for {log_call}")
+                # Format skipped QSO in standard format
+                qso_info = f"{qso.log_qso_date[:4]}-{qso.log_qso_date[4:6]}-{qso.log_qso_date[6:8]}"
+                time_info = f"{qso.log_time_on[:2]}:{qso.log_time_on[2:4]}:{qso.log_time_on[4:6]}Z" if len(qso.log_time_on) >= 6 else "00:00:00Z"
+                skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
+                skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
+                self.qsos_skipped.append(skipped_qso)
                 continue
 
             # Check if we should process this QSO (QRP filter)
@@ -3364,13 +3403,9 @@ class cAwards:
                     self.qsos_added += 1
                     qso_added_to_db = True
 
-                    if mbr_skcc_nr in ["6586", "7322", "14962", "967"]:
-                        pass
                 else:
                     # QSO rejected: either before member join date or self-QSO
                     qso_added_to_db = False
-                    if mbr_skcc_nr in ["6586", "7322", "14962", "967"]:
-                        print(f"  REJECTED: Member {mbr_skcc_nr} QSO {qso_date} - Date check: {qso_date} >= {mbr_join_date}? Self-QSO: {mbr.mbr_skcc_nr} == {self.ap_my_skcc_nr}?")
             else:
                 # QSO rejected: non-SKCC member, QRP filter, or SKCC="NONE"
                 qso_added_to_db = False
@@ -3631,47 +3666,7 @@ class cAwards:
             # Use the callsign as key if no SKCC number
             key = member.mbr_skcc_nr if member.mbr_skcc_nr else f"CALL_{callsign}"
             member_db[key] = member
-        # Special handling for member 967 (K8HU) - ensure it's in member_db
-        # This is needed because K8HU is both the current call for 967 and an old call for 13339
-        # When cSKCC builds the members dict, 13339 overwrites 967's K8HU entry
-        if "967" not in member_db:
-            # Create member 967 entry manually
-            member_967 = cls.Member(
-                mbr_skcc_nr="967",
-                mbr_skcc="967",
-                mbr_call="K8HU",
-                mbr_pri_call="K8HU",
-                mbr_name="Chuck",
-                mbr_spc="VA",
-                mbr_dxc="291",
-                mbr_join_date="20060126000000",
-                mbr_cent_date="",
-                mbr_trib_date="",
-                mbr_tx8_date="",
-                mbr_sen_date=""
-            )
-            member_db["967"] = member_967
 
-        # Special handling for member 12180 (VE7PJJ) - ensure it's in member_db
-        # VE7PJJ is current call for 12180 but also old call for 26956 (IA)
-        # When cSKCC builds members dict, 26956's old call overwrites 12180's current call
-        if "12180" not in member_db:
-            # Create member 12180 entry manually from known data
-            member_12180 = cls.Member(
-                mbr_skcc_nr="12180",
-                mbr_skcc="12180T",
-                mbr_call="VE7PJJ",
-                mbr_pri_call="VE7PJJ",
-                mbr_name="Dick",
-                mbr_spc="BC",
-                mbr_dxc="1",
-                mbr_join_date="20140415000000",  # 15 Apr 2014
-                mbr_cent_date="20190212000000",   # 12 Feb 2019
-                mbr_trib_date="20241125000000",   # 25 Nov 2024
-                mbr_tx8_date="",
-                mbr_sen_date=""
-            )
-            member_db["12180"] = member_12180
 
         # Get user's member record
         if my_callsign not in member_data:
@@ -3683,9 +3678,6 @@ class cAwards:
         my_member = member_db.get(plain_number)
         if not my_member:
             raise ValueError(f"Could not find member record for {my_callsign}")
-
-        # Create processor
-        processor = cls(member_db, my_member, member_data)
 
         # Convert QSO tuples to QSO objects
         qsos: list[cAwards.QSO] = []
@@ -3741,30 +3733,35 @@ class cAwards:
         # Second pass: Process in ADI file order for WAS/P (use fresh processor)
         processor_adi = cAwards(member_db, my_member, member_data)
         processed_qsos_adi_order = processor_adi.process_qsos(qsos)
-        # Convert to cQSO format
-        contacts: dict[str, Any] = {
-            'C': {},
-            'T': {},
-            'S': {},
-            'WAS': {},
-            'WAS_C': {},
-            'WAS_T': {},
-            'WAS_S': {},
-            'P': {},
-            'DXC': {},
-            'DXQ': {},
-            'QRP': {},
-            'TKA_SK': {},
-            'TKA_BUG': {},
-            'TKA_SS': {},
-            'BRAG': {},
-            'RC': {},
-            '_stats': {
-                'qsos_processed': processor.qsos_processed,
-                'qsos_added': processor.qsos_added,
-                'qsos_skipped': len(processor.qsos_skipped)
+        # Convert to cQSO format with stats
+        result = {
+            'contacts': {
+                'C': {},
+                'T': {},
+                'S': {},
+                'WAS': {},
+                'WAS_C': {},
+                'WAS_T': {},
+                'WAS_S': {},
+                'P': {},
+                'DXC': {},
+                'DXQ': {},
+                'QRP': {},
+                'TKA_SK': {},
+                'TKA_BUG': {},
+                'TKA_SS': {},
+                'BRAG': {},
+                'RC': {}
+            },
+            'stats': {
+                'qsos_processed': processor_adi.qsos_processed,
+                'qsos_added': processor_adi.qsos_added,
+                'qsos_skipped': len(processor_adi.qsos_skipped),
+                'skipped_list': processor_adi.qsos_skipped
             }
         }
+        
+        contacts = result['contacts']
 
         # Process C/T/S awards using chronologically sorted QSOs (oldest first)
         # Also collect DX awards here since they also benefit from chronological order
@@ -3979,7 +3976,7 @@ class cAwards:
                 # BRAG is something different - keeping for compatibility
                 contacts['BRAG'][member_num] = (date, member_num, callsign, float(ragchew_mins))
 
-        return contacts
+        return result
 
 
 class cSpotters:
