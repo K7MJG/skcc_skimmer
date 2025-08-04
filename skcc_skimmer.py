@@ -78,6 +78,7 @@ from typing import (
 
 import aiofiles
 import aiofiles.os
+import aiofiles.threadpool.text
 import aiohttp
 from aiohttp import ClientTimeout
 
@@ -689,6 +690,60 @@ class cConfig:
                         result.remove(negated_item)
 
                 return result
+
+class cDateTimeFormatter:
+    """Utility class for consistent date and time formatting throughout the application."""
+
+    @staticmethod
+    def format_date(date_str: str) -> str:
+        """Format YYYYMMDD to YYYY-MM-DD."""
+        if len(date_str) < 8:
+            return date_str
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+
+    @staticmethod
+    def format_time(time_str: str) -> str:
+        """Format HHMMSS to HH:MM:SSZ."""
+        if len(time_str) < 6:
+            return "00:00:00Z"
+        return f"{time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}Z"
+
+    @staticmethod
+    def format_date_time(date_str: str, time_str: str) -> tuple[str, str]:
+        """Format both date and time strings."""
+        return cDateTimeFormatter.format_date(date_str), cDateTimeFormatter.format_time(time_str)
+
+
+class cFilePathBuilder:
+    """Utility class for building consistent file paths for QSO files."""
+
+    @staticmethod
+    def qso_file_path(callsign: str, award_type: str) -> str:
+        """Build the standard QSO file path for an award type."""
+        return f'QSOs/{callsign}-{award_type}.txt'
+
+    @staticmethod
+    def skipped_file_path(callsign: str) -> str:
+        """Build the path for skipped QSOs file."""
+        return f'QSOs/{callsign}-Skipped_QSOs.txt'
+
+
+class cAwardFileWriter:
+    """Helper class for writing award files with consistent formatting."""
+
+    @staticmethod
+    async def write_header(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, width: int = 50) -> None:
+        """Write a standard award file header."""
+        await file.write(f"{award_name} Award Progress for {callsign}\n")
+        await file.write("=" * width + "\n")
+
+    @staticmethod
+    async def write_header_with_subtitle(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, subtitle: str, width: int = 70) -> None:
+        """Write award file header with a subtitle."""
+        await file.write(f"{award_name} Award Progress for {callsign}\n")
+        await file.write(subtitle + "\n")
+        await file.write("=" * width + "\n")
+
 
 class cFastDateTime:
     FastDateTime: str
@@ -2653,7 +2708,7 @@ class cQSO:
     @classmethod
     async def write_skipped_qsos_async(cls, skipped_list: list[str]) -> None:
         """Write skipped QSOs to a callsign-specific file in SKCCLogger format."""
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-Skipped_QSOs.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cFilePathBuilder.skipped_file_path(cConfig.MY_CALLSIGN), 'w', encoding='utf-8') as file:
             await file.write(f"Skipped QSO Log Entries for {cConfig.MY_CALLSIGN}\n")
             await file.write("=" * 70 + "\n\n")
             await file.write("In addition to any non-CW QSOs or QSOs logged before you were a SKCC member,\n")
@@ -2670,14 +2725,14 @@ class cQSO:
         """Write DXC and DXQ award files."""
         # Write DXC file (unique countries)
         if cls.ContactsForDXC:
-            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXC.txt', 'w', encoding='utf-8') as file:
-                await file.write(f"DXC Award Progress for {cConfig.MY_CALLSIGN}\n")
-                await file.write("=" * 50 + "\n\n")
+            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'DXC'), 'w', encoding='utf-8') as file:
+                await cAwardFileWriter.write_header(file, "DXC", cConfig.MY_CALLSIGN)
+                await file.write("\n")
                 await file.write("DXCC  Date        CallSign     Member#\n")
                 await file.write("-" * 40 + "\n")
 
                 for dxcc_code, (qso_date, member_number, callsign) in sorted(cls.ContactsForDXC.items()):
-                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    date_str = cDateTimeFormatter.format_date(qso_date)
                     await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
 
                 await file.write(f"\nTotal Countries: {len(cls.ContactsForDXC)} (Need: 100)\n")
@@ -2685,14 +2740,13 @@ class cQSO:
 
         # Write DXQ file (foreign member QSOs)
         if cls.ContactsForDXQ:
-            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-DXQ.txt', 'w', encoding='utf-8') as file:
-                await file.write(f"DXQ Award Progress for {cConfig.MY_CALLSIGN}\n")
-                await file.write("=" * 50 + "\n\n")
+            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'DXQ'), 'w', encoding='utf-8') as file:
+                await cAwardFileWriter.write_header(file, "DXQ", cConfig.MY_CALLSIGN)
                 await file.write("Date        CallSign     Member#\n")
                 await file.write("-" * 35 + "\n")
 
                 for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]):
-                    date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                    date_str = cDateTimeFormatter.format_date(qso_date)
                     await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
 
                 await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
@@ -2706,15 +2760,14 @@ class cQSO:
         if not (cls.ContactsForTKA_SK or cls.ContactsForTKA_BUG or cls.ContactsForTKA_SS):
             return
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-TKA.txt', 'w', encoding='utf-8') as file:
-            await file.write(f"TKA Award Progress for {cConfig.MY_CALLSIGN}\n")
-            await file.write("Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members\n")
-            await file.write("=" * 70 + "\n\n")
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'TKA'), 'w', encoding='utf-8') as file:
+            await cAwardFileWriter.write_header_with_subtitle(file, "TKA", cConfig.MY_CALLSIGN, 
+                                                              "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members", 70)
 
             # Write BUG contacts first with running count
             bug_contacts = sorted(cls.ContactsForTKA_BUG.items(), key=lambda x: x[1][0])
             for idx, (member_number, (qso_date, _, callsign)) in enumerate(bug_contacts, 1):
-                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                date_str = cDateTimeFormatter.format_date(qso_date)
                 await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} BUG\n")
 
             # Blank line between sections
@@ -2723,7 +2776,7 @@ class cQSO:
             # Write SK contacts with running count
             sk_contacts = sorted(cls.ContactsForTKA_SK.items(), key=lambda x: x[1][0])
             for idx, (member_number, (qso_date, _, callsign)) in enumerate(sk_contacts, 1):
-                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                date_str = cDateTimeFormatter.format_date(qso_date)
                 await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SK\n")
 
             # Blank line between sections
@@ -2732,7 +2785,7 @@ class cQSO:
             # Write SS contacts with running count
             ss_contacts = sorted(cls.ContactsForTKA_SS.items(), key=lambda x: x[1][0])
             for idx, (member_number, (qso_date, _, callsign)) in enumerate(ss_contacts, 1):
-                date_str = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
+                date_str = cDateTimeFormatter.format_date(qso_date)
                 await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SS\n")
 
             await file.write("\n")
@@ -2756,9 +2809,9 @@ class cQSO:
         # Calculate total minutes
         total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-RC.txt', 'w', encoding='utf-8') as file:
-            await file.write(f"Rag Chew Award Progress for {cConfig.MY_CALLSIGN}\n")
-            await file.write("=" * 60 + "\n\n")
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'RC'), 'w', encoding='utf-8') as file:
+            await cAwardFileWriter.write_header(file, "Rag Chew", cConfig.MY_CALLSIGN, 60)
+            await file.write("\n")
             await file.write(f"Total QSOs: {len(cls.ContactsForRC)}\n")
             await file.write(f"Total Minutes: {total_minutes:,}\n")
             await file.write(f"Award Level: {'RC' if total_minutes >= 300 else 'Not yet qualified'}")
@@ -2775,7 +2828,7 @@ class cQSO:
                 cls.ContactsForRC.items(),
                 key=lambda x: x[1][0]  # Sort by date
             ):
-                date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+                date_str = cDateTimeFormatter.format_date(date)
                 band_str = band.replace('M', '') if band else ''
                 await file.write(
                     f"{date_str}  {callsign:<12} {member_num:<8} {name[:12]:<12} {band_str:>3}  {minutes:>4}\n"
@@ -2825,9 +2878,8 @@ class cQSO:
         qrp_1x_generator = all_qrp_contacts_generator()
         qrp_1x_first = next(qrp_1x_generator, None)
         if qrp_1x_first is not None:
-            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-1x.txt', 'w', encoding='utf-8') as file:
-                await file.write(f"1xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
-                await file.write("=" * 50 + "\n\n")
+            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-1x'), 'w', encoding='utf-8') as file:
+                await cAwardFileWriter.write_header(file, "1xQRP", cConfig.MY_CALLSIGN)
 
                 total_points: float = 0.0
                 index = 1
@@ -2851,9 +2903,8 @@ class cQSO:
         qrp_2x_generator = qrp_2x_contacts_generator()
         qrp_2x_first = next(qrp_2x_generator, None)
         if qrp_2x_first is not None:
-            async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-QRP-2x.txt', 'w', encoding='utf-8') as file:
-                await file.write(f"2xQRP Award Progress for {cConfig.MY_CALLSIGN}\n")
-                await file.write("=" * 50 + "\n\n")
+            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-2x'), 'w', encoding='utf-8') as file:
+                await cAwardFileWriter.write_header(file, "2xQRP", cConfig.MY_CALLSIGN)
 
                 total_points: float = 0.0
                 index = 1
@@ -2877,7 +2928,7 @@ class cQSO:
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str, str, str]]) -> None:
         """Async version of award_p to write files using aiofiles"""
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-P.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
             iPoints = 0
             for index, (qso_date, prefix, member_number, first_name, callsign, band) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
@@ -2897,9 +2948,9 @@ class cQSO:
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as File:
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as File:
             for Count, (QsoDate, TheirMemberNumber, MainCallSign, MemberName, State, Band) in enumerate(QSOs):
-                Date = f'{QsoDate[0:4]}-{QsoDate[4:6]}-{QsoDate[6:8]}'
+                Date = cDateTimeFormatter.format_date(QsoDate)
                 # Format to match gold standard: line_num date callsign member_num name state band
                 # Truncate name to 12 chars and ensure proper alignment
                 name_display = MemberName[:12] if MemberName else ''
@@ -2913,7 +2964,7 @@ class cQSO:
 
         QSOsByState = {data[0]: data for data in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-{Class}.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as file:
             # Sort states alphabetically for consistent output
             for state in sorted(US_STATES):
                 if state in QSOsByState:
@@ -2923,7 +2974,7 @@ class cQSO:
                     name_display = name[:12] if name else ''
                     # Band already includes 'M' from ADI file
                     band_str = band if band else ''
-                    date_str = f"{date[:4]}-{date[4:6]}-{date[6:8]}"
+                    date_str = cDateTimeFormatter.format_date(date)
                     await file.write(f"{spc:<8} {callsign:<12} {skcc_number:<9} {name_display:<13} {date_str:<16} {band_str}\n")
                 else:
                     await file.write(f"{state}\n")
@@ -2932,7 +2983,7 @@ class cQSO:
     async def track_brag_async(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
         """Async version of track_brag to write files using aiofiles"""
 
-        async with aiofiles.open(f'QSOs/{cConfig.MY_CALLSIGN}-BRAG.txt', 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'BRAG'), 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
                 sorted(QSOs.values()), start=1
             ):
@@ -3364,8 +3415,8 @@ class cAwards:
             # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
             if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
                 # Format skipped QSO in standard format
-                qso_info = f"{qso.log_qso_date[:4]}-{qso.log_qso_date[4:6]}-{qso.log_qso_date[6:8]}"
-                time_info = f"{qso.log_time_on[:2]}:{qso.log_time_on[2:4]}:{qso.log_time_on[4:6]}Z" if len(qso.log_time_on) >= 6 else "00:00:00Z"
+                qso_info = cDateTimeFormatter.format_date(qso.log_qso_date)
+                time_info = cDateTimeFormatter.format_time(qso.log_time_on)
                 skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
                 skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
                 self.qsos_skipped.append(skipped_qso)
@@ -3412,8 +3463,8 @@ class cAwards:
 
             # Track skipped QSOs
             if not qso_added_to_db:
-                qso_info = f"{qso.log_qso_date[:4]}-{qso.log_qso_date[4:6]}-{qso.log_qso_date[6:8]}"
-                time_info = f"{qso.log_time_on[:2]}:{qso.log_time_on[2:4]}:{qso.log_time_on[4:6]}Z" if len(qso.log_time_on) >= 6 else "::Z"
+                qso_info = cDateTimeFormatter.format_date(qso.log_qso_date)
+                time_info = cDateTimeFormatter.format_time(qso.log_time_on) if qso.log_time_on else "00:00:00Z"
                 skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
                 skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
                 self.qsos_skipped.append(skipped_qso)
@@ -3734,7 +3785,7 @@ class cAwards:
         processor_adi = cAwards(member_db, my_member, member_data)
         processed_qsos_adi_order = processor_adi.process_qsos(qsos)
         # Convert to cQSO format with stats
-        result = {
+        result: dict[str, Any] = {
             'contacts': {
                 'C': {},
                 'T': {},
@@ -3760,7 +3811,7 @@ class cAwards:
                 'skipped_list': processor_adi.qsos_skipped
             }
         }
-        
+
         contacts = result['contacts']
 
         # Process C/T/S awards using chronologically sorted QSOs (oldest first)
