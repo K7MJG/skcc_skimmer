@@ -714,6 +714,83 @@ class cDateTimeFormatter:
         return cDateTimeFormatter.format_date(date_str), cDateTimeFormatter.format_time(time_str)
 
 
+class cAwardProgression:
+    """Utility class for calculating award progression levels.
+
+    Many SKCC awards follow the pattern: increment by 1 for levels 1-10,
+    then by 5 for levels beyond 10 (15, 20, 25, etc.)
+    """
+
+    @staticmethod
+    def calculate_level(value: int, base_unit: int, threshold_for_5s: int = 10) -> int:
+        """Calculate the award level based on value and base unit.
+
+        Args:
+            value: The current value (e.g., QSO count, minutes, points)
+            base_unit: The base unit for each level (e.g., 100 for C, 50 for T, 300 for RC)
+            threshold_for_5s: The level at which progression changes to 5s (default 10)
+
+        Returns:
+            The calculated award level
+        """
+        if value < base_unit:
+            return 0  # Not qualified yet
+
+        # Calculate raw level
+        raw_level = value // base_unit
+
+        if raw_level <= threshold_for_5s:
+            return raw_level
+
+        # Beyond threshold, levels increment by 5
+        # Calculate how many base units past the threshold
+        units_past_threshold = value - (threshold_for_5s * base_unit)
+
+        # Each 5 levels worth of base units = one increment
+        increments = units_past_threshold // (5 * base_unit)
+
+        # If exactly at a 5-level boundary, use that level
+        if units_past_threshold % (5 * base_unit) == 0 and units_past_threshold > 0:
+            return threshold_for_5s + (increments * 5)
+
+        # Otherwise, we're at the previous 5-level
+        return threshold_for_5s + (increments * 5) if increments > 0 else threshold_for_5s
+
+    @staticmethod
+    def get_next_level_and_requirement(value: int, base_unit: int, threshold_for_5s: int = 10,
+                                     units_after_threshold: int | None = None) -> tuple[int, int, int]:
+        """Get current level, next level, and requirement for next level.
+
+        Args:
+            value: The current value
+            base_unit: The base unit for each level
+            threshold_for_5s: The level at which progression changes to 5s (default 10)
+            units_after_threshold: Override for units needed per level after threshold
+                                 (default is 5 * base_unit)
+
+        Returns:
+            Tuple of (current_level, next_level, value_required_for_next)
+        """
+        current = cAwardProgression.calculate_level(value, base_unit, threshold_for_5s)
+
+        if current < threshold_for_5s:
+            next_level = current + 1
+            next_required = next_level * base_unit
+        else:
+            # At or beyond threshold, next level is +5
+            next_level = ((current // 5) + 1) * 5
+            # Use custom units after threshold if provided
+            if units_after_threshold is not None:
+                # Calculate requirement based on custom unit size
+                levels_past_threshold = next_level - threshold_for_5s
+                increments_of_5 = levels_past_threshold // 5
+                next_required = threshold_for_5s * base_unit + (increments_of_5 * units_after_threshold)
+            else:
+                next_required = next_level * base_unit
+
+        return current, next_level, next_required
+
+
 class cFilePathBuilder:
     """Utility class for building consistent file paths for QSO files."""
 
@@ -1418,34 +1495,13 @@ class cQSO:
         """
         match Class:
             case 'C':
-                if Total < 100:
-                    return 0  # No award yet
-                elif Total < 1000:
-                    return Total // 100
-                elif Total < 1500:
-                    return 10  # Cx10
-                else:
-                    # Cx15, Cx20, Cx25, etc.
-                    increments_past_1500 = (Total - 1500) // 500
-                    return 15 + (increments_past_1500 * 5)
+                return cAwardProgression.calculate_level(Total, 100)
 
             case 'T':
                 # Tribune: Must be Centurion first, then 50 contacts with C/T/S for Tx1
-                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
                 if not cls.MyC_Date:
                     return 0  # Must be Centurion first
-                if Total < 50:
-                    return 0  # No Tribune award yet
-                elif Total < 500:
-                    return Total // 50  # Tx1 through Tx10
-                elif Total < 750:
-                    return 10  # Between Tx10 and Tx15
-                elif Total < 1000:
-                    return 15  # Tx15
-                else:
-                    # Tx20 and beyond (250-contact increments)
-                    increments_past_1000 = (Total - 1000) // 250
-                    return 20 + (increments_past_1000 * 5)
+                return cAwardProgression.calculate_level(Total, 50)
 
             case 'S':
                 # Senator: Must have Tribune x8 (400 Tribune contacts) first, then 200 contacts with T/S for Sx1
@@ -1649,17 +1705,7 @@ class cQSO:
             )
 
             if total_rc_minutes >= 300:
-                # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
-                if total_rc_minutes < 3000:  # Below RCx10
-                    RC_Level = total_rc_minutes // 300
-                else:  # RCx10 and above
-                    minutes_past_3000 = total_rc_minutes - 3000
-                    if minutes_past_3000 < 1500:  # Between x10 and x15
-                        RC_Level = 10
-                    else:
-                        # For x15 and above, each level is 1500 minutes (5 * 300)
-                        increments_past_x10 = minutes_past_3000 // 1500
-                        RC_Level = 10 + (increments_past_x10 + 1) * 5
+                RC_Level = cAwardProgression.calculate_level(total_rc_minutes, 300)
 
                 if cls.MyMemberNumber in cSKCC.rc_level:
                     Award_RC_Level = cSKCC.rc_level[cls.MyMemberNumber]
@@ -1681,67 +1727,24 @@ class cQSO:
 
         match Class:
             case 'C':
-                # Centurion: 100, 200, 300... up to 1000 (Cx10)
-                # Then Cx15 (1500), Cx20 (2000), Cx25 (2500), etc. in increments of 500
-                if Total < 1000:  # Cx1 through Cx10
-                    since_last = Total % base_increment
-                    remaining = base_increment - since_last
-                    x_factor = (Total + base_increment) // base_increment
-                else:  # Cx15, Cx20, Cx25, etc.
-                    # After 1000: Cx15=1500, Cx20=2000, Cx25=2500, Cx30=3000, Cx35=3500, Cx40=4000...
-                    # Pattern: Cx(10+5n) = 1000 + 500n where n >= 1
-
-                    # Calculate current level
-                    if Total >= 1500:
-                        # How many 500-increments past 1500?
-                        increments_past_1500 = (Total - 1500) // 500
-                        current_x_factor = 15 + (increments_past_1500 * 5)
-
-                        # Next level
-                        next_x_factor = current_x_factor + 5
-                        next_target = 1000 + ((next_x_factor - 10) // 5) * 500
-                    else:
-                        # Between 1000 and 1500, working toward Cx15
-                        next_x_factor = 15
-                        next_target = 1500
-
-                    remaining = next_target - Total
-                    x_factor = next_x_factor
+                # Centurion uses increments of 500 after level 10
+                _, x_factor, next_target = cAwardProgression.get_next_level_and_requirement(
+                    Total, base_increment, threshold_for_5s=10, units_after_threshold=500
+                )
+                remaining = next_target - Total
 
             case 'T':
                 # Tribune: Must be Centurion first
-                # Tx1=50, Tx2=100, ..., Tx10=500, then Tx15=750, Tx20=1000, etc.
+                # Tribune uses increments of 250 after level 10
                 if not cQSO.MyC_Date:
                     # Must be Centurion first
                     remaining = 999999  # Large number to indicate not eligible
                     x_factor = 0
-                elif Total < 50:
-                    # Working toward Tx1
-                    remaining = 50 - Total
-                    x_factor = 1
-                elif Total < 500:
-                    # Tx1 through Tx10 (each level requires 50 contacts)
-                    current_level = Total // 50
-                    next_level = current_level + 1
-                    next_target = next_level * 50
-                    remaining = next_target - Total
-                    x_factor = next_level
-                elif Total < 750:
-                    # Between Tx10 and Tx15
-                    remaining = 750 - Total
-                    x_factor = 15
-                elif Total < 1000:
-                    # At Tx15, working toward Tx20
-                    remaining = 1000 - Total
-                    x_factor = 20
                 else:
-                    # Tx20 and beyond (250-contact increments)
-                    increments_past_1000 = (Total - 1000) // 250
-                    current_x_factor = 20 + (increments_past_1000 * 5)
-                    next_x_factor = current_x_factor + 5
-                    next_target = 1000 + ((next_x_factor - 20) // 5) * 250
+                    _, x_factor, next_target = cAwardProgression.get_next_level_and_requirement(
+                        Total, base_increment, threshold_for_5s=10, units_after_threshold=250
+                    )
                     remaining = next_target - Total
-                    x_factor = next_x_factor
 
             case 'S':
                 # Senator: Must have Tribune x8 (400 Tribune contacts) first
@@ -2032,24 +2035,7 @@ class cQSO:
         qso_count = len(cls.ContactsForRC)
 
         if total_minutes >= 300:
-            # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
-            if total_minutes < 3000:  # Below RCx10
-                current_level = total_minutes // 300
-                next_level = current_level + 1
-                next_required = next_level * 300
-            else:  # RCx10 and above - levels increment by 5
-                # Calculate which 5x increment we're in
-                minutes_past_3000 = total_minutes - 3000
-                if minutes_past_3000 < 1500:  # Between x10 and x15
-                    current_level = 10
-                    next_level = 15
-                    next_required = 4500  # 15 * 300
-                else:
-                    # For x15 and above, each level is 1500 minutes (5 * 300)
-                    increments_past_x10 = minutes_past_3000 // 1500
-                    current_level = 10 + (increments_past_x10 + 1) * 5
-                    next_level = current_level + 5
-                    next_required = next_level * 300
+            current_level, next_level, next_required = cAwardProgression.get_next_level_and_requirement(total_minutes, 300)
             remaining = next_required - total_minutes
             qso_plural = "QSO" if qso_count == 1 else "QSOs"
             min_plural = "min" if total_minutes == 1 else "mins"
@@ -2808,7 +2794,7 @@ class cQSO:
             return
 
         async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'TKA'), 'w', encoding='utf-8') as file:
-            await cAwardFileWriter.write_header_with_subtitle(file, "TKA", cConfig.MY_CALLSIGN, 
+            await cAwardFileWriter.write_header_with_subtitle(file, "TKA", cConfig.MY_CALLSIGN,
                                                               "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members", 70)
 
             # Write BUG contacts first with running count
@@ -2863,16 +2849,7 @@ class cQSO:
             await file.write(f"Total Minutes: {total_minutes:,}\n")
             await file.write(f"Award Level: {'RC' if total_minutes >= 300 else 'Not yet qualified'}")
             if total_minutes >= 300:
-                # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
-                if total_minutes < 3000:  # Below RCx10
-                    x_level = total_minutes // 300
-                else:  # RCx10 and above
-                    minutes_past_3000 = total_minutes - 3000
-                    if minutes_past_3000 < 1500:  # Between x10 and x15
-                        x_level = 10
-                    else:
-                        increments_past_x10 = minutes_past_3000 // 1500
-                        x_level = 10 + (increments_past_x10 + 1) * 5
+                x_level = cAwardProgression.calculate_level(total_minutes, 300)
                 await file.write(f" x{x_level}")
             await file.write("\n\n")
 
