@@ -1649,7 +1649,18 @@ class cQSO:
             )
 
             if total_rc_minutes >= 300:
-                RC_Level = total_rc_minutes // 300
+                # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
+                if total_rc_minutes < 3000:  # Below RCx10
+                    RC_Level = total_rc_minutes // 300
+                else:  # RCx10 and above
+                    minutes_past_3000 = total_rc_minutes - 3000
+                    if minutes_past_3000 < 1500:  # Between x10 and x15
+                        RC_Level = 10
+                    else:
+                        # For x15 and above, each level is 1500 minutes (5 * 300)
+                        increments_past_x10 = minutes_past_3000 // 1500
+                        RC_Level = 10 + (increments_past_x10 + 1) * 5
+
                 if cls.MyMemberNumber in cSKCC.rc_level:
                     Award_RC_Level = cSKCC.rc_level[cls.MyMemberNumber]
                     if RC_Level > Award_RC_Level:
@@ -2021,9 +2032,24 @@ class cQSO:
         qso_count = len(cls.ContactsForRC)
 
         if total_minutes >= 300:
-            current_level = total_minutes // 300
-            next_level = current_level + 1
-            next_required = next_level * 300
+            # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
+            if total_minutes < 3000:  # Below RCx10
+                current_level = total_minutes // 300
+                next_level = current_level + 1
+                next_required = next_level * 300
+            else:  # RCx10 and above - levels increment by 5
+                # Calculate which 5x increment we're in
+                minutes_past_3000 = total_minutes - 3000
+                if minutes_past_3000 < 1500:  # Between x10 and x15
+                    current_level = 10
+                    next_level = 15
+                    next_required = 4500  # 15 * 300
+                else:
+                    # For x15 and above, each level is 1500 minutes (5 * 300)
+                    increments_past_x10 = minutes_past_3000 // 1500
+                    current_level = 10 + (increments_past_x10 + 1) * 5
+                    next_level = current_level + 5
+                    next_required = next_level * 300
             remaining = next_required - total_minutes
             qso_plural = "QSO" if qso_count == 1 else "QSOs"
             min_plural = "min" if total_minutes == 1 else "mins"
@@ -2837,7 +2863,16 @@ class cQSO:
             await file.write(f"Total Minutes: {total_minutes:,}\n")
             await file.write(f"Award Level: {'RC' if total_minutes >= 300 else 'Not yet qualified'}")
             if total_minutes >= 300:
-                x_level = total_minutes // 300
+                # RC progression: 1-10 by 1s, then by 5s (15, 20, 25, etc.)
+                if total_minutes < 3000:  # Below RCx10
+                    x_level = total_minutes // 300
+                else:  # RCx10 and above
+                    minutes_past_3000 = total_minutes - 3000
+                    if minutes_past_3000 < 1500:  # Between x10 and x15
+                        x_level = 10
+                    else:
+                        increments_past_x10 = minutes_past_3000 // 1500
+                        x_level = 10 + (increments_past_x10 + 1) * 5
                 await file.write(f" x{x_level}")
             await file.write("\n\n")
 
