@@ -171,6 +171,24 @@ class cUtil:
         return Class
 
     @staticmethod
+    def format_skipped_qso(qso_date: str, time_on: str, callsign: str, band: str) -> str:
+        """Format a skipped QSO entry in standard format.
+
+        Args:
+            qso_date: Date in YYYYMMDD format
+            time_on: Time in HHMMSS format
+            callsign: The callsign
+            band: Band (e.g., "40m")
+
+        Returns:
+            Formatted string for skipped QSO file
+        """
+        date_info = cDateTimeFormatter.format_date(qso_date)
+        time_info = cDateTimeFormatter.format_time(time_on) if time_on else "00:00:00Z"
+        skipped_qso = f"Date: {date_info}     Time: {time_info}     Call: {callsign}"
+        return skipped_qso.ljust(64) + f"Band: {band}"
+
+    @staticmethod
     def delayed_exit(exit_code: int = 1) -> NoReturn:
         """Exit with a 10-second delay to allow Windows Explorer users to read error messages."""
         print()  # Blank line for spacing
@@ -242,17 +260,6 @@ class cUtil:
                 pass
             os._exit(0)
 
-    @staticmethod
-    def calculate_next_award_name(Class: str, current_x_factor: int) -> str:
-        next_x_factor = current_x_factor + 1
-
-        # Handle special cases for X_Factor progression
-        if current_x_factor == 10:
-            next_x_factor = 15
-        elif current_x_factor > 10 and current_x_factor % 5 == 0:
-            next_x_factor = current_x_factor + 5
-
-        return cUtil.abbreviate_class(Class, next_x_factor)
 
 class cConfig:
     @dataclass
@@ -708,10 +715,6 @@ class cDateTimeFormatter:
             return "00:00:00Z"
         return f"{time_str[:2]}:{time_str[2:4]}:{time_str[4:6]}Z"
 
-    @staticmethod
-    def format_date_time(date_str: str, time_str: str) -> tuple[str, str]:
-        """Format both date and time strings."""
-        return cDateTimeFormatter.format_date(date_str), cDateTimeFormatter.format_time(time_str)
 
 
 class cAwardProgression:
@@ -820,6 +823,22 @@ class cAwardFileWriter:
         await file.write(f"{award_name} Award Progress for {callsign}\n")
         await file.write(subtitle + "\n")
         await file.write("=" * width + "\n")
+
+    @staticmethod
+    async def write_tka_key_type_section(file: aiofiles.threadpool.text.AsyncTextIOWrapper,
+                                       contacts: dict[str, tuple[str, str, str]],
+                                       key_type: str) -> None:
+        """Write a section of TKA contacts for a specific key type.
+
+        Args:
+            file: The file handle to write to
+            contacts: Dictionary of contacts for this key type
+            key_type: The key type name (BUG, SK, SS)
+        """
+        sorted_contacts = sorted(contacts.items(), key=lambda x: x[1][0])
+        for idx, (member_number, (qso_date, _, callsign)) in enumerate(sorted_contacts, 1):
+            date_str = cDateTimeFormatter.format_date(qso_date)
+            await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} {key_type}\n")
 
 
 class cFastDateTime:
@@ -1303,6 +1322,36 @@ class cQSO:
         "10M": 3.0, "10m": 3.0, "6M": 0.5, "6m": 0.5, "2M": 0.5, "2m": 0.5
     }
 
+    @classmethod
+    def calculate_qrp_points(cls) -> tuple[float, float, int, int]:
+        """Calculate QRP points and counts for both 1x and 2x contacts.
+
+        Returns:
+            Tuple of (points_1x, points_2x, count_1x, count_2x)
+        """
+        points_1x = 0.0
+        points_2x = 0.0
+        count_1x = 0
+        count_2x = 0
+
+        for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
+            # Extract band from key format: "member_band" or "member_band_date"
+            key_parts = qso_key.split('_')
+            if len(key_parts) >= 2:
+                band = key_parts[1]
+                points = cls._QRP_BAND_POINTS_AWARDS.get(band, 0.0)
+
+                # All QRP contacts count toward 1xQRP
+                points_1x += points
+                count_1x += 1
+
+                # Only 2xQRP contacts count toward 2xQRP
+                if qrp_type == 2:
+                    points_2x += points
+                    count_2x += 1
+
+        return points_1x, points_2x, count_1x, count_2x
+
     ContactsForC:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
     ContactsForT:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
     ContactsForS:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
@@ -1332,101 +1381,9 @@ class cQSO:
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
-    @classmethod
-    def _frequency_to_band(cls, frequency_khz: float) -> str | None:
-        """Convert frequency in kHz to band name for QRP award calculations."""
-        if 1800 <= frequency_khz <= 2000:
-            return "160m"
-        elif 3500 <= frequency_khz <= 4000:
-            return "80m"
-        elif 5330.5 <= frequency_khz <= 5403.5:
-            return "60m"
-        elif 7000 <= frequency_khz <= 7300:
-            return "40m"
-        elif 10100 <= frequency_khz <= 10150:
-            return "30m"
-        elif 14000 <= frequency_khz <= 14350:
-            return "20m"
-        elif 18068 <= frequency_khz <= 18168:
-            return "17m"
-        elif 21000 <= frequency_khz <= 21450:
-            return "15m"
-        elif 24890 <= frequency_khz <= 24990:
-            return "12m"
-        elif 28000 <= frequency_khz <= 29700:
-            return "10m"
-        elif 50000 <= frequency_khz <= 50100:
-            return "6m"
-        elif 144000 <= frequency_khz <= 148000:
-            return "2m"
-        else:
-            return None
 
 
-    @classmethod
-    def _normalize_band(cls, raw_band: str | None) -> str:
-        """Normalize band string to simple format (e.g., '20m' -> '20', 'NS8' -> '')
 
-        Returns empty string for invalid bands.
-        """
-        if not raw_band:
-            return ''
-
-        # Valid amateur radio bands (both with and without 'm' suffix)
-        valid_bands = {
-            '160', '160m', '80', '80m', '60', '60m', '40', '40m',
-            '30', '30m', '20', '20m', '17', '17m', '15', '15m',
-            '12', '12m', '10', '10m', '6', '6m', '2', '2m'
-        }
-
-        # Clean the input and check if it's valid
-        clean_band = raw_band.strip().lower()
-
-        # Check if it's already a valid band
-        if clean_band in valid_bands:
-            # Return without 'm' suffix
-            return clean_band.replace('m', '')
-
-        # Try removing common suffixes/prefixes that might make it invalid
-        # Remove 'M' (case insensitive already handled)
-        if clean_band.endswith('m'):
-            without_m = clean_band[:-1]
-            if without_m in valid_bands:
-                return without_m
-
-        # Invalid band - return empty string
-        return ''
-
-    @classmethod
-    def _lookup_member_from_qso(cls, qso_skcc: str | None, qso_callsign: str, skcc_number_to_call: dict[str, str]) -> tuple[str | None, str | None, bool]:
-        """Helper to lookup member information from QSO data.
-
-        Returns: (member_skcc_number, found_callsign, is_historical_member)
-        """
-        mbr_skcc_nr: str | None = None
-        found_call: str | None = None
-        is_historical_member = False
-
-        if qso_skcc and qso_skcc != "NONE":
-            # Try to find member by SKCC number first
-            if qso_skcc in skcc_number_to_call:
-                mbr_skcc_nr = qso_skcc
-                found_call = skcc_number_to_call[qso_skcc]
-            else:
-                # Historical member number case
-                extracted_call = cSKCC.extract_callsign(qso_callsign)
-                if extracted_call and extracted_call in cSKCC.members:
-                    mbr_skcc_nr = qso_skcc  # Keep historical number
-                    found_call = extracted_call
-                    is_historical_member = True
-
-        if not mbr_skcc_nr:
-            # Fall back to callsign lookup
-            found_call = cSKCC.extract_callsign(qso_callsign)
-            if found_call and found_call in cSKCC.members:
-                mbr_skcc_nr = cSKCC.members[found_call]['plain_number']
-
-        return mbr_skcc_nr, found_call, is_historical_member
 
     @classmethod
     async def initialize_async(cls) -> None:
@@ -1641,21 +1598,8 @@ class cQSO:
 
         ### QRP ###
         if 'QRP' in cConfig.GOALS:
-            # Calculate QRP points using correct hoisted constant
-            band_points = cls._QRP_BAND_POINTS_AWARDS
-
-            # Calculate points for 1xQRP (all contacts) and 2xQRP (only 2x contacts)
-            points_1x = 0.0
-            points_2x = 0.0
-
-            for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
-                key_parts = qso_key.split('_')
-                if len(key_parts) >= 3:
-                    band = key_parts[1]
-                    points = band_points.get(band, 0.0)
-                    points_1x += points  # All contacts count for 1xQRP
-                    if qrp_type == 2:
-                        points_2x += points  # Only 2xQRP contacts count for 2xQRP
+            # Calculate QRP points
+            points_1x, points_2x, _, _ = cls.calculate_qrp_points()
 
             # Check 1xQRP
             if points_1x >= 300:
@@ -2064,81 +2008,14 @@ class cQSO:
         print(f'TKA: SK:{sk_count}/100 BUG:{bug_count}/100 SS:{ss_count}/100. Unique:{unique_total}/300')
 
     @classmethod
-    def process_qrp_awards_xojo_style(cls) -> None:
-        """Phase 2: Process QRP awards using Xojo's exact band-by-band logic"""
-        if 'QRP' not in cConfig.GOALS or not hasattr(cls, 'QRPQualifiedQSOs'):
-            return
-
-        # Define Xojo's band array (AP_Bands) - exactly matching Xojo source
-        xojo_bands = ["6M", "10M", "12M", "15M", "17M", "20M", "30M", "40M", "60M", "80M", "160M"]
-
-        # Clear existing QRP contacts to rebuild with Xojo logic
-        cls.ContactsForQRP = {}
-
-        # Process each band separately (matching Xojo's for loop)
-        for xojo_band in xojo_bands:
-            # Select all QRP QSOs for this band using UPPER(Log_BAND) = xojo_band logic
-            band_qsos: list[QRPQSOData] = [qso for qso in cls.QRPQualifiedQSOs if qso['band'].upper() == xojo_band]
-
-            # Process QSOs for this band - one entry per member per band
-            # But we need to ensure 2xQRP contacts are properly identified
-            for qso in band_qsos:
-                member_number: str = qso['member_number']
-                dup_key = f"{member_number}_{xojo_band}"
-
-                if dup_key not in cls.ContactsForQRP:
-                    # Add the QSO - it will be counted correctly by the display logic
-                    qrp_type = 2 if qso['qrp_2x'] else 1
-                    cls.ContactsForQRP[dup_key] = (
-                        qso['date'],
-                        qso['member_number'],
-                        qso['callsign'],
-                        qrp_type
-                    )
-                else:
-                    # If we already have this member-band, upgrade to 2xQRP if this QSO qualifies
-                    existing_qso = cls.ContactsForQRP[dup_key]
-                    if qso['qrp_2x'] and existing_qso[3] != 2:
-                        cls.ContactsForQRP[dup_key] = (
-                            qso['date'],
-                            qso['member_number'],
-                            qso['callsign'],
-                            2  # Upgrade to 2xQRP
-                        )
-
-    @classmethod
     def print_qrp_awards_progress(cls) -> None:
         """Print QRP award progress in the main awards progress section."""
         if not cls.ContactsForQRP:
             print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
             return
 
-        # QRP point values by band (using hoisted constant)
-        band_points = cls._QRP_BAND_POINTS_AWARDS
-
-        # Calculate points for ALL QRP contacts (both 1x and 2x count toward 1xQRP)
-        points_all: float = 0.0
-        points_2x_only: float = 0.0
-        count_all: int = 0
-        count_2x_only: int = 0
-
-        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
-            # Extract band from key format: "member_band" (matching Xojo duplicate detection)
-            key_parts = qso_key.split('_')
-            if len(key_parts) >= 2:
-                band: str = key_parts[1]
-            else:
-                band = ""
-            points: float = band_points.get(band, 0.0)
-
-            # All QRP contacts count toward 1xQRP
-            points_all += points
-            count_all += 1
-
-            # Only 2xQRP contacts count toward 2xQRP
-            if qrp_type == 2:
-                points_2x_only += points
-                count_2x_only += 1
+        # Calculate QRP points
+        points_all, points_2x_only, count_all, count_2x_only = cls.calculate_qrp_points()
 
 
         # Display progress in awards progress format
@@ -2183,30 +2060,12 @@ class cQSO:
             print('QRP: No qualifying contacts found (TX power must be <= 5W)')
             return
 
-        # QRP point values by band (using hoisted constant)
-        band_points = cls._QRP_BAND_POINTS_AWARDS
+        # Calculate QRP points
+        points_1x_all, points_2x, count_1x_all, count_2x = cls.calculate_qrp_points()
 
-        # Calculate points for each QRP type
-        points_1x: float = 0.0
-        points_2x: float = 0.0
-        count_1x: int = 0
-        count_2x: int = 0
-
-        for qso_key, (_qso_date, _member_number, _callsign, qrp_type) in cls.ContactsForQRP.items():
-            # Extract band from key format: "member_band" (matching Xojo duplicate detection)
-            key_parts = qso_key.split('_')
-            if len(key_parts) >= 2:
-                band: str = key_parts[1]
-            else:
-                band = ""
-            points: float = band_points.get(band, 0.0)
-
-            if qrp_type == 1:
-                points_1x += points
-                count_1x += 1
-            else:
-                points_2x += points
-                count_2x += 1
+        # For 1xQRP only contacts (subtract 2x from total)
+        count_1x = count_1x_all - count_2x
+        points_1x = points_1x_all - points_2x
 
         # Display progress
         if count_1x > 0:
@@ -2497,19 +2356,7 @@ class cQSO:
                     # QRP awards are points-based: 300 points per level for 1xQRP, 150 for 2xQRP
 
                     # Calculate current points for both 1x and 2x
-                    points_1x = 0.0
-                    points_2x = 0.0
-                    band_points = cls._QRP_BAND_POINTS_AWARDS
-
-                    for qso_key, (_, _, _, qrp_type) in cls.ContactsForQRP.items():
-                        key_parts = qso_key.split('_')
-                        if len(key_parts) >= 2:
-                            qso_band = key_parts[1]
-                            if qso_band in band_points:
-                                points = band_points[qso_band]
-                                points_1x += points
-                                if qrp_type == 2:  # 2 means 2xQRP
-                                    points_2x += points
+                    points_1x, points_2x, _, _ = cls.calculate_qrp_points()
 
                     # Determine which QRP level we're working toward
                     # 1xQRP: 300 points per level
@@ -2812,28 +2659,19 @@ class cQSO:
                                                               "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members", 70)
 
             # Write BUG contacts first with running count
-            bug_contacts = sorted(cls.ContactsForTKA_BUG.items(), key=lambda x: x[1][0])
-            for idx, (member_number, (qso_date, _, callsign)) in enumerate(bug_contacts, 1):
-                date_str = cDateTimeFormatter.format_date(qso_date)
-                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} BUG\n")
+            await cAwardFileWriter.write_tka_key_type_section(file, cls.ContactsForTKA_BUG, "BUG")
 
             # Blank line between sections
             await file.write("\n")
 
             # Write SK contacts with running count
-            sk_contacts = sorted(cls.ContactsForTKA_SK.items(), key=lambda x: x[1][0])
-            for idx, (member_number, (qso_date, _, callsign)) in enumerate(sk_contacts, 1):
-                date_str = cDateTimeFormatter.format_date(qso_date)
-                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SK\n")
+            await cAwardFileWriter.write_tka_key_type_section(file, cls.ContactsForTKA_SK, "SK")
 
             # Blank line between sections
             await file.write("\n")
 
             # Write SS contacts with running count
-            ss_contacts = sorted(cls.ContactsForTKA_SS.items(), key=lambda x: x[1][0])
-            for idx, (member_number, (qso_date, _, callsign)) in enumerate(ss_contacts, 1):
-                date_str = cDateTimeFormatter.format_date(qso_date)
-                await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} SS\n")
+            await cAwardFileWriter.write_tka_key_type_section(file, cls.ContactsForTKA_SS, "SS")
 
             await file.write("\n")
 
@@ -3462,10 +3300,7 @@ class cAwards:
             # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
             if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
                 # Format skipped QSO in standard format
-                qso_info = cDateTimeFormatter.format_date(qso.log_qso_date)
-                time_info = cDateTimeFormatter.format_time(qso.log_time_on)
-                skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
-                skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band)
                 self.qsos_skipped.append(skipped_qso)
                 continue
 
@@ -3510,10 +3345,7 @@ class cAwards:
 
             # Track skipped QSOs
             if not qso_added_to_db:
-                qso_info = cDateTimeFormatter.format_date(qso.log_qso_date)
-                time_info = cDateTimeFormatter.format_time(qso.log_time_on) if qso.log_time_on else "00:00:00Z"
-                skipped_qso = f"Date: {qso_info}     Time: {time_info}     Call: {log_call}"
-                skipped_qso = skipped_qso.ljust(64) + f"Band: {qso.log_band}"
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band)
                 self.qsos_skipped.append(skipped_qso)
 
             self.qsos_processed += 1
@@ -4844,10 +4676,6 @@ class cRBN:
                 if _progress_dot_count % cConfig.PROGRESS_DOTS.DOTS_PER_LINE == 0:
                     print(flush=True)
 
-    @classmethod
-    def dot_count_reset(cls) -> None:
-        global _progress_dot_count  # noqa: PLW0603
-        _progress_dot_count = 0
 
 async def get_version_async() -> str:
     """
