@@ -2524,6 +2524,20 @@ class cQSO:
                     else:
                         GoalHitList.append(f'1xQRP x{next_1x_level}')
 
+        # TKA (Triple Key Award) processing
+        if 'TKA' in cConfig.GOALS:
+            # Check if they qualify for TKA (not yet achieved)
+            if cls.MyMemberNumber not in cSKCC.tka_level:
+                # Check if we've already worked this member for TKA (any key type)
+                all_tka_members: set[str] = set()
+                all_tka_members.update(cls.ContactsForTKA_SK.keys())
+                all_tka_members.update(cls.ContactsForTKA_BUG.keys())
+                all_tka_members.update(cls.ContactsForTKA_SS.keys())
+
+                if TheirMemberNumber not in all_tka_members:
+                    # Haven't worked them yet for TKA, so it's a goal hit
+                    GoalHitList.append('TKA')
+
         return GoalHitList
 
     @classmethod
