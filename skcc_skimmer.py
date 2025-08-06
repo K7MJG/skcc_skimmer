@@ -3679,6 +3679,29 @@ class cAwards:
 
         contacts = result['contacts']
 
+        # Helper function to get WAS contact data with proper suffix
+        def get_was_contact_data(member_num: str, date: str, qso: Any, name: str, band: str, state: str) -> tuple[str, str, str, str, str, str]:
+            # Look up member to get their award dates
+            mbr = member_db.get(member_num)
+            if mbr:
+                # Recreate suffix as it would have appeared at the time of the QSO
+                skcc_with_suffix = member_num
+                mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
+                mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
+                mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
+
+                if mbr_cent_date_norm and date >= mbr_cent_date_norm:
+                    skcc_with_suffix = member_num + "C"
+                if mbr_trib_date_norm and date >= mbr_trib_date_norm:
+                    skcc_with_suffix = member_num + "T"
+                if mbr_sen_date_norm and date >= mbr_sen_date_norm:
+                    skcc_with_suffix = member_num + "S"
+            else:
+                skcc_with_suffix = member_num
+            # Use member's primary callsign for display (matching Xojo behavior)
+            display_call = mbr.mbr_pri_call if mbr else qso.log_call
+            return (state, date, display_call, skcc_with_suffix, name, band)
+
         # Process C/T/S awards using chronologically sorted QSOs (oldest first)
         # Also collect DX awards here since they also benefit from chronological order
         for qso in processed_qsos_chrono:
@@ -3767,92 +3790,16 @@ class cAwards:
             # WAS contacts (only first qualifying QSO per state)
             # Recreate SKCC number suffix based on QSO date (matching Xojo logic)
             if qso.was_qso == "YES" and state not in contacts['WAS']:
-                # Look up member to get their award dates
-                mbr = member_db.get(member_num)
-                if mbr:
-                    # Recreate suffix as it would have appeared at the time of the QSO
-                    skcc_with_suffix = member_num
-                    mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
-                    mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
-                    mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-
-                    if mbr_cent_date_norm and date >= mbr_cent_date_norm:
-                        skcc_with_suffix = member_num + "C"
-                    if mbr_trib_date_norm and date >= mbr_trib_date_norm:
-                        skcc_with_suffix = member_num + "T"
-                    if mbr_sen_date_norm and date >= mbr_sen_date_norm:
-                        skcc_with_suffix = member_num + "S"
-                else:
-                    skcc_with_suffix = member_num
-                # Use member's primary callsign for display (matching Xojo behavior)
-                display_call = mbr.mbr_pri_call if mbr else qso.log_call
-                contacts['WAS'][state] = (state, date, display_call, skcc_with_suffix, name, band)
+                contacts['WAS'][state] = get_was_contact_data(member_num, date, qso, name, band, state)
 
             if qso.wasc_qso == "YES" and state not in contacts['WAS_C']:
-                # Look up member to get their award dates
-                mbr = member_db.get(member_num)
-                if mbr:
-                    # Recreate suffix as it would have appeared at the time of the QSO
-                    skcc_with_suffix = member_num
-                    mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
-                    mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
-                    mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-
-                    if mbr_cent_date_norm and date >= mbr_cent_date_norm:
-                        skcc_with_suffix = member_num + "C"
-                    if mbr_trib_date_norm and date >= mbr_trib_date_norm:
-                        skcc_with_suffix = member_num + "T"
-                    if mbr_sen_date_norm and date >= mbr_sen_date_norm:
-                        skcc_with_suffix = member_num + "S"
-                else:
-                    skcc_with_suffix = member_num
-                # Use member's primary callsign for display (matching Xojo behavior)
-                display_call = mbr.mbr_pri_call if mbr else qso.log_call
-                contacts['WAS_C'][state] = (state, date, display_call, skcc_with_suffix, name, band)
+                contacts['WAS_C'][state] = get_was_contact_data(member_num, date, qso, name, band, state)
 
             if qso.wast_qso == "YES" and state not in contacts['WAS_T']:
-                # Look up member to get their award dates
-                mbr = member_db.get(member_num)
-                if mbr:
-                    # Recreate suffix as it would have appeared at the time of the QSO
-                    skcc_with_suffix = member_num
-                    mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
-                    mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
-                    mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-
-                    if mbr_cent_date_norm and date >= mbr_cent_date_norm:
-                        skcc_with_suffix = member_num + "C"
-                    if mbr_trib_date_norm and date >= mbr_trib_date_norm:
-                        skcc_with_suffix = member_num + "T"
-                    if mbr_sen_date_norm and date >= mbr_sen_date_norm:
-                        skcc_with_suffix = member_num + "S"
-                else:
-                    skcc_with_suffix = member_num
-                # Use member's primary callsign for display (matching Xojo behavior)
-                display_call = mbr.mbr_pri_call if mbr else qso.log_call
-                contacts['WAS_T'][state] = (state, date, display_call, skcc_with_suffix, name, band)
+                contacts['WAS_T'][state] = get_was_contact_data(member_num, date, qso, name, band, state)
 
             if qso.wass_qso == "YES" and state not in contacts['WAS_S']:
-                # Look up member to get their award dates
-                mbr = member_db.get(member_num)
-                if mbr:
-                    # Recreate suffix as it would have appeared at the time of the QSO
-                    skcc_with_suffix = member_num
-                    mbr_cent_date_norm = mbr.mbr_cent_date[:8] if mbr.mbr_cent_date and len(mbr.mbr_cent_date) > 8 else mbr.mbr_cent_date
-                    mbr_trib_date_norm = mbr.mbr_trib_date[:8] if mbr.mbr_trib_date and len(mbr.mbr_trib_date) > 8 else mbr.mbr_trib_date
-                    mbr_sen_date_norm = mbr.mbr_sen_date[:8] if mbr.mbr_sen_date and len(mbr.mbr_sen_date) > 8 else mbr.mbr_sen_date
-
-                    if mbr_cent_date_norm and date >= mbr_cent_date_norm:
-                        skcc_with_suffix = member_num + "C"
-                    if mbr_trib_date_norm and date >= mbr_trib_date_norm:
-                        skcc_with_suffix = member_num + "T"
-                    if mbr_sen_date_norm and date >= mbr_sen_date_norm:
-                        skcc_with_suffix = member_num + "S"
-                else:
-                    skcc_with_suffix = member_num
-                # Use member's primary callsign for display (matching Xojo behavior)
-                display_call = mbr.mbr_pri_call if mbr else qso.log_call
-                contacts['WAS_S'][state] = (state, date, display_call, skcc_with_suffix, name, band)
+                contacts['WAS_S'][state] = get_was_contact_data(member_num, date, qso, name, band, state)
 
             # Prefix contacts (highest member number per prefix)
             if qso.pfx and qso.pfx_pts:
