@@ -179,17 +179,6 @@ class cUtil:
 
     @staticmethod
     def format_skipped_qso(qso_date: str, time_on: str, callsign: str, band: str) -> str:
-        """Format a skipped QSO entry in standard format.
-
-        Args:
-            qso_date: Date in YYYYMMDD format
-            time_on: Time in HHMMSS format
-            callsign: The callsign
-            band: Band (e.g., "40m")
-
-        Returns:
-            Formatted string for skipped QSO file
-        """
         date_info = cDateTimeFormatter.format_date(qso_date)
         time_info = cDateTimeFormatter.format_time(time_on) if time_on else "00:00:00Z"
         skipped_qso = f"Date: {date_info}     Time: {time_info}     Call: {callsign}"
@@ -197,7 +186,6 @@ class cUtil:
 
     @staticmethod
     def delayed_exit(exit_code: int = 1) -> NoReturn:
-        """Exit with a 10-second delay to allow Windows Explorer users to read error messages."""
         print()  # Blank line for spacing
         try:
             for i in range(10, 0, -1):
@@ -241,7 +229,6 @@ class cUtil:
 
     @staticmethod
     def handle_shutdown(_signum: int, _frame: object | None = None) -> None:  # noqa: ARG004
-        """Exits immediately when Ctrl+C is detected."""
         # Print a clean exit message and force immediate exit
         try:
             print("\n\nExiting...")
@@ -253,7 +240,6 @@ class cUtil:
 
     @staticmethod
     async def watch_for_ctrl_c_async() -> NoReturn:
-        """Runs in the event loop to detect Ctrl+C on Windows."""
         try:
             # Just wait indefinitely until KeyboardInterrupt
             while True:  # noqa: ASYNC110
@@ -706,7 +692,6 @@ class cConfig:
                 return result
 
 class cDateTimeFormatter:
-    """Utility class for consistent date and time formatting throughout the application."""
 
     @staticmethod
     def format_date(date_str: str) -> str:
@@ -726,20 +711,16 @@ class cDateTimeFormatter:
 
 class cAwardProgression:
     """Utility class for calculating award progression levels.
-
     Many SKCC awards follow the pattern: increment by 1 for levels 1-10,
     then by 5 for levels beyond 10 (15, 20, 25, etc.)
     """
-
     @staticmethod
     def calculate_level(value: int, base_unit: int, threshold_for_5s: int = 10) -> int:
         """Calculate the award level based on value and base unit.
-
         Args:
             value: The current value (e.g., QSO count, minutes, points)
             base_unit: The base unit for each level (e.g., 100 for C, 50 for T, 300 for RC)
             threshold_for_5s: The level at which progression changes to 5s (default 10)
-
         Returns:
             The calculated award level
         """
@@ -802,31 +783,25 @@ class cAwardProgression:
 
 
 class cFilePathBuilder:
-    """Utility class for building consistent file paths for QSO files."""
 
     @staticmethod
     def qso_file_path(callsign: str, award_type: str) -> str:
-        """Build the standard QSO file path for an award type."""
         return f'QSOs/{callsign}-{award_type}.txt'
 
     @staticmethod
     def skipped_file_path(callsign: str) -> str:
-        """Build the path for skipped QSOs file."""
         return f'QSOs/{callsign}-Skipped_QSOs.txt'
 
 
 class cAwardFileWriter:
-    """Helper class for writing award files with consistent formatting."""
 
     @staticmethod
     async def write_header(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, width: int = 50) -> None:
-        """Write a standard award file header."""
         await file.write(f"{award_name} Award Progress for {callsign}\n")
         await file.write("=" * width + "\n")
 
     @staticmethod
     async def write_header_with_subtitle(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, subtitle: str, width: int = 70) -> None:
-        """Write award file header with a subtitle."""
         await file.write(f"{award_name} Award Progress for {callsign}\n")
         await file.write(subtitle + "\n")
         await file.write("=" * width + "\n")
@@ -1089,7 +1064,6 @@ class cSked:
 
     @classmethod
     async def display_logins_async(cls) -> None:
-        """Async version of display_logins."""
         try:
             async with aiohttp.ClientSession(timeout=ClientTimeout(total=10)) as session:
                 async with session.get(SKED_STATUS_URL) as response:
@@ -1113,7 +1087,6 @@ class cSked:
 
     @classmethod
     async def sked_page_scraper_task_async(cls) -> NoReturn:
-        """Update async task for the sked page scraper."""
         while True:
             try:
                 await cls.display_logins_async()
@@ -1303,8 +1276,6 @@ class cSPOTS:
             await cUtil.log_async(f'{ZuluDate} {Out}')
 
 class QRPQSOData(TypedDict):
-    """Type definition for QRP-qualified QSO data."""
-
     date: str
     member_number: str
     callsign: str
@@ -1504,7 +1475,6 @@ class cQSO:
 
     @classmethod
     def awards_check(cls) -> None:
-        """Update awards check that properly handles official SKCC award requirements."""
         C_Level = cls.calculate_current_award_level('C', len(cls.ContactsForC))
         T_Level = cls.calculate_current_award_level('T', len(cls.ContactsForT))
         S_Level = cls.calculate_current_award_level('S', len(cls.ContactsForS))
@@ -1775,7 +1745,6 @@ class cQSO:
 
     @classmethod
     def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]:
-        """Elegant regex-based ADI parser using generator."""
         with open(file_path, 'rb') as f:
             content = f.read().decode('utf-8', 'ignore')
 
@@ -1866,7 +1835,6 @@ class cQSO:
 
     @classmethod
     async def read_qsos_async(cls) -> None:
-        """Fast, simple QSO reading using generator."""
         AdiFileAbsolute = Path(cConfig.ADI_FILE).resolve()
         cDisplay.print(f"\nReading QSOs for {cConfig.MY_CALLSIGN} from '{AdiFileAbsolute}'...")
 
@@ -1932,7 +1900,6 @@ class cQSO:
 
     @classmethod
     def print_dx_awards_progress(cls) -> None:
-        """Print DX award progress in the main awards progress section."""
         # DXC: Unique countries
         dxc_count = len(cls.ContactsForDXC)
         if dxc_count == 0:
@@ -1977,7 +1944,6 @@ class cQSO:
 
     @classmethod
     def print_rc_award_progress(cls) -> None:
-        """Print Rag Chew award progress."""
         if not cls.ContactsForRC:
             print('RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged')
             return
@@ -1999,7 +1965,6 @@ class cQSO:
 
     @classmethod
     def print_tka_award_progress(cls) -> None:
-        """Print TKA (Triple Key Award) progress."""
         sk_count = len(cls.ContactsForTKA_SK)
         bug_count = len(cls.ContactsForTKA_BUG)
         ss_count = len(cls.ContactsForTKA_SS)
@@ -2016,7 +1981,6 @@ class cQSO:
 
     @classmethod
     def print_qrp_awards_progress(cls) -> None:
-        """Print QRP award progress in the main awards progress section."""
         if not cls.ContactsForQRP:
             print('QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.')
             return
@@ -2062,7 +2026,6 @@ class cQSO:
 
     @classmethod
     def print_qrp_progress(cls) -> None:
-        """Print QRP award progress."""
         if not cls.ContactsForQRP:
             print('QRP: No qualifying contacts found (TX power must be <= 5W)')
             return
@@ -2231,7 +2194,6 @@ class cQSO:
     @classmethod
     def _check_cts_goal(cls, award_type: str, member_number: str, contacts_dict: dict[str, Any],
                         my_award_date: str) -> str | None:
-        """Helper method to check C/T/S award goals - reduces code duplication."""
         if member_number not in contacts_dict:
             if not my_award_date:
                 # Working toward initial award
@@ -2447,16 +2409,6 @@ class cQSO:
 
     @classmethod
     def get_brag_contacts_for_month(cls, year: int, month: int) -> dict[str, tuple[str, str, str, float]]:
-        """
-        Collect BRAG contacts for a specific year/month.
-
-        Args:
-            year: The year to process
-            month: The month to process (1-12)
-
-        Returns:
-            Dictionary mapping member numbers to contact tuples (QsoDate, MemberNumber, MainCallSign, QsoFreq)
-        """
         brag_contacts: dict[str, tuple[str, str, str, float]] = {}
 
         # Get month boundaries
@@ -2513,7 +2465,6 @@ class cQSO:
 
     @classmethod
     async def get_goal_qsos_async(cls) -> None:
-        """Process QSOs using Xojo-based award logic for 100% parity."""
         try:
             # Use cAwards processor for 100% Xojo parity
             result = cAwards.process_with_xojo_logic(cls.QSOs, cSKCC.members, cConfig.MY_CALLSIGN)
@@ -2607,7 +2558,6 @@ class cQSO:
 
     @classmethod
     async def write_skipped_qsos_async(cls, skipped_list: list[str]) -> None:
-        """Write skipped QSOs to a callsign-specific file in SKCCLogger format."""
         async with aiofiles.open(cFilePathBuilder.skipped_file_path(cConfig.MY_CALLSIGN), 'w', encoding='utf-8') as file:
             await file.write(f"Skipped QSO Log Entries for {cConfig.MY_CALLSIGN}\n")
             await file.write("=" * 70 + "\n\n")
@@ -2622,7 +2572,6 @@ class cQSO:
 
     @classmethod
     async def award_dx_async(cls) -> None:
-        """Write DXC and DXQ award files."""
         # Write DXC file (unique countries)
         if cls.ContactsForDXC:
             async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'DXC'), 'w', encoding='utf-8') as file:
@@ -2654,7 +2603,6 @@ class cQSO:
 
     @classmethod
     async def award_tka_async(cls) -> None:
-        """Write TKA (Triple Key Award) files."""
 
         # Only generate files if we have TKA contacts
         if not (cls.ContactsForTKA_SK or cls.ContactsForTKA_BUG or cls.ContactsForTKA_SS):
@@ -2693,7 +2641,6 @@ class cQSO:
 
     @classmethod
     async def award_rc_async(cls) -> None:
-        """Write Rag Chew (RC) award file."""
         if not cls.ContactsForRC:
             return
 
@@ -2730,7 +2677,6 @@ class cQSO:
 
     @classmethod
     async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
-        """Generate QRP award files with point calculations using generator-based streaming."""
 
         if not QSOs:
             return
@@ -2739,7 +2685,6 @@ class cQSO:
         band_points = cls._QRP_BAND_POINTS_AWARDS
 
         def qrp_2x_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
-            """Generator that yields QRP 2x contacts (TX and RX <= 5W), sorted by date."""
             contacts: list[tuple[str, str, str, str, float]] = []
             for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
                 if qrp_type == 2:  # QRP 2x: TX power <= 5W AND RX power <= 5W
@@ -2754,7 +2699,6 @@ class cQSO:
 
         # Write 1xQRP file (ALL QRP contacts count toward 1xQRP)
         def all_qrp_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
-            """Generator that yields ALL QRP contacts (both 1x and 2x), sorted by date."""
             contacts: list[tuple[str, str, str, str, float]] = []
             for qso_key, (qso_date, member_number, callsign, _) in QSOs.items():
                 # ALL QRP contacts count toward 1xQRP award
@@ -2817,7 +2761,6 @@ class cQSO:
 
     @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str, str, str]]) -> None:
-        """Async version of award_p to write files using aiofiles"""
 
         async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
             iPoints = 0
@@ -2834,7 +2777,6 @@ class cQSO:
 
     @classmethod
     async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
-        """Async version of award_cts to write files using aiofiles"""
 
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
@@ -2851,7 +2793,6 @@ class cQSO:
 
     @classmethod
     async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
-        """Async version of award_was to write files using aiofiles"""
 
         QSOsByState = {data[0]: data for data in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
@@ -2872,7 +2813,6 @@ class cQSO:
 
     @classmethod
     async def track_brag_async(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
-        """Async version of track_brag to write files using aiofiles"""
 
         async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'BRAG'), 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
@@ -3049,11 +2989,6 @@ class cQSO:
 
 
 class cAwards:
-    """Xojo-based award processor for 100% parity with SKCCLogger.
-
-    This class provides a faithful Python translation of the Xojo award processing
-    logic from SKCCLogger to achieve exact parity with the gold standard.
-    """
 
     @dataclass
     class Member:
