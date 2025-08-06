@@ -3148,10 +3148,11 @@ class cAwards:
             skcc_num = member_data.get('plain_number', '')
             if skcc_num and skcc_num in member_db:
                 member = member_db[skcc_num]
-                if callsign.upper() not in self.callsign_db:
-                    self.callsign_db[callsign.upper()] = []
-                if member not in self.callsign_db[callsign.upper()]:
-                    self.callsign_db[callsign.upper()].append(member)
+                callsign_upper = callsign.upper()
+                if callsign_upper not in self.callsign_db:
+                    self.callsign_db[callsign_upper] = []
+                if member not in self.callsign_db[callsign_upper]:
+                    self.callsign_db[callsign_upper].append(member)
 
         # User's award qualification dates from member record
         self.ap_my_mbr_date = my_member.mbr_join_date
