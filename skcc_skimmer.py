@@ -3686,7 +3686,7 @@ class cAwards:
         contacts = result['contacts']
 
         # Helper function to get WAS contact data with proper suffix
-        def get_was_contact_data(member_num: str, date: str, qso: Any, name: str, band: str, state: str) -> tuple[str, str, str, str, str, str]:
+        def get_was_contact_data(member_num: str, date: str, qso: cAwards.ProcessedQSO, name: str, band: str, state: str) -> tuple[str, str, str, str, str, str]:
             # Look up member to get their award dates
             mbr = member_db.get(member_num)
             if mbr:
@@ -4039,46 +4039,83 @@ class cSKCC:
         # First, read the main SKCC data
         await cls.read_skcc_data_async()
 
-        # Convert the synchronous methods to async
-        print("Downloading award rosters...")
+        # Always load C/T/S rosters first - needed for FYI messages and member suffix display
+        cts_tasks: list[Coroutine[Any, Any, dict[str, int]]] = []
+        cts_roster_names: list[str] = []
 
+        cts_tasks.append(cls.read_level_list_async('Centurion', 'centurionlist.txt'))
+        cts_roster_names.append('centurion_level')
+        cts_tasks.append(cls.read_level_list_async('Tribune', 'tribunelist.txt'))
+        cts_roster_names.append('tribune_level')
+        cts_tasks.append(cls.read_level_list_async('Senator', 'senator.txt'))
+        cts_roster_names.append('senator_level')
+
+        # Load C/T/S rosters first
         try:
-            # Create a list of coroutines for all downloads
-            tasks = [
-                cls.read_level_list_async('Centurion', 'centurionlist.txt'),
-                cls.read_level_list_async('Tribune', 'tribunelist.txt'),
-                cls.read_level_list_async('Senator', 'senator.txt'),
-                cls.read_roster_async('WAS', 'operating_awards/was/was_roster.php'),
-                cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'),
-                cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'),
-                cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'),
-                cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php'),
-                cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'),
-                cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'),
-                cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'),
-                cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php'),
-                cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php'),
-                cls.read_roster_async('RC', 'operating_awards/rag_chew/ragchew_roster.php')
-            ]
+            cts_results = await asyncio.wait_for(asyncio.gather(*cts_tasks), timeout=30)
+            for name, result in zip(cts_roster_names, cts_results, strict=False):
+                setattr(cls, name, result)
+        except asyncio.TimeoutError:
+            print("Timeout loading C/T/S rosters")
+            cls.centurion_level = {}
+            cls.tribune_level = {}
+            cls.senator_level = {}
+        except Exception as e:
+            print(f"Error loading C/T/S rosters: {e}")
+            cls.centurion_level = {}
+            cls.tribune_level = {}
+            cls.senator_level = {}
 
+        # Now load optional rosters based on user's goals
+        tasks: list[Coroutine[Any, Any, dict[str, int]]] = []
+        roster_names: list[str] = []
+
+        if 'WAS' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('WAS', 'operating_awards/was/was_roster.php'))
+            roster_names.append('was_level')
+        if 'WAS-C' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'))
+            roster_names.append('was_c_level')
+        if 'WAS-T' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'))
+            roster_names.append('was_t_level')
+        if 'WAS-S' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'))
+            roster_names.append('was_s_level')
+        if 'P' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php'))
+            roster_names.append('prefix_level')
+        if 'DX' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'))
+            roster_names.append('dxq_level')
+            tasks.append(cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'))
+            roster_names.append('dxc_level')
+        if 'QRP' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'))
+            roster_names.append('qrp_1x_level')
+            tasks.append(cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php'))
+            roster_names.append('qrp_2x_level')
+        if 'TKA' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php'))
+            roster_names.append('tka_level')
+        if 'RC' in cConfig.GOALS:
+            tasks.append(cls.read_roster_async('RC', 'operating_awards/rag_chew/ragchew_roster.php'))
+            roster_names.append('rc_level')
+
+        # Load optional rosters if needed
+        if tasks:
+            print("Downloading award rosters...")
             try:
                 results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=30)
+                # Assign results to the appropriate class variables
+                for name, result in zip(roster_names, results, strict=False):
+                    setattr(cls, name, result)
             except asyncio.TimeoutError:
-                print("Timeout loading rosters")
-                return
-
-            # Unpack results
-            cls.centurion_level, cls.tribune_level, cls.senator_level, \
-            cls.was_level, cls.was_c_level, cls.was_t_level, \
-            cls.was_s_level, cls.prefix_level, cls.dxq_level, \
-            cls.dxc_level, cls.qrp_1x_level, cls.qrp_2x_level, cls.tka_level, cls.rc_level = results
-
-        except asyncio.TimeoutError:
-            print("Timeout error downloading rosters.")
-            cUtil.delayed_exit(1)
-        except Exception as e:
-            print(f"Error downloading rosters: {e}")
-            cUtil.delayed_exit(1)
+                print("Timeout error downloading rosters.")
+                cUtil.delayed_exit(1)
+            except Exception as e:
+                print(f"Error downloading rosters: {e}")
+                cUtil.delayed_exit(1)
 
     @classmethod
     def build_member_info(cls, CallSign: str) -> str:
