@@ -181,11 +181,14 @@ class cUtil:
         return Class
 
     @staticmethod
-    def format_skipped_qso(qso_date: str, time_on: str, callsign: str, band: str) -> str:
+    def format_skipped_qso(qso_date: str, time_on: str, callsign: str, band: str, reason: str | None = None) -> str:
         date_info = cDateTimeFormatter.format_date(qso_date)
         time_info = cDateTimeFormatter.format_time(time_on) if time_on else "00:00:00Z"
         skipped_qso = f"Date: {date_info}     Time: {time_info}     Call: {callsign}"
-        return skipped_qso.ljust(64) + f"Band: {band}"
+        result = skipped_qso.ljust(64) + f"Band: {band}"
+        if reason:
+            result += f" ({reason})"
+        return result
 
     @staticmethod
     def delayed_exit(exit_code: int = 1) -> NoReturn:
@@ -3256,7 +3259,7 @@ class cAwards:
 
         return return_skcc
 
-    def process_qsos(self, qsos: list[QSO]) -> list[ProcessedQSO]:
+    def process_qsos(self, qsos: list['cAwards.QSO']) -> list['cAwards.ProcessedQSO']:
         """Main QSO processing loop - direct translation of Xojo Run() method.
 
         Args:
@@ -3273,10 +3276,20 @@ class cAwards:
 
         # Filter QSOs: date >= user join date AND mode = CW
         # This replicates the initial SQL query in Xojo
-        filtered_qsos = [
-            qso for qso in qsos
-            if qso.log_qso_date >= self.ap_my_mbr_date and qso.log_mode.upper() == "CW"
-        ]
+        filtered_qsos: list[cAwards.QSO] = []
+        for qso in qsos:
+            if qso.log_qso_date < self.ap_my_mbr_date:
+                # QSO before user became SKCC member
+                skip_reason = f"QSO before you joined SKCC ({self.ap_my_mbr_date})"
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, qso.log_call, qso.log_band, skip_reason)
+                self.qsos_skipped.append(skipped_qso)
+            elif qso.log_mode.upper() != "CW":
+                # Non-CW QSO
+                skip_reason = f"Non-CW mode ({qso.log_mode})"
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, qso.log_call, qso.log_band, skip_reason)
+                self.qsos_skipped.append(skipped_qso)
+            else:
+                filtered_qsos.append(qso)
 
         for qso in filtered_qsos:
             log_call = qso.log_call
@@ -3284,33 +3297,57 @@ class cAwards:
             log_skcc_pre = qso.log_skcc_pre
 
             # Handle SKCC="NONE" special case
+            skip_reason = None
             if log_skcc == "NONE":
                 mbr_skcc_nr = "NONE"
+                skip_reason = "SKCC field marked as NONE"
             else:
                 mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
+                if not mbr_skcc_nr:
+                    # Check why it failed
+                    matching_members = self.callsign_db.get(log_call.upper(), [])
+                    if not matching_members:
+                        # Check slashed calls
+                        if "/" in log_call:
+                            segments = log_call.split("/")
+                            segment_matches = any(self.callsign_db.get(seg.upper(), []) for seg in segments)
+                            if not segment_matches:
+                                skip_reason = "Not an SKCC member"
+                            else:
+                                skip_reason = "Multiple members have had this callsign (segments), SKCC # required"
+                        else:
+                            skip_reason = "Not an SKCC member"
+                    elif len(matching_members) > 1:
+                        skip_reason = "Multiple members have had this callsign, SKCC # required"
+                    else:
+                        skip_reason = "No valid SKCC match"
 
             # Skip QSOs where GetSKCCFromCall returns empty or "NONE" (no valid member match)
             # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
             if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
-                # Format skipped QSO in standard format
-                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band)
+                # Format skipped QSO with reason
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band, skip_reason)
                 self.qsos_skipped.append(skipped_qso)
                 continue
 
             # Check if we should process this QSO (QRP filter)
             process_qso = True
+            qrp_skip_reason = None
             if self.ap_qrp_qsos_only:
                 try:
                     tx_pwr = float(qso.log_tx_pwr) if qso.log_tx_pwr else 0.0
                     if not (tx_pwr > 0.0 and tx_pwr <= 5.0):
                         process_qso = False
+                        qrp_skip_reason = f"QRP filter: TX power {tx_pwr}W > 5W"
                 except (ValueError, TypeError):
                     process_qso = False
+                    qrp_skip_reason = "QRP filter: Invalid or missing TX power"
 
             # Look up member in database
             mbr = self.member_db.get(mbr_skcc_nr)
 
             # Main validation gate
+            skip_reason = None
             if process_qso and mbr is not None:
                 # Date validation and self-QSO check
                 # Normalize dates to 8 characters for proper comparison
@@ -3332,13 +3369,25 @@ class cAwards:
                 else:
                     # QSO rejected: either before member join date or self-QSO
                     qso_added_to_db = False
+                    if mbr.mbr_skcc_nr == self.ap_my_skcc_nr:
+                        skip_reason = "Self QSO"
+                    elif qso_date < mbr_join_date:
+                        skip_reason = f"QSO before member joined ({mbr_join_date})"
+                    else:
+                        skip_reason = "Invalid QSO date"
             else:
-                # QSO rejected: non-SKCC member, QRP filter, or SKCC="NONE"
+                # QSO rejected: non-SKCC member, QRP filter, or other reason
                 qso_added_to_db = False
+                if not process_qso:
+                    skip_reason = qrp_skip_reason
+                elif mbr is None:
+                    skip_reason = f"Member {mbr_skcc_nr} not found in database"
+                else:
+                    skip_reason = "Unknown validation error"
 
             # Track skipped QSOs
             if not qso_added_to_db:
-                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band)
+                skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band, skip_reason)
                 self.qsos_skipped.append(skipped_qso)
 
             self.qsos_processed += 1
