@@ -1360,7 +1360,7 @@ class cQSO:
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1749,7 +1749,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str]]:
         # Streaming ADI parser that reads file in chunks
         chunk_size = 65536  # 64KB chunks
         buffer = ""
@@ -1801,7 +1801,7 @@ class cQSO:
                             break
 
     @classmethod
-    def _process_adi_fields(cls, fields: dict[str, str]) -> tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str] | None:
+    def _process_adi_fields(cls, fields: dict[str, str]) -> tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str] | None:
         # Helper method to process ADI fields into QSO tuple
         # Handle alternate field names
         if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
@@ -1853,10 +1853,9 @@ class cQSO:
                 skcc_number = ''
                 skcc_suffix = ''
 
-        # Normalize DXCC code to prevent duplicates (e.g., "001" -> "1")
-        dxcc_code = fields.get('DXCC', '')
-        if dxcc_code and dxcc_code.isdigit():
-            dxcc_code = str(int(dxcc_code))
+        # Normalize DXCC code to integer to prevent duplicates (e.g., "001" -> 1)
+        dxcc_str = fields.get('DXCC', '')
+        dxcc_code = int(dxcc_str) if dxcc_str and dxcc_str.isdigit() else 0
 
         # Apply Xojo's character replacement for callsigns (? → 0)
         callsign = fields['CALL'].replace('?', '0').upper()
@@ -3067,7 +3066,7 @@ class cAwards:
         log_mode: str
         log_state: str
         log_country: str
-        log_dxcc: str
+        log_dxcc: int
         log_tx_pwr: str
         log_rx_pwr: str
         log_key_type: str
@@ -3094,7 +3093,7 @@ class cAwards:
         log_mode: str
         log_state: str
         log_country: str
-        log_dxcc: str
+        log_dxcc: int
         log_skcc_nr: str
         log_skcc: str
         log_tx_pwr: str
@@ -3363,10 +3362,11 @@ class cAwards:
             state = "MD"
 
         # Determine DXCC code - use log value if present, otherwise member value
-        if qso.log_dxcc and int(qso.log_dxcc) > 0:
+        if qso.log_dxcc > 0:
             dxcc = qso.log_dxcc
         else:
-            dxcc = mbr.mbr_dxc
+            # Convert member DXCC to int (it's stored as string)
+            dxcc = int(mbr.mbr_dxc) if mbr.mbr_dxc and mbr.mbr_dxc.isdigit() else 0
 
         # Use member name if log name is empty
         name = qso.log_name if qso.log_name else mbr.mbr_name
@@ -3460,10 +3460,10 @@ class cAwards:
 
         # DX Awards
         if qso.log_qso_date >= "20090614":
-            try:
-                log_dxcc = int(processed.log_dxcc)
-                my_dx_code = int(self.ap_my_dx_code)
+            log_dxcc = processed.log_dxcc
+            my_dx_code = int(self.ap_my_dx_code)
 
+            if log_dxcc > 0:  # Valid DXCC code
                 # DXQ is valid ONLY for Countries other than your home Country
                 if log_dxcc != my_dx_code:
                     processed.dxq_qso = "YES"
@@ -3478,8 +3478,6 @@ class cAwards:
                     if log_dxcc != my_dx_code:
                         processed.dxc_qso = "YES"
                         processed.dx_code = f"{log_dxcc:03d}"
-            except (ValueError, TypeError):
-                pass
 
         # Prefix Award - started on 20130101
         if qso.log_qso_date >= "20130101":
