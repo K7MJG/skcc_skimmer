@@ -2820,9 +2820,9 @@ class cQSO:
             ):
                 date = f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}"
                 if qso_freq:
-                    await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}  {qso_freq / 1000:.3f}\n")
+                    await file.write(f"{count:<4} {date}  {their_member_number:<8} {main_callsign:<12} {qso_freq / 1000:7.3f}\n")
                 else:
-                    await file.write(f"{count:<4} {date}  {their_member_number:<6}  {main_callsign}\n")
+                    await file.write(f"{count:<4} {date}  {their_member_number:<8} {main_callsign:<12}\n")
 
     @classmethod
     def _remove_tka_duplicates(cls) -> None:
