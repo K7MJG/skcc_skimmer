@@ -129,6 +129,13 @@ class cUtil:
         return re.split(r'[,\s]+', text.strip())
 
     @staticmethod
+    def get_previous_month(year: int, month: int) -> tuple[int, int, int]:
+        if month == 1:
+            return (year - 1, 12, 11)  # December
+        else:
+            return (year, month - 1, month - 2)
+
+    @staticmethod
     def effective(date: str) -> str:
         return date if time.strftime('%Y%m%d000000', time.gmtime()) >= date else ''
 
@@ -2199,30 +2206,26 @@ class cQSO:
 
         if 'BRAG' in cConfig.GOALS:
             # Calculate both last month and current month BRAG totals
-            NowGMT = cFastDateTime.now_gmt()
+            now_gmt = cFastDateTime.now_gmt()
+            current_year, current_month, _, _, _, _ = now_gmt.split_date_time()
 
-            # Get current month name and count
-            current_month_index = NowGMT.month() - 1
+            # Get current month name and contacts (this populates cls.Brag for goal hits)
+            current_month_index = current_month - 1
             current_month_name = cFastDateTime.MONTH_NAMES[current_month_index]
+            current_month_contacts = cls.get_brag_contacts_for_month(current_year, current_month)
+            cls.Brag = current_month_contacts  # Set for goal hit detection
+            current_month_count = len(current_month_contacts)
 
-            # Process current month's BRAG
-            cls.get_brag_qsos(PrevMonth=0, should_print=False)
-            current_month_count = len(cls.Brag)
+            # Calculate previous month
+            prev_year, prev_month, prev_month_index = cUtil.get_previous_month(current_year, current_month)
 
-            # Process last month's BRAG
-            cls.get_brag_qsos(PrevMonth=1, should_print=False)
-            last_month_count = len(cls.Brag)
-
-            # Calculate last month name
-            _Year, Month, _Day, _Hour, _Minute, _Second = NowGMT.split_date_time()
-            if Month == 1:
-                last_month_index = 11  # December
-            else:
-                last_month_index = Month - 2
-            last_month_name = cFastDateTime.MONTH_NAMES[last_month_index]
+            # Get previous month name and count
+            prev_month_name = cFastDateTime.MONTH_NAMES[prev_month_index]
+            prev_month_contacts = cls.get_brag_contacts_for_month(prev_year, prev_month)
+            prev_month_count = len(prev_month_contacts)
 
             # Display both months
-            print(f'BRAG: For {last_month_name}: {last_month_count}, For {current_month_name}: {current_month_count}')
+            print(f'BRAG: For {prev_month_name}: {prev_month_count}, For {current_month_name}: {current_month_count}')
 
 
     @classmethod
@@ -2280,7 +2283,9 @@ class cQSO:
         GoalHitList: list[str] = []
 
         if 'BRAG' in cConfig.GOALS and TheirMemberNumber not in cls.Brag:
-            if (fFrequency and cSKCC.is_on_warc_frequency(fFrequency)) or not cSKCC.is_during_sprint(cFastDateTime.now_gmt()):
+            # For sked page (no frequency), always show BRAG
+            # For spots with frequency, only show if on WARC or not during sprint
+            if fFrequency is None or cSKCC.is_on_warc_frequency(fFrequency) or not cSKCC.is_during_sprint(cFastDateTime.now_gmt()):
                 GoalHitList.append('BRAG')
 
         # C award processing - handles both initial C and multipliers intelligently
@@ -2433,75 +2438,78 @@ class cQSO:
     async def refresh_async(cls) -> None:
         await cls.read_qsos_async()
         await cQSO.get_goal_qsos_async()
+        # Populate current month BRAG for goal hits
+        if 'BRAG' in cConfig.GOALS:
+            now_gmt = cFastDateTime.now_gmt()
+            year, month, _, _, _, _ = now_gmt.split_date_time()
+            cls.Brag = cQSO.get_brag_contacts_for_month(year, month)
         cls.print_progress()
 
     @classmethod
-    def get_brag_qsos(cls, PrevMonth: int = 0, should_print: bool = False) -> None:
-        cls.Brag = {}
+    def get_brag_contacts_for_month(cls, year: int, month: int) -> dict[str, tuple[str, str, str, float]]:
+        """
+        Collect BRAG contacts for a specific year/month.
 
-        DateOfInterestGMT = cFastDateTime.now_gmt()
+        Args:
+            year: The year to process
+            month: The month to process (1-12)
 
-        if PrevMonth > 0:
-            Year, Month, Day, _Hour, _Minute, _Second = DateOfInterestGMT.split_date_time()
+        Returns:
+            Dictionary mapping member numbers to contact tuples (QsoDate, MemberNumber, MainCallSign, QsoFreq)
+        """
+        brag_contacts: dict[str, tuple[str, str, str, float]] = {}
 
-            YearsBack  = int(PrevMonth  / 12)
-            MonthsBack = PrevMonth % 12
+        # Get month boundaries
+        month_start = cFastDateTime((year, month, 1)).start_of_month()
+        month_end = cFastDateTime((year, month, 1)).end_of_month()
 
-            Year  -= YearsBack
-            Month -= MonthsBack
+        for contact in cls.QSOs:
+            qso_date, qso_call, _, qso_freq, _, qso_skcc, _, _, _, _, _, _, _, _ = contact
 
-            if Month <= 0:
-                Year  -= 1
-                Month += 12
-
-            DateOfInterestGMT = cFastDateTime((Year, Month, Day))
-
-        fastStartOfMonth = DateOfInterestGMT.start_of_month()
-        fastEndOfMonth   = DateOfInterestGMT.end_of_month()
-
-        for Contact in cls.QSOs:
-            QsoDate, QsoCallSign, _QsoSPC, QsoFreq, _QsoComment, QsoSKCC, _QsoSuffix, _QsoTxPwr, _QsoRxPwr, _QsoDXCC, _QsoBand, _QsoKeyType, _QsoName, _QsoTimeOff = Contact
-
-            if QsoCallSign in ('K9SKC'):
+            if qso_call in ('K9SKC'):
                 continue
 
-            # Xojo only includes QSOs where SKCC field is not empty
-            if not QsoSKCC or QsoSKCC == 'NONE':
+            # Only include QSOs where SKCC field is not empty (matches Xojo logic)
+            if not qso_skcc or qso_skcc == 'NONE':
                 continue
 
-            QsoCallSign = cSKCC.extract_callsign(QsoCallSign)
+            qso_call = cSKCC.extract_callsign(qso_call)
 
-            if not QsoCallSign or QsoCallSign == 'K3Y':
+            if not qso_call or qso_call == 'K3Y':
                 continue
 
-            MainCallSign = cSKCC.members[QsoCallSign]['main_call']
+            # Check if callsign is in members database
+            if qso_call not in cSKCC.members:
+                continue
 
-            TheirMemberEntry  = cSKCC.members[MainCallSign]
-            TheirMemberNumber = TheirMemberEntry['plain_number']
+            main_call = cSKCC.members[qso_call]['main_call']
+            member_entry = cSKCC.members[main_call]
+            member_number = member_entry['plain_number']
 
-            fastQsoDate = cFastDateTime(QsoDate)
+            if not member_number:
+                continue
 
-            if fastStartOfMonth <= fastQsoDate <= fastEndOfMonth:
-                TheirJoin_Date = cUtil.effective(TheirMemberEntry['join_date'])
+            fast_qso_date = cFastDateTime(qso_date)
 
-                if TheirJoin_Date and TheirJoin_Date < QsoDate:
-                    DuringSprint = cSKCC.is_during_sprint(fastQsoDate)
+            # Check if QSO is within the specified month
+            if month_start <= fast_qso_date <= month_end:
+                join_date = cUtil.effective(member_entry['join_date'])
 
-                    if not QsoFreq:
+                if join_date and join_date < qso_date:
+                    during_sprint = cSKCC.is_during_sprint(fast_qso_date)
+
+                    if not qso_freq:
                         continue
 
-                    OnWarcFreq   = cSKCC.is_on_warc_frequency(QsoFreq)
+                    on_warc_freq = cSKCC.is_on_warc_frequency(qso_freq)
+                    brag_okay = on_warc_freq or (not during_sprint)
 
-                    BragOkay = OnWarcFreq or (not DuringSprint)
+                    # Only add first contact with each member (matches Xojo logic)
+                    if member_number not in brag_contacts and brag_okay:
+                        brag_contacts[member_number] = (qso_date, member_number, main_call, qso_freq)
 
-                    if TheirMemberNumber not in cls.Brag and BragOkay:
-                        cls.Brag[TheirMemberNumber] = (QsoDate, TheirMemberNumber, MainCallSign, QsoFreq)
+        return brag_contacts
 
-        if should_print and 'BRAG' in cConfig.GOALS:
-            Year = DateOfInterestGMT.year()
-            MonthIndex = DateOfInterestGMT.month()-1
-            MonthAbbrev = cFastDateTime.MONTH_NAMES[MonthIndex][:3]
-            print(f'Total Brag contacts in {MonthAbbrev} {Year}: {len(cls.Brag)}')
 
     @classmethod
     async def get_goal_qsos_async(cls) -> None:
@@ -2583,21 +2591,19 @@ class cQSO:
         await cls.award_dx_async()
         await cls.award_tka_async()
         await cls.award_rc_async()
-        await cls.track_brag_async(cls.Brag)
+
+        # Process BRAG for current month
+        if 'BRAG' in cConfig.GOALS:
+            # Process current month
+            now_gmt = cFastDateTime.now_gmt()
+            year, month, _, _, _, _ = now_gmt.split_date_time()
+            cls.Brag = cQSO.get_brag_contacts_for_month(year, month)
+            # Write the BRAG file with current month data
+            await cls.track_brag_async(cls.Brag)
 
         # Print K3Y contacts if needed
         if 'K3Y' in cConfig.GOALS:
             cls.print_k3y_contacts()
-
-        # cAwards processing and file generation complete
-
-        # Process BRAG QSOs (separate from main award processing)
-        if 'BRAG_MONTHS' in globals() and 'BRAG' in cConfig.GOALS:
-            for PrevMonth in range(abs(cConfig.BRAG_MONTHS), 0, -1):
-                cQSO.get_brag_qsos(PrevMonth=PrevMonth, should_print=True)
-
-        # Process current month as well
-        cQSO.get_brag_qsos(PrevMonth=0, should_print=False)
 
     @classmethod
     async def write_skipped_qsos_async(cls, skipped_list: list[str]) -> None:
@@ -4737,6 +4743,11 @@ async def main_loop() -> None:
     # Initialize QSO data
     await cQSO.initialize_async()
     await cQSO.get_goal_qsos_async()
+    # Populate current month BRAG for goal hits
+    if 'BRAG' in cConfig.GOALS:
+        now_gmt = cFastDateTime.now_gmt()
+        year, month, _, _, _, _ = now_gmt.split_date_time()
+        cQSO.Brag = cQSO.get_brag_contacts_for_month(year, month)
     cQSO.print_progress()
 
     print()
