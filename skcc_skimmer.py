@@ -2385,8 +2385,14 @@ class cQSO:
 
         # TKA (Triple Key Award) processing
         if 'TKA' in cConfig.GOALS:
-            # Check if they qualify for TKA (not yet achieved)
-            if cls.MyMemberNumber not in cSKCC.tka_level:
+            # Check if they haven't achieved TKA requirements yet
+            sk_count = len(cls.ContactsForTKA_SK)
+            bug_count = len(cls.ContactsForTKA_BUG)
+            ss_count = len(cls.ContactsForTKA_SS)
+
+            # Only consider TKA as a goal if they haven't met the requirements
+            # (100 of each key type)
+            if sk_count < 100 or bug_count < 100 or ss_count < 100:
                 # Check if we've already worked this member for TKA (any key type)
                 all_tka_members: set[str] = set()
                 all_tka_members.update(cls.ContactsForTKA_SK.keys())
