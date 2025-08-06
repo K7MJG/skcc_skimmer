@@ -1745,93 +1745,134 @@ class cQSO:
 
     @classmethod
     def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]:
+        # Streaming ADI parser that reads file in chunks
+        chunk_size = 65536  # 64KB chunks
+        buffer = ""
+        past_header = False
+
         with open(file_path, 'rb') as f:
-            content = f.read().decode('utf-8', 'ignore')
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    # Process any remaining buffer
+                    if buffer and past_header:
+                        record_text = buffer.strip()
+                        if record_text and '<' in record_text:
+                            # Process the final record
+                            fields = {k.upper(): v.strip() for k, v in cls._FIELD_PATTERN.findall(record_text)}
+                            qso = cls._process_adi_fields(fields)
+                            if qso:
+                                yield qso
+                    break
 
-        # Split header from body using hoisted pattern
-        parts = cls._EOH_PATTERN.split(content, maxsplit=1)
-        body = parts[1].strip() if len(parts) > 1 else content
+                # Decode chunk and add to buffer
+                buffer += chunk.decode('utf-8', 'ignore')
 
-        # Process each QSO record using hoisted patterns
-        for record_text in filter(None, map(str.strip, cls._EOR_PATTERN.split(body))):
-            # Extract fields using hoisted regex pattern
-            fields = {k.upper(): v.strip() for k, v in cls._FIELD_PATTERN.findall(record_text)}
+                # Skip header if not done yet
+                if not past_header:
+                    if '<EOH>' in buffer or '<eoh>' in buffer:
+                        # Found end of header, remove everything before and including it
+                        buffer = cls._EOH_PATTERN.split(buffer, maxsplit=1)[1] if '<' in buffer else buffer
+                        past_header = True
+                    elif len(buffer) > 100000:  # If no header found in first 100KB, assume no header
+                        past_header = True
 
-            # Handle alternate field names
-            if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
-                fields['QSO_DATE'] = fields['QSO_DATE_OFF']
-            if 'TIME_OFF' in fields and 'TIME_ON' not in fields:
-                fields['TIME_ON'] = fields['TIME_OFF']
+                if past_header:
+                    # Process complete records in buffer
+                    while '<EOR>' in buffer or '<eor>' in buffer:
+                        # Split on EOR to get complete records
+                        parts = cls._EOR_PATTERN.split(buffer, maxsplit=1)
+                        if len(parts) >= 2:
+                            record_text = parts[0].strip()
+                            buffer = parts[1] if len(parts) > 1 else ""
 
-            # Skip non-CW QSOs and incomplete records
-            if (fields.get('MODE', '').upper() != 'CW' or
-                not all(k in fields for k in ('CALL', 'QSO_DATE', 'TIME_ON'))):
-                continue
+                            if record_text and '<' in record_text:
+                                # Extract fields using hoisted regex pattern
+                                fields = {k.upper(): v.strip() for k, v in cls._FIELD_PATTERN.findall(record_text)}
+                                qso = cls._process_adi_fields(fields)
+                                if qso:
+                                    yield qso
+                        else:
+                            break
 
-            # Parse frequency
-            frequency = 0.0
-            if freq_str := fields.get('FREQ', ''):
-                with suppress(ValueError):
-                    frequency = float(freq_str) * 1000
+    @classmethod
+    def _process_adi_fields(cls, fields: dict[str, str]) -> tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str] | None:
+        # Helper method to process ADI fields into QSO tuple
+        # Handle alternate field names
+        if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
+            fields['QSO_DATE'] = fields['QSO_DATE_OFF']
+        if 'TIME_OFF' in fields and 'TIME_ON' not in fields:
+            fields['TIME_ON'] = fields['TIME_OFF']
 
-            # Get SKCC number - preserve the full value including suffix
-            skcc_field = fields.get('SKCC', '')
+        # Skip non-CW QSOs and incomplete records
+        if (fields.get('MODE', '').upper() != 'CW' or
+            not all(k in fields for k in ('CALL', 'QSO_DATE', 'TIME_ON'))):
+            return None
 
-            # Handle special case of SKCC="NONE" (Version v03.01.01C)
-            if skcc_field.upper() == 'NONE':
-                skcc_number = 'NONE'
+        # Parse frequency
+        frequency = 0.0
+        if freq_str := fields.get('FREQ', ''):
+            with suppress(ValueError):
+                frequency = float(freq_str) * 1000
+
+        # Get SKCC number - preserve the full value including suffix
+        skcc_field = fields.get('SKCC', '')
+
+        # Handle special case of SKCC="NONE" (Version v03.01.01C)
+        if skcc_field.upper() == 'NONE':
+            skcc_number = 'NONE'
+            skcc_suffix = ''
+        else:
+            # Match Xojo's SKCC parsing logic exactly:
+            # 1. If all numeric -> prefix = number, suffix = ""
+            # 2. If not all numeric, assume only last char is suffix
+            # 3. If all but last char is numeric -> prefix = numeric part, suffix = last char
+            # 4. Otherwise -> prefix = "", suffix = "" (corrupted, ignore)
+            if skcc_field.isdigit():
+                # All numeric
+                skcc_number = skcc_field
                 skcc_suffix = ''
-            else:
-                # Match Xojo's SKCC parsing logic exactly:
-                # 1. If all numeric -> prefix = number, suffix = ""
-                # 2. If not all numeric, assume only last char is suffix
-                # 3. If all but last char is numeric -> prefix = numeric part, suffix = last char
-                # 4. Otherwise -> prefix = "", suffix = "" (corrupted, ignore)
-                if skcc_field.isdigit():
-                    # All numeric
-                    skcc_number = skcc_field
-                    skcc_suffix = ''
-                elif len(skcc_field) > 0:
-                    # Try to separate assuming only last char is suffix
-                    prefix_part = skcc_field[:-1]
-                    suffix_part = skcc_field[-1]
-                    if prefix_part.isdigit():
-                        # Valid format like "1923T"
-                        skcc_number = prefix_part
-                        skcc_suffix = suffix_part
-                    else:
-                        # Corrupted format like "24S73T" - reject entirely
-                        skcc_number = ''
-                        skcc_suffix = ''
+            elif len(skcc_field) > 0:
+                # Try to separate assuming only last char is suffix
+                prefix_part = skcc_field[:-1]
+                suffix_part = skcc_field[-1]
+                if prefix_part.isdigit():
+                    # Valid format like "1923T"
+                    skcc_number = prefix_part
+                    skcc_suffix = suffix_part
                 else:
+                    # Corrupted format like "24S73T" - reject entirely
                     skcc_number = ''
                     skcc_suffix = ''
+            else:
+                skcc_number = ''
+                skcc_suffix = ''
 
-            # Normalize DXCC code to prevent duplicates (e.g., "001" -> "1")
-            dxcc_code = fields.get('DXCC', '')
-            if dxcc_code and dxcc_code.isdigit():
-                dxcc_code = str(int(dxcc_code))
+        # Normalize DXCC code to prevent duplicates (e.g., "001" -> "1")
+        dxcc_code = fields.get('DXCC', '')
+        if dxcc_code and dxcc_code.isdigit():
+            dxcc_code = str(int(dxcc_code))
 
-            # Apply Xojo's character replacement for callsigns (? → 0)
-            callsign = fields['CALL'].replace('?', '0').upper()
+        # Apply Xojo's character replacement for callsigns (? → 0)
+        callsign = fields['CALL'].replace('?', '0').upper()
 
-            # Yield QSO tuple
-            yield (
-                fields['QSO_DATE'] + fields['TIME_ON'],
-                callsign,
-                fields.get('STATE', '').upper(),
-                frequency,
-                fields.get('COMMENT', ''),
-                skcc_number,
-                skcc_suffix,  # Add suffix from SKCC field
-                fields.get('TX_PWR', ''),
-                fields.get('RX_PWR', ''),
-                dxcc_code,  # Normalized DXCC code
-                fields.get('BAND', ''),  # Add BAND field from ADI file
-                fields.get('APP_SKCCLOGGER_KEYTYPE', ''),  # Add KEY_TYPE field for TKA
-                fields.get('NAME', ''),  # Add NAME field from ADI file
-                fields.get('TIME_OFF', '')  # Add TIME_OFF for RagChew calculations
-            )
+        # Return QSO tuple
+        return (
+            fields['QSO_DATE'] + fields['TIME_ON'],
+            callsign,
+            fields.get('STATE', '').upper(),
+            frequency,
+            fields.get('COMMENT', ''),
+            skcc_number,
+            skcc_suffix,  # Add suffix from SKCC field
+            fields.get('TX_PWR', ''),
+            fields.get('RX_PWR', ''),
+            dxcc_code,  # Normalized DXCC code
+            fields.get('BAND', ''),  # Add BAND field from ADI file
+            fields.get('APP_SKCCLOGGER_KEYTYPE', ''),  # Add KEY_TYPE field for TKA
+            fields.get('NAME', ''),  # Add NAME field from ADI file
+            fields.get('TIME_OFF', '')  # Add TIME_OFF for RagChew calculations
+        )
 
     @classmethod
     async def read_qsos_async(cls) -> None:
