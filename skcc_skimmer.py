@@ -3117,23 +3117,23 @@ class cAwards:
         log_gridsquare: str
 
         # Award qualification flags
-        was_qso: str = ""
-        wasc_qso: str = ""
-        wast_qso: str = ""
-        wass_qso: str = ""
-        trib_award_qso: str = ""
-        sen_award_qso: str = ""
-        dxq_qso: str = ""
-        dxc_qso: str = ""
-        dx_code: str = ""
-        pfx_call: str = ""
-        pfx: str = ""
-        pfx_pts: str = ""  # SKCC number, not band points!
-        ragchew_qso: str = ""
-        ragchew_mins: str = ""
-        qrpx1_qso: str = ""
-        qrpx2_qso: str = ""
-        tka_qso: str = ""
+        was_qso: str | None = None
+        wasc_qso: str | None = None
+        wast_qso: str | None = None
+        wass_qso: str | None = None
+        trib_award_qso: str | None = None
+        sen_award_qso: str | None = None
+        dxq_qso: str | None = None
+        dxc_qso: str | None = None
+        dx_code: str | None = None
+        pfx_call: str | None = None
+        pfx: str | None = None
+        pfx_pts: str | None = None  # SKCC number, not band points!
+        ragchew_qso: str | None = None
+        ragchew_mins: str | None = None
+        qrpx1_qso: str | None = None
+        qrpx2_qso: str | None = None
+        tka_qso: str | None = None
 
     def __init__(self, member_db: dict[str, Member], my_member: Member, original_members: dict[str, Any]) -> None:
         """Initialize the award processor.
@@ -3203,7 +3203,7 @@ class cAwards:
         self.qsos_skipped: list[str] = []
         self.processed_qsos: list[cAwards.ProcessedQSO] = []
 
-    def get_skcc_from_call(self, log_call: str, log_skcc: str) -> str:
+    def get_skcc_from_call(self, log_call: str, log_skcc: str) -> str | None:
         """Direct Python translation of Xojo GetSKCCFromCall function.
 
         Args:
@@ -3211,14 +3211,14 @@ class cAwards:
             log_skcc: SKCC number from log (numeric only)
 
         Returns:
-            SKCC number string or empty string if no match
+            SKCC number string or None if no match
         """
         # Version v03.01.01C - Modified GetSKCCFromCall to leave SKCC of "NONE" unchanged
         if log_skcc == "NONE":
             return log_skcc
 
         skcc_list: dict[str, int] = {}
-        return_skcc = ""
+        return_skcc: str | None = None
 
 
         if "/" in log_call:
@@ -3303,7 +3303,7 @@ class cAwards:
                 skip_reason = "SKCC field marked as NONE"
             else:
                 mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
-                if not mbr_skcc_nr:
+                if mbr_skcc_nr is None:
                     # Check why it failed
                     matching_members = self.callsign_db.get(log_call.upper(), [])
                     if not matching_members:
@@ -3322,9 +3322,9 @@ class cAwards:
                     else:
                         skip_reason = "No valid SKCC match"
 
-            # Skip QSOs where GetSKCCFromCall returns empty or "NONE" (no valid member match)
+            # Skip QSOs where GetSKCCFromCall returns None or "NONE" (no valid member match)
             # Version v03.01.01C - Changed AP Processing to skip QSOs with SKCC set to "NONE"
-            if not mbr_skcc_nr or mbr_skcc_nr in {"", "NONE"}:
+            if mbr_skcc_nr is None or mbr_skcc_nr == "NONE":
                 # Format skipped QSO with reason
                 skipped_qso = cUtil.format_skipped_qso(qso.log_qso_date, qso.log_time_on, log_call, qso.log_band, skip_reason)
                 self.qsos_skipped.append(skipped_qso)
