@@ -124,9 +124,12 @@ class PrefixThresholds:
     MILESTONE_10M: Final[int] = 10_000_000
 
 class cUtil:
+    # Pre-compiled regex for splitting on commas and whitespace
+    _SPLIT_PATTERN = re.compile(r'[,\s]+')
+
     @staticmethod
     def split(text: str, /) -> list[str]:
-        return re.split(r'[,\s]+', text.strip())
+        return cUtil._SPLIT_PATTERN.split(text.strip())
 
     @staticmethod
     def get_previous_month(year: int, month: int) -> tuple[int, int, int]:
@@ -1291,6 +1294,8 @@ class cQSO:
     _EOH_PATTERN = re.compile(r'<eoh>', re.IGNORECASE)
     _EOR_PATTERN = re.compile(r'<eor>', re.IGNORECASE)
     _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.IGNORECASE | re.DOTALL)
+    # K3Y/SKM pattern for special event processing
+    _K3Y_SKM_PATTERN = re.compile(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', re.IGNORECASE)
 
     # QRP band point values (hoisted for efficiency) - includes both upper/lowercase for ADI compatibility
     _QRP_BAND_POINTS_AWARDS: ClassVar[dict[str, float]] = {
@@ -3898,6 +3903,10 @@ class cSpotters:
         r'<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>',
         re.DOTALL
     )
+    _html_row_regex: ClassVar[re.Pattern[str]] = re.compile(
+        r'<tr.*?online24h online7d total">(.*?)</tr>',
+        re.DOTALL
+    )
 
     @staticmethod
     def locator_to_latlong(locator: str) -> tuple[float, float]:
@@ -3967,7 +3976,7 @@ class cSpotters:
             print(f'*** Fatal Error: Unable to retrieve spotters from RBN: {e}')
             cUtil.delayed_exit()
 
-        rows = re.findall(r'<tr.*?online24h online7d total">(.*?)</tr>', html, re.DOTALL)
+        rows = cls._html_row_regex.findall(html)
 
         # Use hoisted regex pattern
         columns_regex = cls._columns_regex
@@ -4009,6 +4018,10 @@ class cSpotters:
 
 class cSKCC:
     _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.IGNORECASE | re.DOTALL)
+    _roster_rows_regex: ClassVar[re.Pattern[str]] = re.compile(r"<tr.*?>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+    _tx8_pattern: ClassVar[re.Pattern[str]] = re.compile(r"\*Tx8: (.*?)$")
+    _suffix_strip_pattern: ClassVar[re.Pattern[str]] = re.compile(r'[A-Z]+$')
+    _member_number_pattern: ClassVar[re.Pattern[str]] = re.compile(r'^([0-9]+)[CTS]{0,1}$')
 
     class cMemberEntry(TypedDict):
         name: str
@@ -4242,7 +4255,7 @@ class cSKCC:
 
             if today_gmt < skcc_effective_date:
                 print(f"  FYI: Brand new {Type}, {call_sign}, will be effective 00:00Z {effective_date}")
-            elif Type == "Tribune" and (match := re.search(r"\*Tx8: (.*?)$", endorsements)):
+            elif Type == "Tribune" and (match := cSKCC._tx8_pattern.search(endorsements)):
                 skcc_effective_tx8_date = cSKCC.normalize_skcc_date(match.group(1))
                 if today_gmt < skcc_effective_tx8_date:
                     print(f"  FYI: Brand new Tx8, {call_sign}, will be effective 00:00Z {match.group(1)}")
@@ -4266,7 +4279,7 @@ class cSKCC:
             print(f"Error retrieving {Name} roster: {e}")
             return {}
 
-        rows = re.findall(r"<tr.*?>(.*?)</tr>", text, re.IGNORECASE | re.DOTALL)
+        rows = cSKCC._roster_rows_regex.findall(text)
         # Use hoisted regex pattern
         columns_regex = cSKCC._roster_columns_regex
 
@@ -4330,7 +4343,7 @@ class cSKCC:
             all_calls = [current_call, *[x.strip() for x in other_calls.split(",")]] if other_calls else [current_call]
 
             # Derive plain number by removing suffix letters from SKCCNR
-            plain_number = re.sub(r'[A-Z]+$', '', number)
+            plain_number = cls._suffix_strip_pattern.sub('', number)
 
             # Create member entry
             member_entry: cSKCC.cMemberEntry = {
@@ -4480,7 +4493,7 @@ class cSKCC:
 
         for Item in LookupList:
             # Check for member number format
-            if match := re.match(r'^([0-9]+)[CTS]{0,1}$', Item):
+            if match := cls._member_number_pattern.match(Item):
                 Number = match.group(1)
 
                 # Find the callsign for this member number
