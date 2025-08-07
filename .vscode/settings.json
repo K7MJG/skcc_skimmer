@@ -1,0 +1,6 @@
+{
+    "python.defaultInterpreterPath": ".venv-linux/bin/python",
+    "python.analysis.typeCheckingMode": "strict",
+    "python.analysis.inlayHints.variableTypes": false,
+    "python.analysis.inlayHints.functionReturnTypes": false
+}
