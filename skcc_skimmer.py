@@ -988,6 +988,17 @@ class cSked:
             # Only add the separator here, not at the end
             cDisplay.print('=======================================')
 
+            # Display sprint warning if BRAG is a goal and a sprint is active
+            if 'BRAG' in cConfig.GOALS:
+                sprint_info = cSKCC.get_active_sprint_info()
+                if sprint_info:
+                    sprint_name, start_time, end_time = sprint_info
+                    cDisplay.print('')
+                    cDisplay.print('============ BRAG Warning =============')
+                    cDisplay.print(f'Contacts made during {sprint_name} will NOT count towards BRAG')
+                    cDisplay.print(f'Sprint period: {start_time.to_datetime().strftime("%b %d %H:%M")}Z - {end_time.to_datetime().strftime("%b %d %H:%M")}Z')
+                    cDisplay.print('=======================================')
+
             cls._PreviousLogins = SkedHit
             cls._FirstPass = False
 
@@ -4175,10 +4186,10 @@ class cSKCC:
 
     @staticmethod
     def wes(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        # WES: 12:00 Saturday to 00:00 Monday (36 hours total)
+        # WES: 12:00 Saturday to 23:59 Sunday (second full weekend)
         start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Sat').first_weekday_after_date('Sat') + timedelta(hours=12)
-        # End at midnight 2 days later (36 hours total)
-        return start_time, start_time + timedelta(hours=36)
+        # End at 23:59 Sunday (35 hours 59 minutes later)
+        return start_time, start_time + timedelta(hours=35, minutes=59)
 
     @staticmethod
     def sks(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
@@ -4191,21 +4202,53 @@ class cSKCC:
 
     @staticmethod
     def sksa(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        # SKS-A: 22:00 Friday to 00:00 Saturday (2 hours total)
+        # SKS-A: Straight Key Sprint Asia - 2nd Friday 22:00 to Saturday 00:00 UTC (every month)
         start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Fri').first_weekday_after_date('Fri') + timedelta(hours=22)
         return start_time, start_time + timedelta(hours=2)
 
     @staticmethod
     def skse(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        # SKS-E: Summer (Apr-Oct) 18:45-21:15, Winter 19:45-22:15
+        # SKS-E: 1st Thursday - Summer (Apr-Oct) 18:45-21:15, Winter 19:45-22:15 (includes QRS extension)
         is_summer = 4 <= Month <= 10
         start_hours = 18 if is_summer else 19
         start_minutes = 45
         duration_hours = 2
         duration_minutes = 30
-        start_time = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Thu') + timedelta(hours=start_hours, minutes=start_minutes)
+        # Get the 1st Thursday of the month
+        start_date = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Thu')
+        start_time = start_date + timedelta(hours=start_hours, minutes=start_minutes)
         return start_time, start_time + timedelta(hours=duration_hours, minutes=duration_minutes)
 
+    @staticmethod
+    def get_active_sprint_info() -> tuple[str, cFastDateTime, cFastDateTime] | None:
+        """Check if a sprint is currently active and return its info.
+
+        Returns:
+            Tuple of (sprint_name, start_time, end_time) or None if no sprint is active
+        """
+        now = cFastDateTime.now_gmt()
+
+        # TEST MODE: Uncomment one of these lines to simulate being during a sprint
+        # now = cFastDateTime((2025, 8,  9, 12,  0, 0))  # Simulate WES (2nd Saturday 12:00 - Sunday 23:59)
+        # now = cFastDateTime((2025, 8, 27,  0, 30, 0))  # Simulate SKS (4th Wednesday 00:00-02:00)
+        # now = cFastDateTime((2025, 8,  7, 19, 30, 0))  # Simulate SKS-E (1st Thursday 18:45-21:15 summer with QRS)
+        # now = cFastDateTime((2025, 8,  8, 22, 30, 0))  # Simulate SKS-A (2nd Friday 22:00-23:59 Asia Sprint)
+
+        year, month = now.year(), now.month()
+
+        # Check each sprint type
+        sprints = [
+            ('WES (Weekend Sprint)',      cSKCC.wes(year, month)),
+            ('SKS (Straight Key Sprint)', cSKCC.sks(year, month)),
+            ('SKS-E (European Sprint)',   cSKCC.skse(year, month)),
+            ('SKS-A (Asia Sprint)',       cSKCC.sksa(year, month))
+        ]
+
+        for sprint_name, (start, end) in sprints:
+            if start <= now <= end:
+                return sprint_name, start, end
+
+        return None
     @staticmethod
     def is_during_sprint(fastDateTime: cFastDateTime) -> bool:
         year, month = fastDateTime.year(), fastDateTime.month()
