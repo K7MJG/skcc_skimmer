@@ -1477,7 +1477,8 @@ class cQSO:
                     return 0  # No P award yet
                 elif Total <= 5_000_000:
                     # Px1 through Px10 - each 500k increment adds 1 level
-                    return (Total - 1) // 500_000 + 1
+                    # Direct translation from Xojo: x_level = PFX_Pts \ 500000
+                    return Total // 500_000
                 else:
                     # After 5M (Px10): levels jump by 5, thresholds by 2.5M
                     # Px10: >5M, Px15: >7.5M, Px20: >10M, Px25: >12.5M
@@ -1713,39 +1714,32 @@ class cQSO:
 
             case 'P':
                 # Prefix progression per SKCC rules
-                if Total <= 500_000:
+                # Use the same logic as calculate_current_award_level to avoid duplication
+                current_level = cQSO.calculate_current_award_level('P', Total)
+
+                if current_level == 0:
+                    # Haven't reached Px1 yet
                     remaining = 500_001 - Total  # Need >500,000 for Px1
                     x_factor = 1
-                elif Total <= 5_000_000:
-                    # Px1 through Px10 - calculate next level
-                    current_level = (Total - 1) // 500_000 + 1
-                    if current_level >= 10:
-                        # At Px10, next is Px15 at >7.5M
-                        next_level = 15
-                        next_threshold = 7_500_000
-                        remaining = next_threshold + 1 - Total
-                    else:
-                        # Px1 through Px9 - next level is current + 1
-                        next_level = current_level + 1
-                        next_threshold = next_level * 500_000
-                        remaining = next_threshold + 1 - Total
+                elif current_level < 10:
+                    # Px1 through Px9 - next level is current + 1
+                    next_level = current_level + 1
+                    next_threshold = next_level * 500_000
+                    remaining = next_threshold + 1 - Total
+                    x_factor = next_level
+                elif current_level == 10:
+                    # At Px10, next is Px15 at >7.5M
+                    next_level = 15
+                    next_threshold = 7_500_000
+                    remaining = next_threshold + 1 - Total
                     x_factor = next_level
                 else:
-                    # After 5M (Px10): levels go 15, 20, 25... with 2.5M increments
-                    # Calculate current level using same logic as calculate_current_award_level
-                    if Total <= 7_500_000:
-                        current_level = 10
-                        next_level = 15
-                        next_threshold = 7_500_000
-                    else:
-                        increments_past_7_5m = (Total - 7_500_001) // 2_500_000 + 1
-                        current_level = 10 + (increments_past_7_5m * 5)
-                        next_level = current_level + 5
-
-                        # Calculate threshold for next level
-                        # Px15: >7.5M, Px20: >10M, Px25: >12.5M
-                        levels_past_15 = (next_level - 15) // 5
-                        next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
+                    # After Px10: levels go 15, 20, 25... with 2.5M increments
+                    next_level = current_level + 5
+                    # Calculate threshold for next level
+                    # Px15: >7.5M, Px20: >10M, Px25: >12.5M
+                    levels_past_15 = (next_level - 15) // 5
+                    next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
 
                     # For round numbers (10M, etc), don't add 1
                     if next_threshold == PrefixThresholds.MILESTONE_10M:
@@ -2153,7 +2147,9 @@ class cQSO:
                         if display_level >= 1:
                             current_abbrev = cUtil.abbreviate_class(Class, display_level)
                             next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
-                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires {Total + Remaining:,} ({Remaining:,} more)')
+                            # For Prefix, thresholds are "greater than" values, so subtract 1 for display
+                            next_threshold_display = Total + Remaining - 1
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires >{next_threshold_display:,} ({Remaining:,} more)')
                         else:
                             # Working toward P
                             print(f'{Class}: Have {Total:,}. Px1 requires >500,000 ({Remaining:,} more)')
