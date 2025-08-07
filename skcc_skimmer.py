@@ -1741,11 +1741,8 @@ class cQSO:
                     levels_past_15 = (next_level - 15) // 5
                     next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
 
-                    # For round numbers (10M, etc), don't add 1
-                    if next_threshold == PrefixThresholds.MILESTONE_10M:
-                        remaining = next_threshold - Total
-                    else:
-                        remaining = next_threshold + 1 - Total
+                    # Always require "more than" for consistency
+                    remaining = next_threshold + 1 - Total
                     x_factor = next_level
 
             case _:
@@ -2147,12 +2144,14 @@ class cQSO:
                         if display_level >= 1:
                             current_abbrev = cUtil.abbreviate_class(Class, display_level)
                             next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
-                            # For Prefix, thresholds are "greater than" values, so subtract 1 for display
-                            next_threshold_display = Total + Remaining - 1
-                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires >{next_threshold_display:,} ({Remaining:,} more)')
+                            # Show nice round threshold with "more than" language
+                            next_threshold = Total + Remaining - 1
+                            print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires more than {next_threshold:,} ({Remaining:,} more)')
                         else:
                             # Working toward P
-                            print(f'{Class}: Have {Total:,}. Px1 requires >500,000 ({Remaining:,} more)')
+                            # Show nice round threshold with "more than" language
+                            next_threshold = Total + Remaining - 1
+                            print(f'{Class}: Have {Total:,}. Px1 requires more than {next_threshold:,} ({Remaining:,} more)')
                     case _:
                         print(f'{Class}: Have {Total:,}. Need {Remaining:,} more for next level.')
 
