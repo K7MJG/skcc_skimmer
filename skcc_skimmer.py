@@ -155,6 +155,42 @@ class cUtil:
         print('\a', end='', flush=True)
 
     @staticmethod
+    def build_goal_target_report(call: str, freq: float | None = None, k3y_suffix: str | None = None) -> tuple[list[str], list[str]]:
+        """Build goal and target lists for a callsign. Returns (goals, targets).
+
+        Args:
+            call: The callsign to check
+            freq: Optional frequency in KHz for band-specific checks
+            k3y_suffix: Optional K3Y suffix (e.g., '1', 'KH6') if this is a K3Y station
+        """
+        goals: list[str] = []
+
+        # Handle K3Y special case if applicable
+        if k3y_suffix and 'K3Y' in cConfig.GOALS and freq:
+            band = cSKCC.which_arrl_band(freq)
+            if band and ((k3y_suffix not in cQSO.ContactsForK3Y) or (band not in cQSO.ContactsForK3Y[k3y_suffix])):
+                goals.append(f'K3Y/{k3y_suffix} ({band}m)')
+
+        # Add regular goals
+        goals.extend(cQSO.get_goal_hits(call, freq))
+        targets = cQSO.get_target_hits(call)
+        return goals, targets
+
+    @staticmethod
+    def should_notify(callsign: str, goals: list[str], targets: list[str]) -> bool:
+        """Check if notification should be triggered based on config and conditions."""
+        if not cConfig.NOTIFICATION.ENABLED:
+            return False
+
+        is_friend = callsign in cConfig.FRIENDS
+
+        return bool(
+            (is_friend and 'friends' in cConfig.NOTIFICATION.CONDITION) or
+            (goals and 'goals' in cConfig.NOTIFICATION.CONDITION) or
+            (targets and 'targets' in cConfig.NOTIFICATION.CONDITION)
+        )
+
+    @staticmethod
     def format_distance(miles: int) -> str:
         if cConfig.DISTANCE_UNITS == "mi":
             return f'{miles}mi'
@@ -201,6 +237,22 @@ class cUtil:
         except KeyboardInterrupt:
             print("\n\nExiting...")
         sys.exit(exit_code)
+
+    @staticmethod
+    def config_error(msg: str, exit_code: int = 1) -> NoReturn:
+        """Print error message and exit with delay."""
+        print(msg)
+        cUtil.delayed_exit(exit_code)
+    
+    @staticmethod
+    def qso_file_path(callsign: str, award_type: str) -> str:
+        """Generate QSO file path for a given callsign and award type."""
+        return f'QSOs/{callsign}-{award_type}.txt'
+    
+    @staticmethod
+    def skipped_file_path(callsign: str) -> str:
+        """Generate skipped QSOs file path for a given callsign."""
+        return f'QSOs/{callsign}-Skipped_QSOs.txt'
 
     @staticmethod
     async def file_check_async(Filename: str) -> None | NoReturn:
@@ -344,8 +396,7 @@ class cConfig:
         conditions = cUtil.split(notification_config.get("CONDITION", cConfig.cNotification.DEFAULT_CONDITION))  # Use DEFAULT_CONDITION
         invalid_conditions = [c for c in conditions if c not in ['goals', 'targets', 'friends']]
         if invalid_conditions:
-            print(f"Invalid NOTIFICATION CONDITION(s): {invalid_conditions}. Must be 'goals', 'targets', or 'friends'.")
-            cUtil.delayed_exit()
+            cUtil.config_error(f"Invalid NOTIFICATION CONDITION(s): {invalid_conditions}. Must be 'goals', 'targets', or 'friends'.")
         cls.NOTIFICATION = cConfig.cNotification(
             ENABLED                      = bool(notification_config.get("ENABLED", cConfig.cNotification.ENABLED)),
             CONDITION                    = conditions,
@@ -510,67 +561,52 @@ class cConfig:
             cls.usage()
 
         if not cls.GOALS and not cls.TARGETS:
-            print('You must specify at least one goal or target.')
-            cUtil.delayed_exit()
+            cUtil.config_error('You must specify at least one goal or target.')
 
         if not cls.MY_GRIDSQUARE:
-            print("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'MY_GRIDSQUARE' in skcc_skimmer.cfg must be a 4 or 6 character maidenhead grid value.")
 
         if 'SPOTTER_RADIUS' not in cls.config_file:
-            print("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SPOTTER_RADIUS' must be defined in skcc_skimmer.cfg.")
 
         if 'QUALIFIERS' in cls.config_file:
-            print("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'QUALIFIERS' is no longer supported and can be removed from 'skcc_skimmer.cfg'.")
 
         if 'NEARBY' in cls.config_file:
-            print("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'NEARBY' has been replaced with 'SPOTTERS_NEARBY'.")
 
         if 'SPOTTER_PREFIXES' in cls.config_file:
-            print("'SPOTTER_PREFIXES' has been deprecated.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SPOTTER_PREFIXES' has been deprecated.")
 
         if 'SPOTTERS_NEARBY' in cls.config_file:
-            print("'SPOTTERS_NEARBY' has been deprecated.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SPOTTERS_NEARBY' has been deprecated.")
 
         if 'SKCC_FREQUENCIES' in cls.config_file:
-            print("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SKCC_FREQUENCIES' is now caluclated internally.  Remove it from 'skcc_skimmer.cfg'.")
 
         if 'HITS_FILE' in cls.config_file:
-            print("'HITS_FILE' is no longer supported.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'HITS_FILE' is no longer supported.")
 
         if 'HitCriteria' in cls.config_file:
-            print("'HitCriteria' is no longer supported.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'HitCriteria' is no longer supported.")
 
         if 'StatusCriteria' in cls.config_file:
-            print("'StatusCriteria' is no longer supported.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'StatusCriteria' is no longer supported.")
 
         if 'SkedCriteria' in cls.config_file:
-            print("'SkedCriteria' is no longer supported.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SkedCriteria' is no longer supported.")
 
         if 'SkedStatusCriteria' in cls.config_file:
-            print("'SkedStatusCriteria' is no longer supported.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'SkedStatusCriteria' is no longer supported.")
 
         if 'SERVER' in cls.config_file:
-            print('SERVER is no longer supported.')
-            cUtil.delayed_exit()
+            cUtil.config_error('SERVER is no longer supported.')
 
         if 'SPOT_PERSISTENCE_MINUTES' not in cls.config_file:
             cls.SPOT_PERSISTENCE_MINUTES = 15
 
         if 'GOAL' in cls.config_file:
-            print("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
-            cUtil.delayed_exit()
+            cUtil.config_error("'GOAL' has been replaced with 'GOALS' and has a different syntax and meaning.")
 
         if 'GOALS' not in cls.config_file:
             print("GOALS must be defined in 'skcc_skimmer.cfg'.")
@@ -788,28 +824,22 @@ class cAwardProgression:
         return current, next_level, next_required
 
 
-class cFilePathBuilder:
-
-    @staticmethod
-    def qso_file_path(callsign: str, award_type: str) -> str:
-        return f'QSOs/{callsign}-{award_type}.txt'
-
-    @staticmethod
-    def skipped_file_path(callsign: str) -> str:
-        return f'QSOs/{callsign}-Skipped_QSOs.txt'
 
 
 class cAwardFileWriter:
 
     @staticmethod
-    async def write_header(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, width: int = 50) -> None:
+    async def write_header(file: aiofiles.threadpool.text.AsyncTextIOWrapper,
+                          award_name: str,
+                          callsign: str,
+                          subtitle: str | None = None,
+                          width: int = 50) -> None:
+        """Write award file header with optional subtitle."""
         await file.write(f"{award_name} Award Progress for {callsign}\n")
-        await file.write("=" * width + "\n")
-
-    @staticmethod
-    async def write_header_with_subtitle(file: aiofiles.threadpool.text.AsyncTextIOWrapper, award_name: str, callsign: str, subtitle: str, width: int = 70) -> None:
-        await file.write(f"{award_name} Award Progress for {callsign}\n")
-        await file.write(subtitle + "\n")
+        if subtitle:
+            await file.write(subtitle + "\n")
+            if width == 50:  # Adjust default width for subtitle headers
+                width = 70
         await file.write("=" * width + "\n")
 
     @staticmethod
@@ -973,14 +1003,10 @@ class cSked:
             for CallSign in sorted(SkedHit):
                 GoalList = [hit for hit in SkedHit[CallSign] if hit.startswith("YOU need them for")]
                 TargetList = [hit for hit in SkedHit[CallSign] if hit.startswith("THEY need you for")]
-                IsFriend = "friend" in SkedHit[CallSign]
 
                 if CallSign in NewLogins:
-                    if cConfig.NOTIFICATION.ENABLED:
-                        if (IsFriend and 'friends' in cConfig.NOTIFICATION.CONDITION) or \
-                        (GoalList and 'goals' in cConfig.NOTIFICATION.CONDITION) or \
-                        (TargetList and 'targets' in cConfig.NOTIFICATION.CONDITION):
-                            cUtil.beep()
+                    if cUtil.should_notify(CallSign, GoalList, TargetList):
+                        cUtil.beep()
 
                     NewIndicator = '+'
                 else:
@@ -1060,13 +1086,12 @@ class cSked:
                 else:
                     GoalList.append(f'{"SKM-" + Station if Type == "SKM" else "K3Y/" + Station}')
 
-        # Add regular goal hits
-        GoalList.extend(cQSO.get_goal_hits(CallSign))
+        # Add regular goal and target hits
+        regular_goals, TargetList = cUtil.build_goal_target_report(CallSign)
+        GoalList.extend(regular_goals)
 
         if GoalList:
             Report.append(f'YOU need them for {",".join(GoalList)}')
-
-        TargetList = cQSO.get_target_hits(CallSign)
 
         if TargetList:
             Report.append(f'THEY need you for {",".join(TargetList)}')
@@ -1189,9 +1214,8 @@ class cSPOTS:
                 del cls._Notified[Call]
 
         if CallSign not in cls._Notified:
-            if cConfig.NOTIFICATION.ENABLED:
-                if (CallSign in cConfig.FRIENDS and 'friends' in cConfig.NOTIFICATION.CONDITION) or (GoalList and 'goals' in cConfig.NOTIFICATION.CONDITION) or (TargetList and 'targets' in cConfig.NOTIFICATION.CONDITION):
-                    cUtil.beep()
+            if cUtil.should_notify(CallSign, GoalList, TargetList):
+                cUtil.beep()
 
             NotificationFlag = '+'
             cls._Notified[CallSign] = Now + cConfig.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
@@ -1259,19 +1283,13 @@ class cSPOTS:
         if CallSign in cConfig.FRIENDS:
             Report.append('friend')
 
-        # Get goal hits
-        GoalList: list[str] = []
-        if 'K3Y' in cConfig.GOALS and CallSign == 'K3Y' and CallSignSuffix:
-            if Band := cSKCC.which_arrl_band(FrequencyKHz):
-                if (CallSignSuffix not in cQSO.ContactsForK3Y) or (Band not in cQSO.ContactsForK3Y[CallSignSuffix]):
-                    GoalList = [f'K3Y/{CallSignSuffix} ({Band}m)']
+        # Get goal and target hits (including K3Y special handling)
+        k3y_suffix = CallSignSuffix if CallSign == 'K3Y' else None
+        GoalList, TargetList = cUtil.build_goal_target_report(CallSign, FrequencyKHz, k3y_suffix)
 
-        GoalList.extend(cQSO.get_goal_hits(CallSign, FrequencyKHz))
         if GoalList:
             Report.append(f'YOU need them for {",".join(GoalList)}')
 
-        # Get target hits
-        TargetList = cQSO.get_target_hits(CallSign)
         if TargetList:
             Report.append(f'THEY need you for {",".join(TargetList)}')
 
@@ -1439,7 +1457,7 @@ class cQSO:
                             if new_size == current_size:
                                 break
 
-                    await cls.refresh_async()
+                        await cls.refresh_async()
 
             except FileNotFoundError:
                 print(f"Warning: ADI file '{cConfig.ADI_FILE}' not found or inaccessible")
@@ -1455,7 +1473,7 @@ class cQSO:
         # Look up in the hardcoded DXCC dictionary
         # If not found, return formatted code (shouldn't happen with current data)
         return cSKCC.dxcc_countries.get(dxcc_code, f"DXCC-{dxcc_code}")
-    
+
     @classmethod
     def calculate_current_award_level(cls, Class: str, Total: int) -> int:
         """
@@ -2558,7 +2576,7 @@ class cQSO:
         # Print processing summary with WARNING if QSOs were skipped
         if qsos_skipped > 0:
             qso_word = "QSO was" if qsos_skipped == 1 else "QSOs were"
-            skipped_file = cFilePathBuilder.skipped_file_path(cConfig.MY_CALLSIGN)
+            skipped_file = cUtil.skipped_file_path(cConfig.MY_CALLSIGN)
             print(f"\nWARNING: {qsos_skipped:,} {qso_word} skipped (non-CW, pre-membership, non-SKCC, etc.)")
             print(f"         See {skipped_file} for details")
 
@@ -2633,7 +2651,7 @@ class cQSO:
 
     @classmethod
     async def write_skipped_qsos_async(cls, skipped_list: list[str]) -> None:
-        async with aiofiles.open(cFilePathBuilder.skipped_file_path(cConfig.MY_CALLSIGN), 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cUtil.skipped_file_path(cConfig.MY_CALLSIGN), 'w', encoding='utf-8') as file:
             await file.write(f"Skipped QSO Log Entries for {cConfig.MY_CALLSIGN}\n")
             await file.write("=" * 70 + "\n\n")
             await file.write("In addition to any non-CW QSOs or QSOs logged before you were a SKCC member,\n")
@@ -2647,13 +2665,13 @@ class cQSO:
 
     @classmethod
     async def _write_dx_award_file(
-        cls, 
-        award_type: str, 
-        contacts: dict[str, Any], 
+        cls,
+        award_type: str,
+        contacts: dict[str, Any],
         footer_label: str
     ) -> None:
         """Helper to write DXC or DXQ award file with common formatting."""
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, award_type), 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, award_type), 'w', encoding='utf-8') as file:
             await cAwardFileWriter.write_header(file, award_type, cConfig.MY_CALLSIGN)
             await file.write("\n")
             await file.write("  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band\n")
@@ -2704,9 +2722,9 @@ class cQSO:
         if not (cls.ContactsForTKA_SK or cls.ContactsForTKA_BUG or cls.ContactsForTKA_SS):
             return
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'TKA'), 'w', encoding='utf-8') as file:
-            await cAwardFileWriter.write_header_with_subtitle(file, "TKA", cConfig.MY_CALLSIGN,
-                                                              "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members", 70)
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'TKA'), 'w', encoding='utf-8') as file:
+            await cAwardFileWriter.write_header(file, "TKA", cConfig.MY_CALLSIGN,
+                                               subtitle="Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members")
 
             # Write BUG contacts first with running count
             await cAwardFileWriter.write_tka_key_type_section(file, cls.ContactsForTKA_BUG, "BUG")
@@ -2743,8 +2761,8 @@ class cQSO:
         # Calculate total minutes
         total_minutes = sum(minutes for _, _, _, _, _, minutes in cls.ContactsForRC.values())
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'RC'), 'w', encoding='utf-8') as file:
-            await cAwardFileWriter.write_header(file, "Rag Chew", cConfig.MY_CALLSIGN, 60)
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'RC'), 'w', encoding='utf-8') as file:
+            await cAwardFileWriter.write_header(file, "Rag Chew", cConfig.MY_CALLSIGN, width=60)
             await file.write("\n")
             await file.write(f"Total QSOs: {len(cls.ContactsForRC)}\n")
             await file.write(f"Total Minutes: {total_minutes:,}\n")
@@ -2809,7 +2827,7 @@ class cQSO:
         qrp_1x_generator = all_qrp_contacts_generator()
         qrp_1x_first = next(qrp_1x_generator, None)
         if qrp_1x_first is not None:
-            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-1x'), 'w', encoding='utf-8') as file:
+            async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-1x'), 'w', encoding='utf-8') as file:
                 await cAwardFileWriter.write_header(file, "1xQRP", cConfig.MY_CALLSIGN)
 
                 total_points: float = 0.0
@@ -2834,7 +2852,7 @@ class cQSO:
         qrp_2x_generator = qrp_2x_contacts_generator()
         qrp_2x_first = next(qrp_2x_generator, None)
         if qrp_2x_first is not None:
-            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-2x'), 'w', encoding='utf-8') as file:
+            async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-2x'), 'w', encoding='utf-8') as file:
                 await cAwardFileWriter.write_header(file, "2xQRP", cConfig.MY_CALLSIGN)
 
                 total_points: float = 0.0
@@ -2858,7 +2876,7 @@ class cQSO:
     @classmethod
     async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str, str, str]]) -> None:
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
             iPoints = 0
             for index, (qso_date, prefix, member_number, first_name, callsign, band) in enumerate(
                 sorted(QSOs.values(), key=lambda q: q[1]), start=1
@@ -2877,7 +2895,7 @@ class cQSO:
         QSOs = QSOs_dict.values()
         QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as File:
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as File:
             for Count, (QsoDate, TheirMemberNumber, MainCallSign, MemberName, State, Band) in enumerate(QSOs):
                 Date = cDateTimeFormatter.format_date(QsoDate)
                 # Format to match gold standard: line_num date callsign member_num name state band
@@ -2892,7 +2910,7 @@ class cQSO:
 
         QSOsByState = {data[0]: data for data in sorted(QSOs_dict.values(), key=lambda q: q[0])}
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as file:
             # Sort states alphabetically for consistent output
             for state in sorted(US_STATES):
                 if state in QSOsByState:
@@ -2910,7 +2928,7 @@ class cQSO:
     @classmethod
     async def track_brag_async(cls, QSOs: dict[str, tuple[str, str, str, float]]) -> None:
 
-        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'BRAG'), 'w', encoding='utf-8') as file:
+        async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'BRAG'), 'w', encoding='utf-8') as file:
             for count, (qso_date, their_member_number, main_callsign, qso_freq) in enumerate(
                 sorted(QSOs.values()), start=1
             ):
@@ -3479,6 +3497,7 @@ class cAwards:
             log_band=qso.log_band,
             log_band_nr=band_nr,
             log_mode=qso.log_mode,
+            
             log_state=state,
             log_country=qso.log_country,
             log_dxcc=dxcc,
@@ -4072,7 +4091,7 @@ class cSKCC:
     _tx8_pattern: ClassVar[re.Pattern[str]] = re.compile(r"\*Tx8: (.*?)$")
     _suffix_strip_pattern: ClassVar[re.Pattern[str]] = re.compile(r'[A-Z]+$')
     _member_number_pattern: ClassVar[re.Pattern[str]] = re.compile(r'^([0-9]+)[CTS]{0,1}$')
-    
+
     # DXCC entity list - hardcoded for reliability and efficiency
     # Generated from SKCC member database (158 entities with SKCC members)
     dxcc_countries: ClassVar[dict[str, str]] = {
