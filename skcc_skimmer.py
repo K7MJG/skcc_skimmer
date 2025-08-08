@@ -1151,9 +1151,10 @@ class cSPOTS:
     async def handle_spots_task(cls) -> None:
         generator = cRBN.feed_generator(cConfig.MY_CALLSIGN)
 
-        async for data in generator:
+        async for line_bytes in generator:
             try:
-                line = data.rstrip().decode("ascii", errors="replace")
+                # Line is already a complete line from readline()
+                line = line_bytes.rstrip().decode("ascii", errors="replace")
                 await cSPOTS.handle_spot_async(line)
             except Exception as e:
                 # Don't let processing errors crash the whole task
@@ -4895,13 +4896,14 @@ class cRBN:
                     # Main data reading loop with connection health monitoring
                     while True:
                         try:
-                            # Read data with timeout to detect stale connections
-                            data = await asyncio.wait_for(reader.read(8192), timeout=600.0)  # 10 minute timeout
-                            if not data:  # EOF received
+                            # Read line-by-line for immediate spot processing (no buffering)
+                            # RBN sends one spot per line, so readline() ensures immediate processing
+                            line = await asyncio.wait_for(reader.readline(), timeout=600.0)  # 10 minute timeout
+                            if not line:  # EOF received
                                 print("RBN connection closed by server.")
                                 break
 
-                            yield data
+                            yield line
 
                         except asyncio.TimeoutError:
                             print("No data received from RBN for 10 minutes. Connection may be stale.")
