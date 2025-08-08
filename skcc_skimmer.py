@@ -1361,8 +1361,8 @@ class cQSO:
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
     QRPQualifiedQSOs: list[QRPQSOData]  # Phase 1: QRP-qualified QSOs for band-by-band processing
-    ContactsForDXC:   dict[str, tuple[str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call)
-    ContactsForDXQ:   dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call)
+    ContactsForDXC:   dict[str, tuple[str, str, str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call, name, band)
+    ContactsForDXQ:   dict[str, tuple[str, str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, band, dxcc_code)
     DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
     ContactsForTKA_SK:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Straight Key
     ContactsForTKA_BUG: dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Bug
@@ -1374,7 +1374,7 @@ class cQSO:
 
     QSOsByMemberNumber: dict[str, list[str]]
 
-    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
+    QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1441,6 +1441,14 @@ class cQSO:
 
             await asyncio.sleep(3)
 
+    @classmethod
+    def get_country_name(cls, dxcc_code: str) -> str:
+        """Get country name from DXCC code. Returns formatted code if not found."""
+        # DXCC codes are already normalized to 3-digit strings when stored
+        # Look up in the hardcoded DXCC dictionary
+        # If not found, return formatted code (shouldn't happen with current data)
+        return cSKCC.dxcc_countries.get(dxcc_code, f"DXCC-{dxcc_code}")
+    
     @classmethod
     def calculate_current_award_level(cls, Class: str, Total: int) -> int:
         """
@@ -1754,7 +1762,7 @@ class cQSO:
         return remaining, x_factor
 
     @classmethod
-    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str]]:
+    def _parse_adi_generator(cls, file_path: str) -> Iterator[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]:
         # Streaming ADI parser that reads file in chunks
         chunk_size = 65536  # 64KB chunks
         buffer = ""
@@ -1806,7 +1814,7 @@ class cQSO:
                             break
 
     @classmethod
-    def _process_adi_fields(cls, fields: dict[str, str]) -> tuple[str, str, str, float, str, str, str, str, str, int, str, str, str, str] | None:
+    def _process_adi_fields(cls, fields: dict[str, str]) -> tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str] | None:
         # Helper method to process ADI fields into QSO tuple
         # Handle alternate field names
         if 'QSO_DATE_OFF' in fields and 'QSO_DATE' not in fields:
@@ -1858,9 +1866,9 @@ class cQSO:
                 skcc_number = ''
                 skcc_suffix = ''
 
-        # Normalize DXCC code to integer to prevent duplicates (e.g., "001" -> 1)
+        # Get DXCC code as string, pad with zeros to ensure 3 digits
         dxcc_str = fields.get('DXCC', '')
-        dxcc_code = int(dxcc_str) if dxcc_str and dxcc_str.isdigit() else 0
+        dxcc_code = dxcc_str.zfill(3) if dxcc_str and dxcc_str.isdigit() else ''
 
         # Apply Xojo's character replacement for callsigns (? → 0)
         callsign = fields['CALL'].replace('?', '0').upper()
@@ -2631,35 +2639,56 @@ class cQSO:
             await file.write("\nEnd of List\n")
 
     @classmethod
-    async def award_dx_async(cls) -> None:
-        # Write DXC file (unique countries)
-        if cls.ContactsForDXC:
-            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'DXC'), 'w', encoding='utf-8') as file:
-                await cAwardFileWriter.write_header(file, "DXC", cConfig.MY_CALLSIGN)
-                await file.write("\n")
-                await file.write("DXCC  Date        CallSign     Member#\n")
-                await file.write("-" * 40 + "\n")
+    async def _write_dx_award_file(
+        cls, 
+        award_type: str, 
+        contacts: dict[str, Any], 
+        footer_label: str
+    ) -> None:
+        """Helper to write DXC or DXQ award file with common formatting."""
+        async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, award_type), 'w', encoding='utf-8') as file:
+            await cAwardFileWriter.write_header(file, award_type, cConfig.MY_CALLSIGN)
+            await file.write("\n")
+            await file.write("  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band\n")
+            await file.write("-" * 85 + "\n")
 
-                for dxcc_code, (qso_date, member_number, callsign) in sorted(cls.ContactsForDXC.items()):
+            count = 0
+            # Sort DXC by DXCC code, DXQ by date
+            if award_type == 'DXC':
+                # DXC: iterate by DXCC code
+                # ContactsForDXC is dict[str, tuple[str, str, str, str, str]]
+                for dxcc_code, contact_tuple in sorted(contacts.items()):
+                    qso_date, member_number, callsign, name, band = contact_tuple
+                    count += 1
                     date_str = cDateTimeFormatter.format_date(qso_date)
-                    await file.write(f"{dxcc_code:>4}  {date_str}  {callsign:<12} {member_number}\n")
+                    country_name = cls.get_country_name(dxcc_code)
+                    display_name = (name[:10] if len(name) > 10 else name) if name else ''
+                    await file.write(f"{count:3}  {date_str}  {callsign:<12} {display_name:<11} {member_number:<7} {dxcc_code:>4}  {country_name:<20} {band}\n")
+            else:  # DXQ
+                # DXQ: iterate by member, sorted by date
+                # ContactsForDXQ is dict[str, tuple[str, str, str, str, str, str]]
+                for member_number, contact_tuple in sorted(contacts.items(), key=lambda x: x[1][0]):
+                    qso_date, _, callsign, name, band, dxcc_code = contact_tuple
+                    count += 1
+                    date_str = cDateTimeFormatter.format_date(qso_date)
+                    country_name = cls.get_country_name(dxcc_code) if dxcc_code else 'Unknown'
+                    display_name = (name[:10] if len(name) > 10 else name) if name else ''
+                    await file.write(f"{count:3}  {date_str}  {callsign:<12} {display_name:<11} {member_number:<7} {dxcc_code:>4}  {country_name:<20} {band}\n")
 
-                await file.write(f"\nTotal Countries: {len(cls.ContactsForDXC)} (Need: 100)\n")
-                await file.write(f"Progress: {len(cls.ContactsForDXC):.1f}%\n")
+            await file.write("-" * 85 + "\n")
+            await file.write(f"{footer_label}: {len(contacts)} (Need: 100)\n")
+            await file.write(f"Progress: {len(contacts):.1f}%\n")
+
+    @classmethod
+    async def award_dx_async(cls) -> None:
+        """Write DXC and DXQ award files."""
+        # Write DXC file (countries)
+        if cls.ContactsForDXC:
+            await cls._write_dx_award_file('DXC', cls.ContactsForDXC, 'Total Countries')
 
         # Write DXQ file (foreign member QSOs)
         if cls.ContactsForDXQ:
-            async with aiofiles.open(cFilePathBuilder.qso_file_path(cConfig.MY_CALLSIGN, 'DXQ'), 'w', encoding='utf-8') as file:
-                await cAwardFileWriter.write_header(file, "DXQ", cConfig.MY_CALLSIGN)
-                await file.write("Date        CallSign     Member#\n")
-                await file.write("-" * 35 + "\n")
-
-                for member_number, (qso_date, _, callsign) in sorted(cls.ContactsForDXQ.items(), key=lambda x: x[1][0]):
-                    date_str = cDateTimeFormatter.format_date(qso_date)
-                    await file.write(f"{date_str}  {callsign:<12} {member_number}\n")
-
-                await file.write(f"\nTotal Foreign Member QSOs: {len(cls.ContactsForDXQ)} (Need: 100)\n")
-                await file.write(f"Progress: {len(cls.ContactsForDXQ):.1f}%\n")
+            await cls._write_dx_award_file('DXQ', cls.ContactsForDXQ, 'Total Foreign Member QSOs')
 
     @classmethod
     async def award_tka_async(cls) -> None:
@@ -3081,7 +3110,7 @@ class cAwards:
         log_mode: str
         log_state: str
         log_country: str
-        log_dxcc: int
+        log_dxcc: str
         log_tx_pwr: str
         log_rx_pwr: str
         log_key_type: str
@@ -3108,7 +3137,7 @@ class cAwards:
         log_mode: str
         log_state: str
         log_country: str
-        log_dxcc: int
+        log_dxcc: str
         log_skcc_nr: str
         log_skcc: str
         log_tx_pwr: str
@@ -3424,11 +3453,11 @@ class cAwards:
             state = "MD"
 
         # Determine DXCC code - use log value if present, otherwise member value
-        if qso.log_dxcc > 0:
+        if qso.log_dxcc and qso.log_dxcc != '000':
             dxcc = qso.log_dxcc
         else:
-            # Convert member DXCC to int (it's stored as string)
-            dxcc = int(mbr.mbr_dxc) if mbr.mbr_dxc and mbr.mbr_dxc.isdigit() else 0
+            # Get member DXCC as string, pad with zeros
+            dxcc = mbr.mbr_dxc.zfill(3) if mbr.mbr_dxc and mbr.mbr_dxc.isdigit() else ''
 
         # Use member name if log name is empty
         name = qso.log_name if qso.log_name else mbr.mbr_name
@@ -3523,23 +3552,23 @@ class cAwards:
         # DX Awards
         if qso.log_qso_date >= "20090614":
             log_dxcc = processed.log_dxcc
-            my_dx_code = int(self.ap_my_dx_code)
+            my_dx_code = self.ap_my_dx_code.zfill(3) if self.ap_my_dx_code else ''
 
-            if log_dxcc > 0:  # Valid DXCC code
+            if log_dxcc and log_dxcc != '000':  # Valid DXCC code
                 # DXQ is valid ONLY for Countries other than your home Country
                 if log_dxcc != my_dx_code:
                     processed.dxq_qso = "YES"
-                    processed.dx_code = f"{log_dxcc:03d}"
+                    processed.dx_code = log_dxcc
 
                 # DXC started later than DXQ
                 if qso.log_qso_date >= "20091219":
                     # DXC Allows one Contact in your home country
                     if log_dxcc == my_dx_code and not dxc_flag:
                         processed.dxc_qso = "YES"
-                        processed.dx_code = f"{log_dxcc:03d}"
+                        processed.dx_code = log_dxcc
                     if log_dxcc != my_dx_code:
                         processed.dxc_qso = "YES"
-                        processed.dx_code = f"{log_dxcc:03d}"
+                        processed.dx_code = log_dxcc
 
         # Prefix Award - started on 20130101
         if qso.log_qso_date >= "20130101":
@@ -3790,10 +3819,17 @@ class cAwards:
 
             # DX contacts (only first QSO per country/member) - also benefit from chronological
             if qso.dxc_qso == "YES" and qso.dx_code not in contacts['DXC']:
-                contacts['DXC'][qso.dx_code] = (date, member_num, callsign)
+                # Store additional fields for better reporting
+                name = qso.log_name if hasattr(qso, 'log_name') else ''
+                band = qso.log_band if hasattr(qso, 'log_band') else ''
+                contacts['DXC'][qso.dx_code] = (date, member_num, callsign, name, band)
 
             if qso.dxq_qso == "YES" and member_num not in contacts['DXQ']:
-                contacts['DXQ'][member_num] = (date, member_num, callsign)
+                # Store additional fields for better reporting (matching DXC format)
+                name = qso.log_name if hasattr(qso, 'log_name') else ''
+                band = qso.log_band if hasattr(qso, 'log_band') else ''
+                dxcc_code = qso.dx_code if hasattr(qso, 'dx_code') else ''
+                contacts['DXQ'][member_num] = (date, member_num, callsign, name, band, dxcc_code)
 
         # Process RC awards with Xojo's exact logic (ADI file order)
         # If same member as previous: only keep if longer than previous
@@ -4029,6 +4065,169 @@ class cSKCC:
     _tx8_pattern: ClassVar[re.Pattern[str]] = re.compile(r"\*Tx8: (.*?)$")
     _suffix_strip_pattern: ClassVar[re.Pattern[str]] = re.compile(r'[A-Z]+$')
     _member_number_pattern: ClassVar[re.Pattern[str]] = re.compile(r'^([0-9]+)[CTS]{0,1}$')
+    
+    # DXCC entity list - hardcoded for reliability and efficiency
+    # Generated from SKCC member database (158 entities with SKCC members)
+    dxcc_countries: ClassVar[dict[str, str]] = {
+        "001": "Canada",
+        "003": "Afghanistan",
+        "006": "Alaska",
+        "007": "Albania",
+        "014": "Armenia",
+        "015": "Asiatic Russia",
+        "016": "Auckland & Campbell Is.",
+        "021": "Balearic Is.",
+        "027": "Belarus",
+        "029": "Canary Is.",
+        "033": "Chagos Is.",
+        "046": "East Malaysia",
+        "048": "E. Kiribati (Line Is.)",
+        "050": "Mexico",
+        "052": "Estonia",
+        "054": "European Russia",
+        "060": "Bahamas",
+        "062": "Barbados",
+        "064": "Bermuda",
+        "066": "Belize",
+        "069": "Cayman Is.",
+        "070": "Cuba",
+        "072": "Dominican Republic",
+        "074": "El Salvador",
+        "076": "Guatemala",
+        "079": "Guadeloupe",
+        "080": "Honduras",
+        "088": "Panama",
+        "090": "Trinidad & Tobago",
+        "091": "Aruba",
+        "095": "Dominica",
+        "100": "Argentina",
+        "103": "Guam",
+        "104": "Bolivia",
+        "106": "Guernsey",
+        "108": "Brazil",
+        "110": "Hawaii",
+        "112": "Chile",
+        "114": "Isle of Man",
+        "116": "Colombia",
+        "120": "Ecuador",
+        "122": "Jersey",
+        "126": "Kaliningrad",
+        "130": "Kazakhstan",
+        "132": "Paraguay",
+        "135": "Kyrgyzstan",
+        "136": "Peru",
+        "137": "Republic of Korea",
+        "140": "Suriname",
+        "144": "Uruguay",
+        "145": "Latvia",
+        "146": "Lithuania",
+        "148": "Venezuela",
+        "149": "Azores",
+        "150": "Australia",
+        "158": "Vanuatu",
+        "162": "New Caledonia",
+        "163": "Papua New Guinea",
+        "165": "Mauritius",
+        "170": "New Zealand",
+        "175": "French Polynesia",
+        "179": "Moldova",
+        "181": "Mozambique",
+        "185": "Solomon Is.",
+        "190": "Samoa",
+        "192": "Ogasawara",
+        "202": "Puerto Rico",
+        "206": "Austria",
+        "209": "Belgium",
+        "212": "Bulgaria",
+        "214": "Corsica",
+        "215": "Cyprus",
+        "221": "Denmark",
+        "223": "England",
+        "224": "Finland",
+        "225": "Sardinia",
+        "227": "France",
+        "230": "Fed. Rep. of Germany",
+        "233": "Gibraltar",
+        "234": "S. Cook Is.",
+        "236": "Greece",
+        "237": "Greenland",
+        "239": "Hungary",
+        "242": "Iceland",
+        "245": "Ireland",
+        "248": "Italy",
+        "249": "St. Kitts & Nevis",
+        "254": "Luxembourg",
+        "256": "Madeira Is.",
+        "257": "Malta",
+        "260": "Monaco",
+        "263": "Netherlands",
+        "265": "Northern Ireland",
+        "266": "Norway",
+        "269": "Poland",
+        "272": "Portugal",
+        "275": "Romania",
+        "279": "Scotland",
+        "281": "Spain",
+        "284": "Sweden",
+        "285": "Virgin Is.",
+        "287": "Switzerland",
+        "288": "Ukraine",
+        "291": "USA",
+        "292": "Uzbekistan",
+        "294": "Wales",
+        "296": "Serbia",
+        "299": "West Malaysia",
+        "304": "Bahrain",
+        "308": "Costa Rica",
+        "312": "Cambodia",
+        "315": "Sri Lanka",
+        "318": "China",
+        "321": "Hong Kong",
+        "324": "India",
+        "327": "Indonesia",
+        "330": "Iran",
+        "333": "Iraq",
+        "336": "Israel",
+        "339": "Japan",
+        "348": "Kuwait",
+        "354": "Lebanon",
+        "363": "Mongolia",
+        "370": "Oman",
+        "372": "Pakistan",
+        "375": "Philippines",
+        "376": "Qatar",
+        "378": "Saudi Arabia",
+        "381": "Singapore",
+        "386": "Taiwan",
+        "387": "Thailand",
+        "390": "Turkey",
+        "391": "United Arab Emirates",
+        "400": "Algeria",
+        "408": "Central Africa",
+        "430": "Kenya",
+        "436": "Libya",
+        "442": "Mali",
+        "444": "Mauritania",
+        "446": "Morocco",
+        "450": "Nigeria",
+        "452": "Zimbabwe",
+        "453": "Reunion I.",
+        "456": "Senegal",
+        "462": "South Africa",
+        "464": "Namibia",
+        "474": "Tunisia",
+        "482": "Zambia",
+        "483": "Togo",
+        "497": "Croatia",
+        "499": "Slovenia",
+        "501": "Bosnia-Herzegovina",
+        "502": "Macedonia",
+        "503": "Czech Republic",
+        "504": "Slovak Republic",
+        "510": "Palestine",
+        "514": "Montenegro",
+        "518": "St Maarten",
+    }
 
     class cMemberEntry(TypedDict):
         name: str
@@ -4454,7 +4653,6 @@ class cSKCC:
                     # Override inactive member with active member
                     cls.members[call] = member_entry
                 # Otherwise keep existing entry (don't overwrite current calls with old calls)
-
 
     @classmethod
     def is_on_skcc_frequency(cls, frequency_khz: float, tolerance_khz: int = 10) -> bool:
