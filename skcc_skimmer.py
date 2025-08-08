@@ -243,12 +243,12 @@ class cUtil:
         """Print error message and exit with delay."""
         print(msg)
         cUtil.delayed_exit(exit_code)
-    
+
     @staticmethod
     def qso_file_path(callsign: str, award_type: str) -> str:
         """Generate QSO file path for a given callsign and award type."""
         return f'QSOs/{callsign}-{award_type}.txt'
-    
+
     @staticmethod
     def skipped_file_path(callsign: str) -> str:
         """Generate skipped QSOs file path for a given callsign."""
@@ -1026,7 +1026,7 @@ class cSked:
                     sprint_name, start_time, end_time = sprint_info
                     cDisplay.print('')
                     cDisplay.print('============ BRAG Warning =============')
-                    cDisplay.print(f'Contacts made during {sprint_name} will NOT count towards BRAG')
+                    cDisplay.print(f'Contacts made during {sprint_name} will NOT count towards BRAG (except on WARC bands: 60m, 30m, 17m, 12m)')
                     cDisplay.print(f'Sprint period: {start_time.to_datetime().strftime("%b %d %H:%M")}Z - {end_time.to_datetime().strftime("%b %d %H:%M")}Z')
                     cDisplay.print('=======================================')
 
@@ -3498,7 +3498,7 @@ class cAwards:
             log_band=qso.log_band,
             log_band_nr=band_nr,
             log_mode=qso.log_mode,
-            
+
             log_state=state,
             log_country=qso.log_country,
             log_dxcc=dxcc,
