@@ -928,6 +928,8 @@ class cDisplay:
 class cSked:
     _RegEx:          ClassVar[re.Pattern[str]] = re.compile('<span class="callsign">(.*?)<span>(?:.*?<span class="userstatus">(.*?)</span>)?')
     _Freq_RegEx:     ClassVar[re.Pattern[str]] = re.compile(r"\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$")
+    _K3Y_RegEx:      ClassVar[re.Pattern[str]] = re.compile(r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b', re.IGNORECASE)
+    _SKM_RegEx:      ClassVar[re.Pattern[str]] = re.compile(r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b', re.IGNORECASE)
     _SkedSite:       ClassVar[str | None] = None
 
     _PreviousLogins: ClassVar[dict[str, list[str]]] = {}
@@ -961,7 +963,10 @@ class cSked:
             if cls._FirstPass:
                 NewLogins: list[str] = []
             else:
-                NewLogins = list(set(SkedHit) - set(cls._PreviousLogins))
+                # Optimize set operations - cls._PreviousLogins is already a list
+                sked_set = set(SkedHit)
+                prev_set: set[str] = set(cls._PreviousLogins) if cls._PreviousLogins else set()
+                NewLogins = list(sked_set - prev_set)
 
             cDisplay.print('=========== ' + Heading + ' Sked Page ' + '=' * (16-len(Heading)))
 
@@ -1029,16 +1034,14 @@ class cSked:
 
         if 'K3Y' in cConfig.GOALS and Status:
             # K3Y processing logic here...
-            K3Y_RegEx = r'\b(K3Y)/([0-9]|KP4|KH6|KL7)\b'
-            SKM_RegEx = r'\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b'
-            # Use hoisted regex pattern
+            # Use hoisted regex patterns
             Freq_RegEx = cls._Freq_RegEx
 
-            Matches = re.search(K3Y_RegEx, Status, re.IGNORECASE)
+            Matches = cls._K3Y_RegEx.search(Status)
             if Matches:
                 Type, Station = Matches.group(1), Matches.group(2).upper()
             else:
-                Matches = re.search(SKM_RegEx, Status, re.IGNORECASE)
+                Matches = cls._SKM_RegEx.search(Status)
                 if Matches:
                     Type, Station = Matches.group(1), Matches.group(2).upper()
                 else:
@@ -1422,15 +1425,19 @@ class cQSO:
     async def watch_logfile_task(cls) -> NoReturn:
         while True:
             try:
-                if await aiofiles.os.path.exists(cConfig.ADI_FILE) and Path(cConfig.ADI_FILE).stat().st_mtime != cQSO.AdiFileReadTimeStamp:
-                    cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
+                if await aiofiles.os.path.exists(cConfig.ADI_FILE):
+                    # Cache stat result to avoid multiple calls
+                    file_stat = Path(cConfig.ADI_FILE).stat()
+                    if file_stat.st_mtime != cQSO.AdiFileReadTimeStamp:
+                        cDisplay.print(f"'{cConfig.ADI_FILE}' file is changing. Waiting for write to finish...")
 
-                    # Wait until file size stabilizes
-                    while True:
-                        Size = Path(cConfig.ADI_FILE).stat().st_size
-                        await asyncio.sleep(1)
-                        if Path(cConfig.ADI_FILE).stat().st_size == Size:
-                            break
+                        # Wait until file size stabilizes
+                        while True:
+                            current_size = Path(cConfig.ADI_FILE).stat().st_size
+                            await asyncio.sleep(1)
+                            new_size = Path(cConfig.ADI_FILE).stat().st_size
+                            if new_size == current_size:
+                                break
 
                     await cls.refresh_async()
 
