@@ -2,11 +2,11 @@
 REM SKCC Skimmer Runtime Script for Windows using uv
 REM Uses uv for fast dependency management and virtual environment handling
 
+REM Change to the batch file's directory (fixes running from wrong location)
+cd /d "%~dp0"
+
 REM Enable delayed variable expansion for use in for loops
 setlocal enabledelayedexpansion
-
-REM Prevent Python from creating __pycache__ directories
-set PYTHONDONTWRITEBYTECODE=1
 
 REM Check if uv is installed
 uv --version >nul 2>&1

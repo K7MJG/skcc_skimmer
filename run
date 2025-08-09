@@ -4,8 +4,8 @@
 
 set -e  # Exit on any error
 
-# Prevent Python from creating __pycache__ directories
-export PYTHONDONTWRITEBYTECODE=1
+# Change to the script's directory (fixes running from wrong location)
+cd "$(dirname "$0")" || exit 1
 
 # Check if uv is installed
 if ! command -v uv >/dev/null 2>&1; then
