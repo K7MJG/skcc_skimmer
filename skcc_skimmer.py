@@ -2574,7 +2574,9 @@ class cQSO:
         qsos_processed = stats.get('qsos_processed', 0)
         qsos_added = stats.get('qsos_added', 0)
         qsos_skipped = stats.get('qsos_skipped', 0)
+        qsos_missing_skcc = stats.get('qsos_missing_skcc', 0)
         skipped_list = stats.get('skipped_list', [])
+        need_skcc_list = stats.get('need_skcc_list', [])
 
         # Print processing summary with WARNING if QSOs were skipped
         if qsos_skipped > 0:
@@ -2582,6 +2584,13 @@ class cQSO:
             skipped_file = cUtil.skipped_file_path(cConfig.MY_CALLSIGN)
             print(f"\nWARNING: {qsos_skipped:,} {qso_word} skipped (non-CW, pre-membership, non-SKCC, etc.)")
             print(f"         See {skipped_file} for details")
+
+        # Warn about QSOs that need SKCC numbers to count
+        if qsos_missing_skcc > 0:
+            qso_word = "QSO" if qsos_missing_skcc == 1 else "QSOs"
+            need_skcc_file = f'QSOs/{cConfig.MY_CALLSIGN}-Need_SKCC_Numbers.txt'
+            print(f"\nWARNING: {qsos_missing_skcc:,} {qso_word} with SKCC members require SKCC numbers in log to count for awards")
+            print(f"         See {need_skcc_file} for details")
 
         # Show processing summary
         qso_plural = "QSO" if qsos_processed == 1 else "QSOs"
@@ -2624,6 +2633,10 @@ class cQSO:
         # Write skipped QSOs file if any were skipped
         if skipped_list:
             await cls.write_skipped_qsos_async(skipped_list)
+        
+        # Write Need_SKCC_Numbers file if any QSOs need SKCC numbers
+        if need_skcc_list:
+            await cls.write_need_skcc_qsos_async(need_skcc_list)
 
         # Award files
         await cls.award_cts_async('C', cls.ContactsForC)
@@ -2665,6 +2678,26 @@ class cQSO:
 
             await file.write(f"\nTotal skipped: {len(skipped_list):,}\n")
             await file.write("\nEnd of List\n")
+
+    @classmethod
+    async def write_need_skcc_qsos_async(cls, need_skcc_list: list[tuple[str, str, str]]) -> None:
+        """Write file listing QSOs that need SKCC numbers to count for awards."""
+        filename = f'QSOs/{cConfig.MY_CALLSIGN}-Need_SKCC_Numbers.txt'
+        async with aiofiles.open(filename, 'w', encoding='utf-8') as file:
+            await file.write(f"QSOs Requiring SKCC Numbers for {cConfig.MY_CALLSIGN}\n")
+            await file.write("=" * 70 + "\n\n")
+            await file.write("These QSOs are with SKCC members but require SKCC numbers in your log\n")
+            await file.write("to count for awards (multiple members have held these callsigns).\n\n")
+            
+            # Sort by date and time descending (newest first)
+            sorted_list = sorted(need_skcc_list, key=lambda x: (x[0], x[1]), reverse=True)
+            
+            for qso_entry in sorted_list:
+                await file.write(qso_entry[2] + "\n")  # Write the formatted entry
+            
+            await file.write(f"\nTotal QSOs needing SKCC numbers: {len(need_skcc_list):,}\n")
+            await file.write("\nAdd the SKCC numbers to your log file and re-run skcc_skimmer\n")
+            await file.write("to include these QSOs in your award totals.\n")
 
     @classmethod
     async def _write_dx_award_file(
@@ -3282,7 +3315,7 @@ class cAwards:
 
         skcc_list: dict[str, int] = {}
         return_skcc: str | None = None
-        
+
         # Pre-compute uppercase once to avoid repeated calls (optimization)
         log_call_upper = log_call.upper()
 
@@ -3336,8 +3369,10 @@ class cAwards:
         """
         self.processed_qsos = []
         self.qsos_skipped = []
+        self.qsos_need_skcc: list[tuple[str, str, str]] = []  # Track QSOs that need SKCC numbers (date, time, formatted_entry)
         self.qsos_processed = 0
         self.qsos_added = 0
+        self.qsos_missing_skcc = 0  # Count QSOs that need SKCC numbers to count
         dxc_flag = False  # Track if home country used for DXC
 
         # Filter QSOs: date >= user join date AND mode = CW
@@ -3383,10 +3418,22 @@ class cAwards:
                                 skip_reason = "Not an SKCC member"
                             else:
                                 skip_reason = "Multiple members have had this callsign (segments), SKCC # required"
+                                self.qsos_missing_skcc += 1  # This QSO needs SKCC number to count
+                                # Track this QSO for the Need_SKCC_Numbers file - use same format as skipped QSOs
+                                date_info = cDateTimeFormatter.format_date(qso.log_qso_date)
+                                time_info = cDateTimeFormatter.format_time(qso.log_time_on) if qso.log_time_on else "00:00:00Z"
+                                need_skcc_entry = (qso.log_qso_date, qso.log_time_on, f"Date: {date_info}     Time: {time_info}     Call: {log_call}")
+                                self.qsos_need_skcc.append(need_skcc_entry)
                         else:
                             skip_reason = "Not an SKCC member"
                     elif len(matching_members) > 1:
                         skip_reason = "Multiple members have had this callsign, SKCC # required"
+                        self.qsos_missing_skcc += 1  # This QSO needs SKCC number to count
+                        # Track this QSO for the Need_SKCC_Numbers file - use same format as skipped QSOs
+                        date_info = cDateTimeFormatter.format_date(qso.log_qso_date)
+                        time_info = cDateTimeFormatter.format_time(qso.log_time_on) if qso.log_time_on else "00:00:00Z"
+                        need_skcc_entry = (qso.log_qso_date, qso.log_time_on, f"Date: {date_info}     Time: {time_info}     Call: {log_call}")
+                        self.qsos_need_skcc.append(need_skcc_entry)
                     else:
                         skip_reason = "No valid SKCC match"
 
@@ -3797,7 +3844,9 @@ class cAwards:
                 'qsos_processed': processor_adi.qsos_processed,
                 'qsos_added': processor_adi.qsos_added,
                 'qsos_skipped': len(processor_adi.qsos_skipped),
-                'skipped_list': processor_adi.qsos_skipped
+                'qsos_missing_skcc': processor_adi.qsos_missing_skcc,
+                'skipped_list': processor_adi.qsos_skipped,
+                'need_skcc_list': processor_adi.qsos_need_skcc  # list of tuples (date, time, formatted_entry)
             }
         }
 
