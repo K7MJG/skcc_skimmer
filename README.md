@@ -8,7 +8,7 @@ SKCC Skimmer connects to the Reverse Beacon Network (RBN) to help you find SKCC 
 - No prerequisites - just extract and run!
 
 ### Source Code Version
-1. **Python 3.11 or higher** (will be installed automatically if missing)
+1. **Python 3.13 or higher** (will be installed automatically if missing)
 2. **uv** - Modern Python package manager
    - Windows: Download from https://github.com/astral-sh/uv
    - Linux/Mac: `curl -LsSf https://astral.sh/uv/install.sh | sh`
@@ -112,7 +112,7 @@ Open a terminal and type:
 ```
 
 The first time you run the source code version, it will:
-1. Check if Python 3.11+ is installed (install if needed)
+1. Check if Python 3.13+ is installed (install if needed)
 2. Create a virtual environment
 3. Install dependencies
 4. Start SKCC Skimmer
