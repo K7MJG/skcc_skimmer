@@ -3282,13 +3282,15 @@ class cAwards:
 
         skcc_list: dict[str, int] = {}
         return_skcc: str | None = None
-
+        
+        # Pre-compute uppercase once to avoid repeated calls (optimization)
+        log_call_upper = log_call.upper()
 
         if "/" in log_call:
             # Log_Call has slants - Call may either exist "as-is", or may need to be broken into call segments
 
             # Try to find member with full callsign including slashes
-            matching_members = self.callsign_db.get(log_call.upper(), [])
+            matching_members = self.callsign_db.get(log_call_upper, [])
 
             if matching_members:
                 # Call exists "as-is" - Add ALL matching member SKCC Numbers to the SKCC Number List
@@ -3296,14 +3298,15 @@ class cAwards:
                     skcc_list[mbr.mbr_skcc_nr] = 1
             else:
                 # No matches for Log_Call with slants - Look for matches of any call segments
-                call_segments = log_call.split("/")
+                # Split the uppercase version to avoid calling .upper() in the loop
+                call_segments = log_call_upper.split("/")
                 for segment in call_segments:
-                    segment_members = self.callsign_db.get(segment.upper(), [])
+                    segment_members = self.callsign_db.get(segment, [])  # Already uppercase
                     for mbr in segment_members:
                         skcc_list[mbr.mbr_skcc_nr] = 1
         else:
             # Log_Call does not have slants - Add ALL matching member SKCC Numbers to the SKCC Number List
-            matching_members = self.callsign_db.get(log_call.upper(), [])
+            matching_members = self.callsign_db.get(log_call_upper, [])
             for mbr in matching_members:
                 skcc_list[mbr.mbr_skcc_nr] = 1
 
@@ -3368,12 +3371,14 @@ class cAwards:
                 mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
                 if mbr_skcc_nr is None:
                     # Check why it failed
-                    matching_members = self.callsign_db.get(log_call.upper(), [])
+                    # Pre-compute uppercase to avoid repeated calls
+                    log_call_upper = log_call.upper()
+                    matching_members = self.callsign_db.get(log_call_upper, [])
                     if not matching_members:
                         # Check slashed calls
                         if "/" in log_call:
-                            segments = log_call.split("/")
-                            segment_matches = any(self.callsign_db.get(seg.upper(), []) for seg in segments)
+                            segments = log_call_upper.split("/")  # Use pre-computed uppercase
+                            segment_matches = any(self.callsign_db.get(seg, []) for seg in segments)
                             if not segment_matches:
                                 skip_reason = "Not an SKCC member"
                             else:
