@@ -2544,11 +2544,13 @@ class cQSO:
                 if join_date and join_date < qso_date:
                     during_sprint = cSKCC.is_during_sprint(fast_qso_date)
 
-                    if not qso_freq:
-                        continue
-
-                    on_warc_freq = cSKCC.is_on_warc_frequency(qso_freq)
-                    brag_okay = on_warc_freq or (not during_sprint)
+                    # If no frequency, treat as non-WARC (can be excluded during sprints)
+                    if qso_freq:
+                        on_warc_freq = cSKCC.is_on_warc_frequency(qso_freq)
+                        brag_okay = on_warc_freq or (not during_sprint)
+                    else:
+                        # No frequency data - only counts if not during sprint
+                        brag_okay = not during_sprint
 
                     # Only add first contact with each member (matches Xojo logic)
                     if member_number not in brag_contacts and brag_okay:
