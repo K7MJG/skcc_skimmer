@@ -438,7 +438,7 @@ class cConfig:
 
         cls.config_file = await read_skcc_skimmer_cfg_async()
 
-        cls.MY_CALLSIGN = cls.config_file.get('MY_CALLSIGN', '')
+        cls.MY_CALLSIGN = cls.config_file.get('MY_CALLSIGN', '').upper()
         cls.ADI_FILE = cls.config_file.get('ADI_FILE', '')
         cls.MY_GRIDSQUARE = cls.config_file.get('MY_GRIDSQUARE', '')
         cls.GOALS = set()
@@ -4915,12 +4915,13 @@ class cRBN:
 
             cls._connected = False
             connection_succeeded = False
-            attempted_protocols: list[str] = []
+            attempted_protocols: set[str] = set()  # Use set to avoid duplicates
             error_messages: list[str] = []
+            last_error_per_protocol: dict[str, str] = {}  # Track only last error per protocol
 
             for family, ip in addresses:
                 protocol: str = "IPv6" if family == socket.AF_INET6 else "IPv4"
-                attempted_protocols.append(protocol)
+                attempted_protocols.add(protocol)  # Add to set instead of append to list
 
                 try:
                     # Add connection timeout
@@ -4978,17 +4979,25 @@ class cRBN:
                 except asyncio.TimeoutError:
                     # Silent failure for IPv6, log for IPv4
                     if protocol == "IPv4":
-                        error_messages.append(f"Connection timeout ({protocol})")
+                        last_error_per_protocol[protocol] = "Connection timeout"
                 except (asyncio.IncompleteReadError, ConnectionResetError, BrokenPipeError) as e:
                     # Silent failure for IPv6, log for IPv4
                     if protocol == "IPv4":
-                        error_messages.append(f"Connection error ({protocol}): {type(e).__name__}")
+                        last_error_per_protocol[protocol] = f"Connection error: {type(e).__name__}"
                 except asyncio.CancelledError:
                     raise  # Ensure proper cancellation handling
                 except Exception as e:
                     # Silent failure for IPv6, log for IPv4
                     if protocol == "IPv4":
-                        error_messages.append(f"Unexpected error ({protocol}): {e}")
+                        # Clean up Windows error messages
+                        error_str = str(e)
+                        if "[WinError" in error_str:
+                            # Extract just the essential error message
+                            import re
+                            match = re.search(r'\[WinError \d+\] ([^;]+)', error_str)
+                            if match:
+                                error_str = match.group(1)
+                        last_error_per_protocol[protocol] = f"{error_str}"
                 finally:
                     # Cleanup connections properly
                     cls._connected = False
@@ -5004,14 +5013,18 @@ class cRBN:
                 retry_count += 1
                 backoff_time = min(5 * (2 ** min(retry_count - 1, 4)), 60)  # Exponential backoff, max 60s
 
-                # Show specific error messages, or generic message if no IPv4 errors
-                if error_messages:
-                    error_detail = "; ".join(error_messages)
-                    protocols_tried = " and ".join(attempted_protocols)
+                # Build error message from last error per protocol
+                if last_error_per_protocol:
+                    # Build clean error messages
+                    error_parts = []
+                    for proto in sorted(last_error_per_protocol.keys()):
+                        error_parts.append(f"{proto}: {last_error_per_protocol[proto]}")
+                    error_detail = "; ".join(error_parts)
+                    protocols_tried = " and ".join(sorted(attempted_protocols))
                     print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. {error_detail}. Retrying in {backoff_time} seconds...")
                 else:
                     # Only IPv6 was attempted and failed silently, or no specific errors
-                    protocols_tried = " and ".join(attempted_protocols)
+                    protocols_tried = " and ".join(sorted(attempted_protocols))
                     print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. Retrying in {backoff_time} seconds...")
 
                 await asyncio.sleep(backoff_time)
