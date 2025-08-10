@@ -4916,7 +4916,6 @@ class cRBN:
             cls._connected = False
             connection_succeeded = False
             attempted_protocols: set[str] = set()  # Use set to avoid duplicates
-            error_messages: list[str] = []
             last_error_per_protocol: dict[str, str] = {}  # Track only last error per protocol
 
             for family, ip in addresses:
@@ -5016,7 +5015,7 @@ class cRBN:
                 # Build error message from last error per protocol
                 if last_error_per_protocol:
                     # Build clean error messages
-                    error_parts = []
+                    error_parts: list[str] = []
                     for proto in sorted(last_error_per_protocol.keys()):
                         error_parts.append(f"{proto}: {last_error_per_protocol[proto]}")
                     error_detail = "; ".join(error_parts)
