@@ -276,7 +276,7 @@ class cUtil:
         print()
         print(f"File '{Filename}' does not exist.")
         print()
-        cUtil.delayed_exit()
+        await cUtil.async_delayed_exit()
 
     @staticmethod
     def is_in_bands(FrequencyKHz: float) -> bool:
@@ -4249,11 +4249,11 @@ class cSpotters:
                 async with session.get(RBN_STATUS_URL) as response:
                     if response.status != 200:
                         print(f'*** Fatal Error: Unable to retrieve spotters from RBN: HTTP {response.status}')
-                        cUtil.delayed_exit()
+                        await cUtil.async_delayed_exit()
                     html = await response.text()
         except aiohttp.ClientError as e:
             print(f'*** Fatal Error: Unable to retrieve spotters from RBN: {e}')
-            cUtil.delayed_exit()
+            await cUtil.async_delayed_exit()
 
         rows = cls._html_row_regex.findall(html)
 
@@ -4602,10 +4602,10 @@ class cSKCC:
                     setattr(cls, name, result)
             except asyncio.TimeoutError:
                 print("Timeout error downloading rosters.")
-                cUtil.delayed_exit(1)
+                await cUtil.async_delayed_exit(1)
             except Exception as e:
                 print(f"Error downloading rosters: {e}")
-                cUtil.delayed_exit(1)
+                await cUtil.async_delayed_exit(1)
 
     @classmethod
     def build_member_info(cls, CallSign: str) -> str:
@@ -5286,7 +5286,7 @@ async def main_loop() -> None:
 
     if cConfig.MY_CALLSIGN not in cSKCC.members:
         print(f"'{cConfig.MY_CALLSIGN}' is not a member of SKCC.")
-        cUtil.delayed_exit()
+        await cUtil.async_delayed_exit()
 
     # Initialize QSO data
     await cQSO.initialize_async()
