@@ -433,6 +433,7 @@ class cConfig:
     SPOTTER_RADIUS:           int
     SPOTTERS_NEARBY:          set[str]
     K3Y_YEAR:                 int
+    IPV4_ONLY:                bool = False  # Force IPv4-only connections (for VPN compatibility)
 
     config_file:              dict[str, Any]
 
@@ -492,6 +493,7 @@ class cConfig:
 
         cls.VERBOSE = bool(cls.config_file.get('VERBOSE', False))
         cls.LOG_BAD_SPOTS = bool(cls.config_file.get('LOG_BAD_SPOTS', False))
+        cls.IPV4_ONLY = bool(cls.config_file.get('IPV4_ONLY', False))
 
         cls.DISTANCE_UNITS = cls.config_file.get('DISTANCE_UNITS', 'mi')
         if cls.DISTANCE_UNITS not in ('mi', 'km'):
@@ -5061,13 +5063,20 @@ class cRBN:
 
     @staticmethod
     async def resolve_host(host: str, port: int) -> list[tuple[socket.AddressFamily, str]]:
-        """Resolve the host and return a list of (family, address) tuples, preferring IPv6."""
+        """Resolve the host and return a list of (family, address) tuples, preferring IPv6 unless IPV4_ONLY is set."""
         try:
-            addr_info = await asyncio.get_event_loop().getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
-            # Sort addresses to prioritize IPv6 (AF_INET6 before AF_INET)
+            # If IPV4_ONLY is set, only resolve IPv4 addresses
+            if cConfig.IPV4_ONLY:
+                addr_info = await asyncio.get_event_loop().getaddrinfo(
+                    host, port, family=socket.AF_INET, proto=socket.IPPROTO_TCP
+                )
+            else:
+                addr_info = await asyncio.get_event_loop().getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+
+            # Sort addresses to prioritize based on configuration
             return sorted(
                 [(ai[0], ai[4][0]) for ai in addr_info],
-                key=lambda x: x[0] != socket.AF_INET6  # Prioritize IPv6
+                key=lambda x: x[0] != socket.AF_INET6 if not cConfig.IPV4_ONLY else x[0] != socket.AF_INET
             )
         except socket.gaierror:
             return []  # Silently fail if DNS resolution fails
@@ -5266,6 +5275,9 @@ async def main_loop() -> None:
 
     if cConfig.VERBOSE:
         cConfig.PROGRESS_DOTS.ENABLED = False
+
+    if cConfig.IPV4_ONLY:
+        print("Note: IPv4-only mode enabled (VPN compatibility mode)")
 
     await cUtil.file_check_async(cConfig.ADI_FILE)
 
