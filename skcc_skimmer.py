@@ -53,6 +53,7 @@ import platform
 import re
 import signal
 import socket
+import ssl
 import string
 import sys
 import textwrap
@@ -233,6 +234,19 @@ class cUtil:
             for i in range(10, 0, -1):
                 print(f"\rProgram will close in {i} seconds...", end='', flush=True)
                 time.sleep(1)
+            print()
+        except KeyboardInterrupt:
+            print("\n\nExiting...")
+        sys.exit(exit_code)
+
+    @staticmethod
+    async def async_delayed_exit(exit_code: int = 1) -> NoReturn:
+        """Async version of delayed_exit for use in async functions."""
+        print()  # Blank line for spacing
+        try:
+            for i in range(10, 0, -1):
+                print(f"\rProgram will close in {i} seconds...", end='', flush=True)
+                await asyncio.sleep(1)
             print()
         except KeyboardInterrupt:
             print("\n\nExiting...")
@@ -1375,6 +1389,11 @@ class cQSO:
     ContactsForT:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
     ContactsForS:     dict[str, tuple[str, str, str, str, str, str]]  # (date, member_number, callsign, name, state, band)
 
+    # Stats tracking
+    QSOsProcessed: int = 0
+    QSOsAdded: int = 0
+    AutoMatchedList: ClassVar[list[tuple['cAwards.QSO', str, 'cAwards.Member']]] = []
+
     ContactsForWAS:   dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
     ContactsForWAS_C: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
     ContactsForWAS_T: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
@@ -1412,6 +1431,9 @@ class cQSO:
         cls.ContactsForC       = {}
         cls.ContactsForT       = {}
         cls.ContactsForS       = {}
+        cls.QSOsProcessed      = 0
+        cls.QSOsAdded          = 0
+        cls.AutoMatchedList    = []
         cls.ContactsForWAS     = {}
         cls.ContactsForWAS_C   = {}
         cls.ContactsForWAS_T   = {}
@@ -2577,6 +2599,7 @@ class cQSO:
         qsos_missing_skcc = stats.get('qsos_missing_skcc', 0)
         skipped_list = stats.get('skipped_list', [])
         need_skcc_list = stats.get('need_skcc_list', [])
+        auto_matched_list = stats.get('auto_matched_list', [])
 
         # Print processing summary with WARNING if QSOs were skipped
         if qsos_skipped > 0:
@@ -2591,6 +2614,17 @@ class cQSO:
             need_skcc_file = f'QSOs/{cConfig.MY_CALLSIGN}-Need_SKCC_Numbers.txt'
             print(f"\nWARNING: {qsos_missing_skcc:,} {qso_word} with SKCC members require SKCC numbers in log to count for awards")
             print(f"         See {need_skcc_file} for details")
+
+        # WARNING about auto-matched QSOs
+        if auto_matched_list:
+            qso_word = "QSO is" if len(auto_matched_list) == 1 else "QSOs are"
+            inspection_file = f'QSOs/{cConfig.MY_CALLSIGN}-Inspect_QSOs.txt'
+            print(f"\nWARNING: {len(auto_matched_list):,} {qso_word} being counted that have no SKCC number in your log.")
+            print("         These QSOs were automatically matched to SKCC members in the database.")
+            print("         If these are POTA, contest, or other non-SKCC QSOs, your award totals may be inflated.")
+            print(f"         See {inspection_file} for details.")
+            print("\n         Award totals shown include these QSOs (for compatibility with SKCCLogger).")
+            print("         Please review and add SKCC numbers only to valid SKCC QSOs in your log.")
 
         # Show processing summary
         qso_plural = "QSO" if qsos_processed == 1 else "QSOs"
@@ -2621,6 +2655,11 @@ class cQSO:
         cls.ContactsForBRAG = contacts['BRAG']
         cls.ContactsForRC = contacts['RC']
 
+        # Store stats for later use
+        cls.QSOsProcessed = qsos_processed
+        cls.QSOsAdded = qsos_added
+        cls.AutoMatchedList = auto_matched_list
+
         # Process K3Y QSOs separately if needed
         if 'K3Y' in cConfig.GOALS:
             cls._process_k3y_qsos()
@@ -2633,10 +2672,14 @@ class cQSO:
         # Write skipped QSOs file if any were skipped
         if skipped_list:
             await cls.write_skipped_qsos_async(skipped_list)
-        
+
         # Write Need_SKCC_Numbers file if any QSOs need SKCC numbers
         if need_skcc_list:
             await cls.write_need_skcc_qsos_async(need_skcc_list)
+
+        # Write Inspection file if any QSOs were auto-matched
+        if cls.AutoMatchedList:
+            await cls.write_inspection_file_async(cls.AutoMatchedList)
 
         # Award files
         await cls.award_cts_async('C', cls.ContactsForC)
@@ -2688,16 +2731,115 @@ class cQSO:
             await file.write("=" * 70 + "\n\n")
             await file.write("These QSOs are with SKCC members but require SKCC numbers in your log\n")
             await file.write("to count for awards (multiple members have held these callsigns).\n\n")
-            
+
             # Sort by date and time descending (newest first)
             sorted_list = sorted(need_skcc_list, key=lambda x: (x[0], x[1]), reverse=True)
-            
+
             for qso_entry in sorted_list:
                 await file.write(qso_entry[2] + "\n")  # Write the formatted entry
-            
+
             await file.write(f"\nTotal QSOs needing SKCC numbers: {len(need_skcc_list):,}\n")
-            await file.write("\nAdd the SKCC numbers to your log file and re-run skcc_skimmer\n")
-            await file.write("to include these QSOs in your award totals.\n")
+            await file.write("\nEnd of List\n")
+
+    @classmethod
+    async def write_inspection_file_async(cls, auto_matched_list: list[tuple['cAwards.QSO', str, 'cAwards.Member']]) -> None:
+        """Write inspection file for QSOs that were auto-matched without SKCC numbers."""
+        if not auto_matched_list:
+            return
+
+        filename = f'QSOs/{cConfig.MY_CALLSIGN}-Inspect_QSOs.txt'
+        async with aiofiles.open(filename, 'w', encoding='utf-8') as file:
+            # Header
+            await file.write("SKCC Skimmer - QSOs Requiring Inspection\n")
+            now_gmt = cFastDateTime.now_gmt()
+            generated_time = f"{now_gmt.FastDateTime[:8]} {now_gmt.FastDateTime[8:14]}Z"
+            await file.write(f"Generated: {generated_time}\n")
+            await file.write(f"Callsign: {cConfig.MY_CALLSIGN}\n")
+            my_skcc = cSKCC.members[cConfig.MY_CALLSIGN]['plain_number'] if cConfig.MY_CALLSIGN in cSKCC.members else 'Unknown'
+            await file.write(f"SKCC Nr: {my_skcc}\n")
+            await file.write("\n")
+            await file.write("WARNING: The following QSOs have no SKCC number in your log but were\n")
+            await file.write("automatically matched to SKCC members. Please verify these are valid SKCC QSOs.\n")
+            await file.write("\n")
+            await file.write("If these are POTA, contest, or casual QSOs, they should NOT count for SKCC awards.\n")
+            await file.write("To fix: Add SKCC numbers only to QSOs where numbers were actually exchanged.\n")
+            await file.write("\n")
+            await file.write("QSOs Automatically Matched (No SKCC Field in Log):\n")
+            await file.write("=" * 70 + "\n\n")
+
+            # Detail for each auto-matched QSO
+            for qso, _, mbr in auto_matched_list:
+                date_info = cDateTimeFormatter.format_date(qso.log_qso_date)
+                time_info = cDateTimeFormatter.format_time(qso.log_time_on) if qso.log_time_on else "00:00:00Z"
+
+                await file.write(f"Date: {date_info}     Time: {time_info}     Call: {qso.log_call}\n")
+                await file.write(f"  Band: {qso.log_band}     Mode: {qso.log_mode}")
+                if qso.log_comment:
+                    await file.write(f"     Comment: {qso.log_comment[:50]}")
+                await file.write("\n")
+                await file.write(f"  Auto-matched to: SKCC #{mbr.mbr_skcc} ({mbr.mbr_name})\n")
+
+                # Check for multiple holders of this callsign
+                call_upper = qso.log_call.upper()
+                all_members_with_call: list[str] = []
+                for callsign, member_entry in cSKCC.members.items():
+                    if callsign == call_upper or member_entry.get('primary_call') == call_upper:
+                        all_members_with_call.append(member_entry['plain_number'])
+
+                if len(all_members_with_call) > 1:
+                    await file.write(f"  ⚠️  Multiple members have used this call: {', '.join(all_members_with_call)}\n")
+
+                # Show which awards this QSO is counting toward
+                awards_affected: list[str] = []
+                if mbr.mbr_skcc_nr in cls.ContactsForC:
+                    awards_affected.append("C")
+                if mbr.mbr_skcc_nr in cls.ContactsForT:
+                    awards_affected.append("T")
+                if mbr.mbr_skcc_nr in cls.ContactsForS:
+                    awards_affected.append("S")
+
+                if awards_affected:
+                    await file.write(f"  Counting toward: {', '.join(awards_affected)}\n")
+
+                await file.write("\n")
+
+            # Summary section
+            await file.write("\nSummary:\n")
+            await file.write("=" * 70 + "\n")
+            total_qsos = cls.QSOsProcessed
+            qsos_with_skcc = total_qsos - len(auto_matched_list)
+            await file.write(f"Total QSOs in log: {total_qsos:,}\n")
+            await file.write(f"QSOs with SKCC numbers logged: {qsos_with_skcc:,}\n")
+            await file.write(f"QSOs auto-matched (shown above): {len(auto_matched_list):,}\n")
+
+            # Awards impact
+            await file.write("\nAwards Impact if These QSOs Are Invalid:\n")
+            c_count = len(cls.ContactsForC)
+            t_count = len(cls.ContactsForT)
+            s_count = len(cls.ContactsForS)
+
+            # Count how many auto-matched QSOs affect each award
+            c_impact = sum(1 for _, skcc, _ in auto_matched_list if skcc in cls.ContactsForC)
+            t_impact = sum(1 for _, skcc, _ in auto_matched_list if skcc in cls.ContactsForT)
+            s_impact = sum(1 for _, skcc, _ in auto_matched_list if skcc in cls.ContactsForS)
+
+            if c_impact > 0:
+                await file.write(f"- Centurion: Currently {c_count:,}, would be {c_count - c_impact:,} (-{c_impact})\n")
+            if t_impact > 0:
+                await file.write(f"- Tribune: Currently {t_count:,}, would be {t_count - t_impact:,} (-{t_impact})\n")
+            if s_impact > 0:
+                await file.write(f"- Senator: Currently {s_count:,}, would be {s_count - s_impact:,} (-{s_impact})\n")
+
+            # Action required
+            await file.write("\nAction Required:\n")
+            await file.write("=" * 70 + "\n")
+            await file.write("1. Review each QSO above\n")
+            await file.write("2. For valid SKCC QSOs: Add the SKCC number to your log\n")
+            await file.write("3. For invalid QSOs: Leave SKCC field empty (they won't count in future versions)\n")
+            await file.write("4. Re-run SKCC Skimmer after corrections\n")
+            await file.write("\n")
+            await file.write("Note: Current version counts these for compatibility with SKCCLogger v03.01.04.\n")
+            await file.write("Future versions may require SKCC numbers to be explicitly logged.\n")
 
     @classmethod
     async def _write_dx_award_file(
@@ -3298,8 +3440,9 @@ class cAwards:
         self.qsos_added = 0
         self.qsos_skipped: list[str] = []
         self.processed_qsos: list[cAwards.ProcessedQSO] = []
+        self.qsos_auto_matched: list[tuple[cAwards.QSO, str, cAwards.Member]] = []  # Track auto-matched QSOs
 
-    def get_skcc_from_call(self, log_call: str, log_skcc: str) -> str | None:
+    def get_skcc_from_call(self, log_call: str, log_skcc: str) -> tuple[str | None, bool]:
         """Direct Python translation of Xojo GetSKCCFromCall function.
 
         Args:
@@ -3307,14 +3450,15 @@ class cAwards:
             log_skcc: SKCC number from log (numeric only)
 
         Returns:
-            SKCC number string or None if no match
+            Tuple of (SKCC number string or None, True if auto-matched)
         """
         # Version v03.01.01C - Modified GetSKCCFromCall to leave SKCC of "NONE" unchanged
         if log_skcc == "NONE":
-            return log_skcc
+            return log_skcc, False
 
         skcc_list: dict[str, int] = {}
         return_skcc: str | None = None
+        auto_matched = False
 
         # Pre-compute uppercase once to avoid repeated calls (optimization)
         log_call_upper = log_call.upper()
@@ -3348,6 +3492,7 @@ class cAwards:
             # There is no SKCC Number in the Log - If there is only one SKCC Number in the SKCC List, then return it
             if len(skcc_list) == 1:
                 return_skcc = next(iter(skcc_list.keys()))
+                auto_matched = True  # This was auto-matched!
         else:
             # There was an SKCC Number in the log
             # Return the SKCC Number that matches the SKCC Number in the log - otherwise will return a blank
@@ -3356,7 +3501,7 @@ class cAwards:
                 return_skcc = log_skcc
 
 
-        return return_skcc
+        return return_skcc, auto_matched
 
     def process_qsos(self, qsos: list['cAwards.QSO']) -> list['cAwards.ProcessedQSO']:
         """Main QSO processing loop - direct translation of Xojo Run() method.
@@ -3399,11 +3544,12 @@ class cAwards:
 
             # Handle SKCC="NONE" special case
             skip_reason = None
+            was_auto_matched = False
             if log_skcc == "NONE":
                 mbr_skcc_nr = "NONE"
                 skip_reason = "SKCC field marked as NONE"
             else:
-                mbr_skcc_nr = self.get_skcc_from_call(log_call, log_skcc_pre)
+                mbr_skcc_nr, was_auto_matched = self.get_skcc_from_call(log_call, log_skcc_pre)
                 if mbr_skcc_nr is None:
                     # Check why it failed
                     # Pre-compute uppercase to avoid repeated calls
@@ -3480,6 +3626,10 @@ class cAwards:
                     self.processed_qsos.append(processed_qso)
                     self.qsos_added += 1
                     qso_added_to_db = True
+
+                    # Track auto-matched QSOs for inspection report
+                    if was_auto_matched:
+                        self.qsos_auto_matched.append((qso, mbr_skcc_nr, mbr))
 
                 else:
                     # QSO rejected: either before member join date or self-QSO
@@ -3656,7 +3806,7 @@ class cAwards:
             call_segments = qso.log_call.split("/")
             for pfx_call in call_segments:
                 # Extract prefix for each segment
-                pfx_skcc_nr = self.get_skcc_from_call(pfx_call, mbr.mbr_skcc_nr)
+                pfx_skcc_nr, _ = self.get_skcc_from_call(pfx_call, mbr.mbr_skcc_nr)
                 if pfx_skcc_nr:
                     processed.pfx_call = pfx_call
                     # Extract prefix exactly like Xojo does
@@ -3846,7 +3996,8 @@ class cAwards:
                 'qsos_skipped': len(processor_adi.qsos_skipped),
                 'qsos_missing_skcc': processor_adi.qsos_missing_skcc,
                 'skipped_list': processor_adi.qsos_skipped,
-                'need_skcc_list': processor_adi.qsos_need_skcc  # list of tuples (date, time, formatted_entry)
+                'need_skcc_list': processor_adi.qsos_need_skcc,  # list of tuples (date, time, formatted_entry)
+                'auto_matched_list': processor_adi.qsos_auto_matched  # list of tuples (QSO, skcc_nr, Member)
             }
         }
 
@@ -4665,16 +4816,44 @@ class cSKCC:
 
         url = SKCC_DATA_URL
 
+        # Create SSL context with certificate verification handling
+        ssl_context = ssl.create_default_context()
+
+        # On macOS, Python may have issues with certificate verification
+        # Try to use certifi if available, otherwise provide instructions
+        if platform.system() == 'Darwin':  # macOS
+            try:
+                import certifi  # type: ignore[import-not-found] # noqa: PLC0415
+                ssl_context.load_verify_locations(certifi.where())  # type: ignore[no-untyped-call]
+            except ImportError:
+                # If certifi is not available, try system certificates
+                # If that fails, we'll catch it below and provide instructions
+                pass
+
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            connector = aiohttp.TCPConnector(ssl=ssl_context)
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=30),
+                connector=connector
+            ) as session:
                 async with session.get(url) as response:
                     if response.status != 200:
                         print(f"Unexpected response code {response.status} from SKCC website")
-                        cUtil.delayed_exit(1)
+                        await cUtil.async_delayed_exit(1)
                     text = await response.text()
+        except (aiohttp.ClientConnectorSSLError, aiohttp.ClientSSLError) as e:
+            print(f"\nSSL Certificate Error when connecting to {url}")
+            print(f"Error: {e}")
+            print("\nThis is a common issue on macOS. To fix it, please run:")
+            print("  pip install certifi")
+            print("\nOr if using uv:")
+            print("  uv pip install certifi")
+            print("\nAlternatively, you can install certificates via:")
+            print("  brew install ca-certificates")
+            await cUtil.async_delayed_exit(1)
         except aiohttp.ClientError as e:
             print(f"Error retrieving SKCC data: {e}")
-            cUtil.delayed_exit(1)
+            await cUtil.async_delayed_exit(1)
 
         lines = text.splitlines()
 
@@ -4992,7 +5171,6 @@ class cRBN:
                         error_str = str(e)
                         if "[WinError" in error_str:
                             # Extract just the essential error message
-                            import re
                             match = re.search(r'\[WinError \d+\] ([^;]+)', error_str)
                             if match:
                                 error_str = match.group(1)
@@ -5015,9 +5193,8 @@ class cRBN:
                 # Build error message from last error per protocol
                 if last_error_per_protocol:
                     # Build clean error messages
-                    error_parts: list[str] = []
-                    for proto in sorted(last_error_per_protocol.keys()):
-                        error_parts.append(f"{proto}: {last_error_per_protocol[proto]}")
+                    error_parts: list[str] = [f"{proto}: {last_error_per_protocol[proto]}" 
+                                             for proto in sorted(last_error_per_protocol.keys())]
                     error_detail = "; ".join(error_parts)
                     protocols_tried = " and ".join(sorted(attempted_protocols))
                     print(f"Connection to {RBN_SERVER} failed over {protocols_tried}. {error_detail}. Retrying in {backoff_time} seconds...")
