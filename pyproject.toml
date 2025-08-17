@@ -13,3 +13,75 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = ["skcc_skimmer"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+# Strictest linting
+select = ["ALL"]
+ignore = [
+    "T201",     # print found
+    "D205",     # 1 blank line required between summary line and description
+    "N801",     # class name should use CapWords convention
+    "E501",     # line too long
+    "UP041",    # timeout parameter is redundant
+    "PTH123",   # open() should be replaced by Path.open()
+    "TRY003",   # avoid specifying long messages outside the exception class
+    "EM101",    # exception must not use a string literal
+    "EM102",    # exception must not use an f-string literal
+    "RUF100",   # unused noqa directive
+    "SIM117",   # use a single with statement
+    "W291",     # trailing whitespace
+    "D419",     # empty docstring
+    "D413",     # missing blank line after last section
+    "RET505",   # unnecessary elif after return
+    "PLR5501",  # consider using elif
+    "ARG004",   # unused static method argument
+    "D415",     # first line should end with a period
+    "D400",     # first line should end with a period, question mark, or exclamation point
+    "PTH118",   # os.path.join should be replaced by Path / operator
+    "D411",     # missing blank line before section
+    "D410",     # missing blank line after section
+    "PYI024",   # use collections.abc.Set instead of typing.Set
+    "COM812",   # trailing comma missing
+    "ISC001",   # implicitly concatenated string literals on one line
+    "UP015",    # prefer capture_output over sending stdout and stderr to PIPE
+    "SIM108",   # use ternary operator instead of if-else
+    "RET506",   # unnecessary else after return
+    "Q000",     # single quotes should be double quotes
+    "D208",     # Over indented docstring
+    "D101",     # Missing docstring
+    "D102",     # Missing docstring
+    "D105",     # Missing docstring
+    "D106",     # Missing docstring
+    "D107",     # Missing docstring
+    "C901",     # Too complex
+    "N803",     # Name should be lowercase
+    "N806",     # Name should be lowercase
+    "D204",     # Require blank line after docstring
+    "PLR2004",  # No magic numbers
+    "ERA001",   # No commented out code
+    "SIM102",   # Simplify if
+    "RUF020",   # NoReturn | T is equivalent to T - but NoReturn correctly indicates sys.exit()
+    "PLR0912",  # Too many branches
+    "PLR0915",  # Too many statements
+    "PLR0911",  # Too many return statements
+    "D202",     # No blank lines allowed after function docstring
+    "D212",     # Multiline docstring should start at the first line.
+    "D213",     # Multi-line docstring summary should start at the second line
+    "D401",     # First line of docstring should be in imperative mood
+    "BLE001",   # Do not catch blind exception: `Exception`
+    "PLR0913",  # Too many arguments in function definition (6 > 5)
+    "S110",     # `try`-`except`-`pass` detected, consider logging the exception
+    "D103",     # Missing docstring in public function
+    "E722",     # Do not use bare `except`
+    "RUF006",   # asyncio-dangling-task - ctrl-c watcher runs for program lifetime
+    "F841",     # Local variable is assigned to but never used
+    "FBT001",   # Boolean-typed positional argument in function definition
+    "FBT002",   # Boolean-typed positional argument in function definition
+    "S102",     # Use of `exec` detected
+    "I001",     # need to sort imports
+    "UP043",    # Unnecessary default type arguments - we want explicit for clarity
+]
