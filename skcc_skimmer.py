@@ -2621,12 +2621,16 @@ class cQSO:
         if auto_matched_list:
             qso_word = "QSO is" if len(auto_matched_list) == 1 else "QSOs are"
             inspection_file = f'QSOs/{cConfig.MY_CALLSIGN}-Inspect_QSOs.txt'
-            print(f"\nWARNING: {len(auto_matched_list):,} {qso_word} being counted that have no SKCC number in your log.")
-            print("         These QSOs were automatically matched to SKCC members in the database.")
-            print("         If these are POTA, contest, or other non-SKCC QSOs, your award totals may be inflated.")
-            print(f"         See {inspection_file} for details.")
-            print("\n         Award totals shown include these QSOs (for compatibility with SKCCLogger).")
-            print("         Please review and add SKCC numbers only to valid SKCC QSOs in your log.")
+            print()
+            print(f"WARNING: {len(auto_matched_list):,} {qso_word} being counted that have no SKCC number in your log.")
+            print( "         These QSOs were automatically matched to SKCC members in the database.")
+            print( "         If these are POTA, contest, or other non-SKCC QSOs, your award totals may be inflated.")
+            print(f"           (See {inspection_file} for details.)")
+            print()
+            print( "         Award totals shown include these QSOs (for compatibility with SKCCLogger).")
+            print()
+            print( "         Please review your log and reconcile these QSOs by either adding the operator's valid ")
+            print( "         SKCC number or specifying NONE in the SKCC field for non-SKCC QSOs.")
 
         # Show processing summary
         qso_plural = "QSO" if qsos_processed == 1 else "QSOs"
@@ -5202,7 +5206,7 @@ class cRBN:
                 # Build error message from last error per protocol
                 if last_error_per_protocol:
                     # Build clean error messages
-                    error_parts: list[str] = [f"{proto}: {last_error_per_protocol[proto]}" 
+                    error_parts: list[str] = [f"{proto}: {last_error_per_protocol[proto]}"
                                              for proto in sorted(last_error_per_protocol.keys())]
                     error_detail = "; ".join(error_parts)
                     protocols_tried = " and ".join(sorted(attempted_protocols))
