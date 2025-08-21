@@ -3689,8 +3689,10 @@ class cAwards:
             state = "MD"
 
         # Determine DXCC code - use log value if present, otherwise member value
+        # ALWAYS normalize to 3 digits with leading zeros to match Xojo's Format(dxcc, "000")
         if qso.log_dxcc and qso.log_dxcc != '000':
-            dxcc = qso.log_dxcc
+            # Normalize log DXCC to 3 digits (handles both "1" and "001" -> "001")
+            dxcc = qso.log_dxcc.zfill(3) if qso.log_dxcc.isdigit() else qso.log_dxcc
         else:
             # Get member DXCC as string, pad with zeros
             dxcc = mbr.mbr_dxc.zfill(3) if mbr.mbr_dxc and mbr.mbr_dxc.isdigit() else ''
@@ -4888,13 +4890,17 @@ class cSKCC:
             # Derive plain number by removing suffix letters from SKCCNR
             plain_number = cls._suffix_strip_pattern.sub('', number)
 
+            # Normalize DXCC code to 3 digits with leading zeros (matches Xojo's Format(dxcc, "000"))
+            # This handles inconsistent formats in skimmer-data.txt (e.g., "1" vs "001")
+            normalized_dxcode = dxcode.zfill(3) if dxcode.isdigit() else dxcode
+
             # Create member entry
             member_entry: cSKCC.cMemberEntry = {
                 'name'         : name,
                 'plain_number' : plain_number,
                 'skcc_number'  : number,  # Store original number with suffix
                 'spc'          : spc,
-                'dxcode'       : dxcode,
+                'dxcode'       : normalized_dxcode,
                 'join_date'    : cls.normalize_skcc_date(join_date),
                 'c_date'       : cls.normalize_skcc_date(c_date),
                 't_date'       : cls.normalize_skcc_date(t_date),
