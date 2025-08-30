@@ -59,7 +59,7 @@ import sys
 import textwrap
 import time
 import traceback
-from collections.abc import AsyncGenerator, Coroutine, Iterator
+from collections.abc import AsyncGenerator, Callable, Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -4302,7 +4302,6 @@ class cSpotters:
 class cSKCC:
     _roster_columns_regex: ClassVar[re.Pattern[str]] = re.compile(r"<td.*?>(.*?)</td>", re.IGNORECASE | re.DOTALL)
     _roster_rows_regex: ClassVar[re.Pattern[str]] = re.compile(r"<tr.*?>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
-    _tx8_pattern: ClassVar[re.Pattern[str]] = re.compile(r"\*Tx8: (.*?)$")
     _suffix_strip_pattern: ClassVar[re.Pattern[str]] = re.compile(r'[A-Z]+$')
     _member_number_pattern: ClassVar[re.Pattern[str]] = re.compile(r'^([0-9]+)[CTS]{0,1}$')
 
@@ -4533,70 +4532,57 @@ class cSKCC:
         # First, read the main SKCC data
         await cls.read_skcc_data_async()
 
-        # Always load C/T/S rosters first - needed for FYI messages and member suffix display
-        cts_tasks: list[Coroutine[Any, Any, dict[str, int]]] = []
-        cts_roster_names: list[str] = []
+        # Initialize all rosters (will be loaded individually if needed)
+        cls.centurion_level = {}
+        cls.tribune_level = {}
+        cls.senator_level = {}
 
-        cts_tasks.append(cls.read_level_list_async('Centurion', 'centurionlist.txt'))
-        cts_roster_names.append('centurion_level')
-        cts_tasks.append(cls.read_level_list_async('Tribune', 'tribunelist.txt'))
-        cts_roster_names.append('tribune_level')
-        cts_tasks.append(cls.read_level_list_async('Senator', 'senator.txt'))
-        cts_roster_names.append('senator_level')
-
-        # Load C/T/S rosters first
-        try:
-            cts_results = await asyncio.wait_for(asyncio.gather(*cts_tasks), timeout=30)
-            for name, result in zip(cts_roster_names, cts_results, strict=False):
-                setattr(cls, name, result)
-        except asyncio.TimeoutError:
-            print("Timeout loading C/T/S rosters")
-            cls.centurion_level = {}
-            cls.tribune_level = {}
-            cls.senator_level = {}
-        except Exception as e:
-            print(f"Error loading C/T/S rosters: {e}")
-            cls.centurion_level = {}
-            cls.tribune_level = {}
-            cls.senator_level = {}
-
-        # Now load optional rosters based on user's goals
+        # Collect all roster loading tasks based on goals and targets
         tasks: list[Coroutine[Any, Any, dict[str, int]]] = []
         roster_names: list[str] = []
 
+        if 'C' in cConfig.GOALS or 'C' in cConfig.TARGETS:
+            tasks.append(cls.read_roster_async('Centurion', 'operating_awards/centurion/centurion_list.php'))
+            roster_names.append('centurion_level')
+        if 'T' in cConfig.GOALS or 'T' in cConfig.TARGETS:
+            tasks.append(cls.read_roster_async('Tribune', 'operating_awards/tribune/tribune_list.php'))
+            roster_names.append('tribune_level')
+        if 'S' in cConfig.GOALS or 'S' in cConfig.TARGETS:
+            tasks.append(cls.read_roster_async('Senator', 'operating_awards/senator/senator_list.php'))
+            roster_names.append('senator_level')
         if 'WAS' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('WAS', 'operating_awards/was/was_roster.php'))
+            tasks.append(cls.read_roster_async('WAS', 'operating_awards/was/was_list.php'))
             roster_names.append('was_level')
         if 'WAS-C' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_roster.php'))
+            tasks.append(cls.read_roster_async('WAS-C', 'operating_awards/was-c/was-c_list.php'))
             roster_names.append('was_c_level')
         if 'WAS-T' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_roster.php'))
+            tasks.append(cls.read_roster_async('WAS-T', 'operating_awards/was-t/was-t_list.php'))
             roster_names.append('was_t_level')
         if 'WAS-S' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_roster.php'))
+            tasks.append(cls.read_roster_async('WAS-S', 'operating_awards/was-s/was-s_list.php'))
             roster_names.append('was_s_level')
         if 'P' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_roster.php'))
+            tasks.append(cls.read_roster_async('PFX', 'operating_awards/pfx/prefix_list.php'))
             roster_names.append('prefix_level')
         if 'DX' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_roster.php'))
+            tasks.append(cls.read_roster_async('DXQ', 'operating_awards/dx/dxq_list.php'))
             roster_names.append('dxq_level')
-            tasks.append(cls.read_roster_async('DXC', 'operating_awards/dx/dxc_roster.php'))
+            tasks.append(cls.read_roster_async('DXC', 'operating_awards/dx/dxc_list.php'))
             roster_names.append('dxc_level')
         if 'QRP' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_roster.php'))
+            tasks.append(cls.read_roster_async('QRP 1x', 'operating_awards/qrp_awards/qrp_x1_list.php'))
             roster_names.append('qrp_1x_level')
-            tasks.append(cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_roster.php'))
+            tasks.append(cls.read_roster_async('QRP 2x', 'operating_awards/qrp_awards/qrp_x2_list.php'))
             roster_names.append('qrp_2x_level')
         if 'TKA' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_roster.php'))
+            tasks.append(cls.read_roster_async('TKA', 'operating_awards/triplekey/triplekey_list.php'))
             roster_names.append('tka_level')
         if 'RC' in cConfig.GOALS:
-            tasks.append(cls.read_roster_async('RC', 'operating_awards/rag_chew/ragchew_roster.php'))
+            tasks.append(cls.read_roster_async('RC', 'operating_awards/rag_chew/ragchew_list.php'))
             roster_names.append('rc_level')
 
-        # Load optional rosters if needed
+        # Load all rosters if needed
         if tasks:
             print("Downloading award rosters...")
             try:
@@ -4737,83 +4723,83 @@ class cSKCC:
 
         return None
 
-    @staticmethod
-    async def read_level_list_async(Type: str, URL: str) -> dict[str, int] | NoReturn:
-        """Read award level list with async HTTP request."""
-        print(f"Retrieving SKCC award info from {URL}...")
-
-        try:
-            # Use aiohttp instead of requests for async HTTP
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
-                    if response.status != 200:
-                        print(f"Error retrieving award info: HTTP {response.status}")
-                        return {}
-                    text = await response.text()
-        except Exception as e:
-            print(f"Error retrieving award info: {e}")
-            return {}
-
-        today_gmt = time.strftime("%Y%m%d000000", time.gmtime())
-        level: dict[str, int] = {}
-
-        for line in text.splitlines()[1:]:
-            try:
-                cert_number, call_sign, member_number, *_, effective_date, endorsements = line.split("|")
-            except ValueError:
-                continue  # Skip malformed lines
-
-            x_factor = int(cert_number.split()[1][1:]) if " " in cert_number else 1
-            level[member_number] = x_factor
-
-            skcc_effective_date = cSKCC.normalize_skcc_date(effective_date)
-
-            if today_gmt < skcc_effective_date:
-                print(f"  FYI: Brand new {Type}, {call_sign}, will be effective 00:00Z {effective_date}")
-            elif Type == "Tribune" and (match := cSKCC._tx8_pattern.search(endorsements)):
-                skcc_effective_tx8_date = cSKCC.normalize_skcc_date(match.group(1))
-                if today_gmt < skcc_effective_tx8_date:
-                    print(f"  FYI: Brand new Tx8, {call_sign}, will be effective 00:00Z {match.group(1)}")
-
-        return level
 
     @staticmethod
     async def read_roster_async(Name: str, URL: str) -> dict[str, int]:
-        """Read roster with async HTTP request."""
+        """Read roster with async HTTP request - uses pipe-delimited format for efficiency."""
+        # Consistent message for all rosters
         print(f"Retrieving SKCC {Name} roster...")
 
         try:
-            # Use aiohttp instead of requests for async HTTP
+            level: dict[str, int] = {}
+
+            # Special handling for C/T/S rosters vs other rosters
+            is_cts_roster = Name in ['Centurion', 'Tribune', 'Senator']
+            today_gmt = time.strftime("%Y%m%d000000", time.gmtime()) if is_cts_roster else None
+
+            # Determine key extractor once, before the loop
+            # C/T/S rosters use SKCC number (column 3) as key, just like DXC, QRP, RC
+            get_key: Callable[[list[str]], str | None] = (
+                (lambda f: f[2] if len(f) > 2 and f[2] else None)
+                if Name in ['Centurion', 'Tribune', 'Senator', 'DXC', 'DXQ', 'QRP 1x', 'QRP 2x', 'RC']
+                else (lambda f: f[1] if len(f) > 1 and f[1] else None)
+            )
+
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
                 async with session.get(f"{SKCC_BASE_URL}{URL}") as response:
                     if response.status != 200:
                         print(f"Error retrieving {Name} roster: HTTP {response.status}")
                         return {}
-                    text = await response.text()
+
+                    # Ultra-minimal: inline processing, no generator
+                    first_line = True
+                    async for line in response.content:
+                        # Decode and parse in one line
+                        fields = line.decode('utf-8').rstrip().split('|')
+
+                        # Skip header and empty lines
+                        if first_line:
+                            first_line = False
+                            continue
+                        if not fields[0]:
+                            continue
+
+                        # Extract level from cert (e.g., "RC x35" -> 35)
+                        cert = fields[0]
+                        x_level = 1
+                        if ' x' in cert:
+                            # Safe extraction with explicit fallback
+                            parts = cert.split(' x')
+                            if len(parts) == 2 and parts[1].isdigit():
+                                x_level = int(parts[1])
+
+                        # Store by appropriate key (using lambda extractor)
+                        key = get_key(fields)
+                        if key:
+                            level[key] = x_level
+
+                            # Special C/T/S date checking
+                            if is_cts_roster and today_gmt is not None and len(fields) > 6:
+                                callsign = fields[1]
+                                effective_date = fields[6]  # Column 7 is the awarded date
+
+                                # Check if award is in the future
+                                skcc_effective_date = cSKCC.normalize_skcc_date(effective_date)
+                                if today_gmt < skcc_effective_date:
+                                    print(f"  FYI: Brand new {Name}, {callsign}, will be effective 00:00Z {effective_date}")
+
+                                # Tribune Tx8 endorsement check
+                                if Name == 'Tribune' and len(fields) > 8:
+                                    tx8_date = fields[8]  # Column 9 is Tx8Date for Tribune
+                                    if tx8_date and tx8_date.strip():
+                                        skcc_effective_tx8_date = cSKCC.normalize_skcc_date(tx8_date)
+                                        if today_gmt < skcc_effective_tx8_date:
+                                            print(f"  FYI: Brand new Tx8, {callsign}, will be effective 00:00Z {tx8_date}")
+
+                    return level
         except Exception as e:
             print(f"Error retrieving {Name} roster: {e}")
             return {}
-
-        rows = cSKCC._roster_rows_regex.findall(text)
-        # Use hoisted regex pattern
-        columns_regex = cSKCC._roster_columns_regex
-
-        # For DX, QRP, and RC rosters, use SKCC number as key
-        # RC roster format: "107 x35    K0AF    22366    ..." - SKCC# is in column 3 (index 2)
-        # DX/QRP roster format: "... SKCC# ..." - SKCC# is in column 3 (index 2)
-        if Name in ['DXC', 'DXQ', 'QRP 1x', 'QRP 2x', 'RC']:
-            return {
-                (cols := columns_regex.findall(row))[2]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
-                for row in rows[1:]
-                if (cols := columns_regex.findall(row)) and len(cols) >= 3  # Ensure valid row data with SKCC number
-            }
-        else:
-            # For other rosters, use callsign (column 1) as key
-            return {
-                (cols := columns_regex.findall(row))[1]: int(cols[0].split()[1][1:]) if " " in cols[0] else 1
-                for row in rows[1:]
-                if (cols := columns_regex.findall(row)) and len(cols) >= 2  # Ensure valid row data
-            }
 
     @classmethod
     async def read_skcc_data_async(cls) -> None | NoReturn:
