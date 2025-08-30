@@ -53,7 +53,6 @@ import platform
 import re
 import signal
 import socket
-import ssl
 import string
 import sys
 import textwrap
@@ -1557,47 +1556,50 @@ class cQSO:
         P_Level = cls.calculate_current_award_level('P', cls.calc_prefix_points())
 
         ### C ###
-        if cls.MyC_Date:
-            Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 1)
+        if 'C' in cConfig.GOALS:
+            if cls.MyC_Date:
+                Award_C_Level = cSKCC.centurion_level.get(cls.MyMemberNumber, 1)
 
-            if C_Level > Award_C_Level:
-                C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
-                next_level_name = 'C' if C_Level == 1 else f'Cx{C_Level}'
-                print(f'FYI: You qualify for {next_level_name} but have only applied for {C_or_Cx}.')
-        else:
-            if C_Level >= 1 and cls.MyMemberNumber not in cSKCC.centurion_level:
-                print('FYI: You qualify for C but have not yet applied for it.')
+                if C_Level > Award_C_Level:
+                    C_or_Cx = 'C' if Award_C_Level == 1 else f'Cx{Award_C_Level}'
+                    next_level_name = 'C' if C_Level == 1 else f'Cx{C_Level}'
+                    print(f'FYI: You qualify for {next_level_name} but have only applied for {C_or_Cx}.')
+            else:
+                if C_Level >= 1 and cls.MyMemberNumber not in cSKCC.centurion_level:
+                    print('FYI: You qualify for C but have not yet applied for it.')
 
         ### T ###
-        if not cls.MyC_Date:
-            if T_Level > 0:
-                print('NOTE: Tribune award requires Centurion first. Apply for C before T.')
-        elif cls.MyT_Date:
-            Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
+        if 'T' in cConfig.GOALS:
+            if not cls.MyC_Date:
+                if T_Level > 0:
+                    print('NOTE: Tribune award requires Centurion first. Apply for C before T.')
+            elif cls.MyT_Date:
+                Award_T_Level = cSKCC.tribune_level.get(cls.MyMemberNumber, 1)
 
-            if T_Level > Award_T_Level:
-                T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
-                next_level_name = 'T' if T_Level == 1 else f'Tx{T_Level}'
-                print(f'FYI: You qualify for {next_level_name} but have only applied for {T_or_Tx}.')
-        else:
-            if T_Level >= 1 and cls.MyMemberNumber not in cSKCC.tribune_level:
-                print('FYI: You qualify for T but have not yet applied for it.')
+                if T_Level > Award_T_Level:
+                    T_or_Tx = 'T' if Award_T_Level == 1 else f'Tx{Award_T_Level}'
+                    next_level_name = 'T' if T_Level == 1 else f'Tx{T_Level}'
+                    print(f'FYI: You qualify for {next_level_name} but have only applied for {T_or_Tx}.')
+            else:
+                if T_Level >= 1 and cls.MyMemberNumber not in cSKCC.tribune_level:
+                    print('FYI: You qualify for T but have not yet applied for it.')
 
         ### S ###
-        tribune_contacts = len(cls.ContactsForT)
-        if tribune_contacts < 400:
-            if S_Level > 0:
-                print(f'NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
-        elif cls.MyS_Date:
-            Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
+        if 'S' in cConfig.GOALS:
+            tribune_contacts = len(cls.ContactsForT)
+            if tribune_contacts < 400:
+                if S_Level > 0:
+                    print(f'NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have {tribune_contacts} Tribune contacts.')
+            elif cls.MyS_Date:
+                Award_S_Level = cSKCC.senator_level.get(cls.MyMemberNumber, 1)
 
-            if S_Level > Award_S_Level:
-                S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
-                next_level_name = 'S' if S_Level == 1 else f'Sx{S_Level}'
-                print(f'FYI: You qualify for {next_level_name} but have only applied for {S_or_Sx}.')
-        else:
-            if S_Level >= 1 and cls.MyMemberNumber not in cSKCC.senator_level:
-                print('FYI: You qualify for S but have not yet applied for it.')
+                if S_Level > Award_S_Level:
+                    S_or_Sx = 'S' if Award_S_Level == 1 else f'Sx{Award_S_Level}'
+                    next_level_name = 'S' if S_Level == 1 else f'Sx{S_Level}'
+                    print(f'FYI: You qualify for {next_level_name} but have only applied for {S_or_Sx}.')
+            else:
+                if S_Level >= 1 and cls.MyMemberNumber not in cSKCC.senator_level:
+                    print('FYI: You qualify for S but have not yet applied for it.')
 
         ### WAS and WAS-C and WAS-T and WAS-S ###
         if 'WAS' in cConfig.GOALS:
@@ -4808,25 +4810,9 @@ class cSKCC:
 
         url = SKCC_DATA_URL
 
-        # Create SSL context with certificate verification handling
-        ssl_context = ssl.create_default_context()
-
-        # On macOS, Python may have issues with certificate verification
-        # Try to use certifi if available, otherwise provide instructions
-        if platform.system() == 'Darwin':  # macOS
-            try:
-                import certifi  # type: ignore[import-not-found] # noqa: PLC0415
-                ssl_context.load_verify_locations(certifi.where())  # type: ignore[no-untyped-call]
-            except ImportError:
-                # If certifi is not available, try system certificates
-                # If that fails, we'll catch it below and provide instructions
-                pass
-
         try:
-            connector = aiohttp.TCPConnector(ssl=ssl_context)
             async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30),
-                connector=connector
+                timeout=aiohttp.ClientTimeout(total=30)
             ) as session:
                 async with session.get(url) as response:
                     if response.status != 200:
@@ -4836,12 +4822,6 @@ class cSKCC:
         except (aiohttp.ClientConnectorSSLError, aiohttp.ClientSSLError) as e:
             print(f"\nSSL Certificate Error when connecting to {url}")
             print(f"Error: {e}")
-            print("\nThis is a common issue on macOS. To fix it, please run:")
-            print("  pip install certifi")
-            print("\nOr if using uv:")
-            print("  uv pip install certifi")
-            print("\nAlternatively, you can install certificates via:")
-            print("  brew install ca-certificates")
             await cUtil.async_delayed_exit(1)
         except aiohttp.ClientError as e:
             print(f"Error retrieving SKCC data: {e}")
