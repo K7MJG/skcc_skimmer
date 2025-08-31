@@ -1342,7 +1342,7 @@ class cQSO:
     # Compiled regex patterns for ADI parsing (hoisted for efficiency)
     _EOH_PATTERN = re.compile(r'<eoh>', re.IGNORECASE)
     _EOR_PATTERN = re.compile(r'<eor>', re.IGNORECASE)
-    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+(?::.*?)*>(.*?)\s*(?=<(?:\w+?):\d+(?::.*?)*>|$)', re.IGNORECASE | re.DOTALL)
+    _FIELD_PATTERN = re.compile(r'<(\w+?):\d+[^>]*>([^<]*)', re.IGNORECASE)
     # K3Y/SKM pattern for special event processing
     _K3Y_SKM_PATTERN = re.compile(r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)', re.IGNORECASE)
 
