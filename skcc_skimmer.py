@@ -1399,7 +1399,7 @@ class cQSO:
     ContactsForWAS_S: dict[str, tuple[str, str, str, str, str, str]]  # (spc, date, callsign, skcc_number, name, band)
     ContactsForP:     dict[str, tuple[str, str, int, str, str, str]]  # (date, prefix, member_number, name, callsign, band)
     ContactsForK3Y:   dict[str, dict[int, str]]
-    ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # (date, call, band, qrp_type): qrp_type: 1=1xQRP, 2=2xQRP
+    ContactsForQRP:   dict[str, tuple[str, str, str, int]]  # Key: member_band, Value: (date, member_num, callsign, qrp_type) where qrp_type: 1=1xQRP, 2=2xQRP
     QRPQualifiedQSOs: list[QRPQSOData]  # Phase 1: QRP-qualified QSOs for band-by-band processing
     ContactsForDXC:   dict[str, tuple[str, str, str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call, name, band)
     ContactsForDXQ:   dict[str, tuple[str, str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, band, dxcc_code)
@@ -2986,9 +2986,9 @@ class cQSO:
             contacts: list[tuple[str, str, str, str, float]] = []
             for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
                 if qrp_type == 2:  # QRP 2x: TX power <= 5W AND RX power <= 5W
-                    # Extract band from the key (format: "member_band_date")
+                    # Extract band from the key (format: "member_band")
                     key_parts = qso_key.split('_')
-                    band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                    band: str = key_parts[1] if len(key_parts) >= 2 else ""
                     points: float = band_points.get(band, 0.0)
                     contacts.append((qso_date, member_number, callsign, band, points))
 
@@ -3001,7 +3001,7 @@ class cQSO:
             for qso_key, (qso_date, member_number, callsign, _) in QSOs.items():
                 # ALL QRP contacts count toward 1xQRP award
                 key_parts = qso_key.split('_')
-                band: str = key_parts[1] if len(key_parts) >= 3 else ""
+                band: str = key_parts[1] if len(key_parts) >= 2 else ""
                 points: float = band_points.get(band, 0.0)
                 contacts.append((qso_date, member_number, callsign, band, points))
 
@@ -4042,7 +4042,7 @@ class cAwards:
             date = qso.log_qso_date
             name = qso.log_name
             state = qso.log_state
-            band = qso.log_band
+            band = qso.log_band.upper()  # Normalize band to uppercase for consistent keys
 
             # Basic contact tuple format: (date, member_number, callsign, name, state, band)
             contact_tuple = (date, member_num, callsign, name, state, band)
@@ -4063,13 +4063,13 @@ class cAwards:
             if qso.dxc_qso == "YES" and qso.dx_code not in contacts['DXC']:
                 # Store additional fields for better reporting
                 name = qso.log_name if hasattr(qso, 'log_name') else ''
-                band = qso.log_band if hasattr(qso, 'log_band') else ''
+                band = qso.log_band.upper() if hasattr(qso, 'log_band') else ''
                 contacts['DXC'][qso.dx_code] = (date, member_num, callsign, name, band)
 
             if qso.dxq_qso == "YES" and member_num not in contacts['DXQ']:
                 # Store additional fields for better reporting (matching DXC format)
                 name = qso.log_name if hasattr(qso, 'log_name') else ''
-                band = qso.log_band if hasattr(qso, 'log_band') else ''
+                band = qso.log_band.upper() if hasattr(qso, 'log_band') else ''
                 dxcc_code = qso.dx_code if hasattr(qso, 'dx_code') else ''
                 contacts['DXQ'][member_num] = (date, member_num, callsign, name, band, dxcc_code)
 
@@ -4122,7 +4122,7 @@ class cAwards:
             date = qso.log_qso_date
             name = qso.log_name
             state = qso.log_state
-            band = qso.log_band
+            band = qso.log_band.upper()  # Normalize band to uppercase for consistent keys
             # TKA uses primary callsign from member database (Log_Call_Pri in Xojo)
             tka_callsign = qso.log_call_pri
 
@@ -4148,11 +4148,16 @@ class cAwards:
                     # Use pfx_call (the segment that matched) not the original callsign
                     contacts['P'][qso.pfx] = (date, qso.pfx, member_number_int, name, qso.pfx_call, band)
 
-            # QRP contacts
+            # QRP contacts - key is member_band (no date) to match Xojo's DISTINCT counting
             if qso.qrpx1_qso == "YES":
                 qrp_type = 2 if qso.qrpx2_qso == "YES" else 1
-                qso_key = f"{member_num}_{band}_{date}"
-                contacts['QRP'][qso_key] = (date, member_num, callsign, qrp_type)
+                qso_key = f"{member_num}_{band}"
+                # Keep the first QSO per member/band, but upgrade to QRP 2x if found
+                if qso_key not in contacts['QRP']:
+                    contacts['QRP'][qso_key] = (date, member_num, callsign, qrp_type)
+                elif qrp_type == 2 and contacts['QRP'][qso_key][3] == 1:
+                    # Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
+                    contacts['QRP'][qso_key] = (date, member_num, callsign, qrp_type)
 
             # TKA contacts
             if qso.tka_qso == "YES":
