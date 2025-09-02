@@ -1777,19 +1777,19 @@ class cQSO:
 
                 if current_level == 0:
                     # Haven't reached Px1 yet
-                    remaining = 500_001 - Total  # Need >500,000 for Px1
+                    remaining = 500_000 - Total  # Need >500,000 for Px1
                     x_factor = 1
                 elif current_level < 10:
                     # Px1 through Px9 - next level is current + 1
                     next_level = current_level + 1
                     next_threshold = next_level * 500_000
-                    remaining = next_threshold + 1 - Total
+                    remaining = next_threshold - Total
                     x_factor = next_level
                 elif current_level == 10:
                     # At Px10, next is Px15 at >7.5M
                     next_level = 15
                     next_threshold = 7_500_000
-                    remaining = next_threshold + 1 - Total
+                    remaining = next_threshold - Total
                     x_factor = next_level
                 else:
                     # After Px10: levels go 15, 20, 25... with 2.5M increments
@@ -1799,8 +1799,8 @@ class cQSO:
                     levels_past_15 = (next_level - 15) // 5
                     next_threshold = 7_500_000 + (levels_past_15 * 2_500_000)
 
-                    # Always require "more than" for consistency
-                    remaining = next_threshold + 1 - Total
+                    # The award requires "more than" the threshold, but we display the exact difference
+                    remaining = next_threshold - Total
                     x_factor = next_level
 
             case _:
@@ -2203,12 +2203,12 @@ class cQSO:
                             current_abbrev = cUtil.abbreviate_class(Class, display_level)
                             next_abbrev = cUtil.abbreviate_class(Class, next_x_factor)
                             # Show nice round threshold with "more than" language
-                            next_threshold = Total + Remaining - 1
+                            next_threshold = Total + Remaining
                             print(f'{Class}: Have {Total:,} which qualifies for {current_abbrev}. {next_abbrev} requires more than {next_threshold:,} ({Remaining:,} more)')
                         else:
                             # Working toward P
                             # Show nice round threshold with "more than" language
-                            next_threshold = Total + Remaining - 1
+                            next_threshold = Total + Remaining
                             print(f'{Class}: Have {Total:,}. Px1 requires more than {next_threshold:,} ({Remaining:,} more)')
                     case _:
                         print(f'{Class}: Have {Total:,}. Need {Remaining:,} more for next level.')
@@ -2240,7 +2240,9 @@ class cQSO:
         if cls.MyTX8_Date:
             print_remaining('S', len(cls.ContactsForS))
 
-        print_remaining('P', cls.calc_prefix_points())
+        # Calculate total prefix points (sum of member numbers)
+        prefix_total_points = sum(contact[2] for contact in cls.ContactsForP.values())
+        print_remaining('P', prefix_total_points)
 
         if 'QRP' in cConfig.GOALS:
             cls.print_qrp_awards_progress()
