@@ -4747,10 +4747,10 @@ class cSKCC:
             today_gmt = time.strftime("%Y%m%d000000", time.gmtime()) if is_cts_roster else None
 
             # Determine key extractor once, before the loop
-            # C/T/S rosters use SKCC number (column 3) as key, just like DXC, QRP, RC
+            # C/T/S rosters use SKCC number (column 3) as key, just like DXC, QRP, RC, TKA
             get_key: Callable[[list[str]], str | None] = (
                 (lambda f: f[2] if len(f) > 2 and f[2] else None)
-                if Name in ['Centurion', 'Tribune', 'Senator', 'DXC', 'DXQ', 'QRP 1x', 'QRP 2x', 'RC']
+                if Name in ['Centurion', 'Tribune', 'Senator', 'DXC', 'DXQ', 'QRP 1x', 'QRP 2x', 'RC', 'TKA']
                 else (lambda f: f[1] if len(f) > 1 and f[1] else None)
             )
 
