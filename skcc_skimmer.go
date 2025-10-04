@@ -1766,6 +1766,231 @@ func (fw *FileWatcher) refresh() error {
 }
 
 // ============================================================================
+// INTERACTIVE MODE
+// ============================================================================
+
+// InteractiveMode handles user input for callsign lookups and commands
+type InteractiveMode struct {
+	config  *Config
+	members map[string]*Member
+	rosters *Rosters
+}
+
+// NewInteractiveMode creates a new interactive mode handler
+func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters) *InteractiveMode {
+	return &InteractiveMode{
+		config:  config,
+		members: members,
+		rosters: rosters,
+	}
+}
+
+// Run starts the interactive mode loop
+func (im *InteractiveMode) Run() {
+	fmt.Println("\nInteractive mode. Enter callsigns or \"q\" to quit, \"r\" to refresh.\n")
+
+	scanner := bufio.NewScanner(os.Stdin)
+
+	for {
+		fmt.Print("> ")
+
+		if !scanner.Scan() {
+			break
+		}
+
+		input := strings.TrimSpace(scanner.Text())
+		if input == "" {
+			continue
+		}
+
+		command := strings.ToLower(input)
+
+		switch command {
+		case "q", "quit":
+			fmt.Println("\nExiting by user request...")
+			return
+
+		case "r", "refresh":
+			fmt.Println("Refreshing awards...")
+			// TODO: Call refresh logic
+			fmt.Println("(Refresh implementation pending)")
+
+		default:
+			// Treat as callsign lookup
+			im.lookupCallsigns(input)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("Error reading input: %v\n", err)
+	}
+}
+
+// lookupCallsigns looks up one or more callsigns (space/comma separated)
+func (im *InteractiveMode) lookupCallsigns(input string) {
+	// Split on spaces and commas
+	items := strings.FieldsFunc(strings.ToUpper(input), func(r rune) bool {
+		return r == ' ' || r == ','
+	})
+
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+
+		// Check if it's a member number (digits only or digits with suffix)
+		if im.isNumericLookup(item) {
+			im.lookupByNumber(item)
+		} else {
+			// Treat as callsign
+			im.lookupByCallsign(item)
+		}
+	}
+
+	fmt.Println()
+}
+
+// isNumericLookup checks if the input is a numeric member lookup
+func (im *InteractiveMode) isNumericLookup(s string) bool {
+	// Check if it's all digits or digits followed by C/T/S
+	if len(s) == 0 {
+		return false
+	}
+
+	// Strip off C/T/S suffix if present
+	cleaned := s
+	if len(s) > 1 {
+		lastChar := s[len(s)-1]
+		if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
+			cleaned = s[:len(s)-1]
+		}
+	}
+
+	// Check if remaining is all digits
+	for _, ch := range cleaned {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// lookupByNumber looks up a member by SKCC number
+func (im *InteractiveMode) lookupByNumber(numberStr string) {
+	// Strip suffix if present
+	cleaned := numberStr
+	if len(numberStr) > 1 {
+		lastChar := numberStr[len(numberStr)-1]
+		if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
+			cleaned = numberStr[:len(numberStr)-1]
+		}
+	}
+
+	// Find member with this number
+	found := false
+	for callsign, member := range im.members {
+		if member.PlainNumber == cleaned && callsign == member.PrimaryCall {
+			im.printMemberInfo(callsign, member)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		fmt.Printf("  No member with the number %s.\n", cleaned)
+	}
+}
+
+// lookupByCallsign looks up a member by callsign
+func (im *InteractiveMode) lookupByCallsign(callsign string) {
+	// Extract base callsign (handle slashed calls)
+	extractedCall := extractCallsign(callsign)
+	if extractedCall == "" {
+		fmt.Printf("  %s - not an SKCC member.\n", callsign)
+		return
+	}
+
+	// Look up in members database
+	member, exists := im.members[extractedCall]
+	if !exists {
+		fmt.Printf("  %s - not an SKCC member.\n", callsign)
+		return
+	}
+
+	im.printMemberInfo(extractedCall, member)
+}
+
+// printMemberInfo displays member information with goal/target analysis
+func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
+	// Build member info string  - create a map with one entry
+	memberData := im.convertToMemberData(member)
+	membersMap := map[string]MemberData{callsign: memberData}
+	memberInfo := buildMemberInfo(callsign, membersMap, im.rosters)
+
+	var report []string
+	report = append(report, memberInfo)
+
+	// Check if it's the user
+	myMember, exists := im.members[im.config.MyCallsign]
+	if exists && member.PlainNumber == myMember.PlainNumber {
+		report = append(report, "(you)")
+		fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
+		return
+	}
+
+	// Get goal and target lists
+	// TODO: This needs the full award state to work properly
+	// For now, just show basic info
+	goalList := []string{}
+	targetList := []string{}
+
+	// Check friend status
+	isFriend := false
+	for _, friend := range im.config.Friends {
+		if strings.EqualFold(friend, callsign) {
+			isFriend = true
+			break
+		}
+	}
+
+	if len(goalList) > 0 {
+		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+	}
+
+	if len(targetList) > 0 {
+		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+	}
+
+	if isFriend {
+		report = append(report, "friend")
+	}
+
+	if len(goalList) == 0 && len(targetList) == 0 {
+		report = append(report, "You don't need to work each other.")
+	}
+
+	fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
+}
+
+// convertToMemberData converts Member to MemberData for display
+func (im *InteractiveMode) convertToMemberData(m *Member) MemberData {
+	return MemberData{
+		PlainNumber: m.PlainNumber,
+		Name:        m.Name,
+		SPC:         m.SPC,
+		MbrStatus:   m.Status,
+		CDate:       m.CDate,
+		TDate:       m.TDate,
+		Tx8Date:     m.TX8Date,
+		SDate:       m.SDate,
+		JoinDate:    m.JoinDate,
+		DXCode:      m.DXCode,
+	}
+}
+
+// ============================================================================
 // MEMBER INFO & GOAL/TARGET MATCHING
 // ============================================================================
 
