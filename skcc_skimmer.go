@@ -12,6 +12,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -140,21 +141,22 @@ var (
 
 // Config holds all configuration settings
 type Config struct {
-	MyCallsign     string
-	MyGridsquare   string
-	SpotterRadius  int
-	ADIFile        string
-	Goals          []string
-	Targets        []string
-	Bands          []int
-	Exclusions     []string
-	Friends        []string
-	Verbose        bool
-	DistanceUnits  string
-	K3YYear        int
-	AwardsOnly     bool
-	Interactive    bool
-	SpottersNearby map[string]bool
+	MyCallsign              string
+	MyGridsquare            string
+	SpotterRadius           int
+	ADIFile                 string
+	Goals                   []string
+	Targets                 []string
+	Bands                   []int
+	Exclusions              []string
+	Friends                 []string
+	Verbose                 bool
+	DistanceUnits           string
+	K3YYear                 int
+	AwardsOnly              bool
+	Interactive             bool
+	SpottersNearby          map[string]bool
+	SpotPersistenceMinutes  int // How long to remember spots (default: 30)
 
 	// Sub-configurations
 	HighWPM      HighWPMConfig
@@ -1183,17 +1185,796 @@ func (sm *SpotterManager) GetNearbySpotters(radiusMiles int) []SpotterDistance {
 }
 
 // ============================================================================
+// SKCC SKED MONITORING (cSked)
+// ============================================================================
+
+// SkedLogin represents a login entry from the SKCC Sked page
+type SkedLogin struct {
+	Callsign string
+	Status   string
+}
+
+// SkedMonitor manages SKCC Sked page monitoring
+type SkedMonitor struct {
+	config          *Config
+	spotProcessor   *SpotProcessor
+	previousLogins  map[string][]string
+	firstPass       bool
+	mu              sync.RWMutex
+	k3yRegex        *regexp.Regexp
+	skmRegex        *regexp.Regexp
+	freqRegex       *regexp.Regexp
+}
+
+// NewSkedMonitor creates a new sked monitor
+func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor) *SkedMonitor {
+	return &SkedMonitor{
+		config:         config,
+		spotProcessor:  spotProcessor,
+		previousLogins: make(map[string][]string),
+		firstPass:      true,
+		k3yRegex:       regexp.MustCompile(`\b(K3Y)/([0-9]|KP4|KH6|KL7)\b`),
+		skmRegex:       regexp.MustCompile(`\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b`),
+		freqRegex:      regexp.MustCompile(`\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$`),
+	}
+}
+
+// FetchLogins retrieves current logins from the SKCC Sked page
+func (sm *SkedMonitor) FetchLogins() ([]SkedLogin, error) {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(SkedStatusURL)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	// The SKCC Sked page returns JSON array of [callsign, status] tuples
+	var rawLogins [][]string
+	if err := json.Unmarshal(body, &rawLogins); err != nil {
+		return nil, fmt.Errorf("JSON decode failed: %w", err)
+	}
+
+	var logins []SkedLogin
+	for _, entry := range rawLogins {
+		if len(entry) >= 1 {
+			login := SkedLogin{
+				Callsign: entry[0],
+			}
+			if len(entry) >= 2 {
+				login.Status = entry[1]
+			}
+			logins = append(logins, login)
+		}
+	}
+
+	return logins, nil
+}
+
+// ProcessLogins processes sked logins and returns hits for display
+func (sm *SkedMonitor) ProcessLogins(logins []SkedLogin) map[string][]string {
+	skedHits := make(map[string][]string)
+
+	for _, login := range logins {
+		// Skip user's own callsign
+		if login.Callsign == sm.config.MyCallsign {
+			continue
+		}
+
+		// Extract base callsign
+		callsign := extractCallsign(login.Callsign)
+		if callsign == "" {
+			continue
+		}
+
+		// Check exclusion list
+		excluded := false
+		for _, ex := range sm.config.Exclusions {
+			if callsign == ex {
+				excluded = true
+				break
+			}
+		}
+		if excluded {
+			continue
+		}
+
+		// Process this login
+		report := sm.processLogin(callsign, login.Status)
+
+		// Add to hits if there are goals, targets, or is a friend
+		if len(report) > 0 {
+			skedHits[callsign] = report
+		}
+	}
+
+	return skedHits
+}
+
+// processLogin processes a single login and returns report items
+func (sm *SkedMonitor) processLogin(callsign, status string) []string {
+	var report []string
+
+	// TODO: Add member info (needs SKCC member database integration)
+	// report = append(report, buildMemberInfo(callsign))
+
+	// Check if recently spotted
+	sm.spotProcessor.mu.RLock()
+	if spotTime, exists := sm.spotProcessor.lastSpotted[callsign]; exists {
+		now := time.Now().Unix()
+		deltaSeconds := int(now) - int(spotTime.Timestamp)
+
+		if deltaSeconds > sm.config.SpotPersistenceMinutes*60 {
+			// Spot is too old, remove it
+			sm.spotProcessor.mu.RUnlock()
+			sm.spotProcessor.mu.Lock()
+			delete(sm.spotProcessor.lastSpotted, callsign)
+			sm.spotProcessor.mu.Unlock()
+			sm.spotProcessor.mu.RLock()
+		} else if deltaSeconds > 60 {
+			deltaMinutes := deltaSeconds / 60
+			unit := "minute"
+			if deltaMinutes > 1 {
+				unit = "minutes"
+			}
+			report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaMinutes, unit, spotTime.FrequencyKHz))
+		} else {
+			unit := "second"
+			if deltaSeconds > 1 {
+				unit = "seconds"
+			}
+			report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaSeconds, unit, spotTime.FrequencyKHz))
+		}
+	}
+	sm.spotProcessor.mu.RUnlock()
+
+	var goalList []string
+	var targetList []string
+
+	// K3Y/SKM special event processing
+	if status != "" {
+		// Check for K3Y
+		if matches := sm.k3yRegex.FindStringSubmatch(status); matches != nil {
+			eventType := matches[1] // "K3Y"
+			station := strings.ToUpper(matches[2])
+			sm.processSpecialEvent(eventType, station, status, &goalList)
+		} else if matches := sm.skmRegex.FindStringSubmatch(status); matches != nil {
+			eventType := matches[1] // "SKM"
+			region := strings.ToUpper(matches[2])
+			sm.processSpecialEvent(eventType, region, status, &goalList)
+		}
+	}
+
+	// TODO: Add regular goal/target matching (needs roster integration)
+	// regularGoals, targets := buildGoalTargetReport(callsign, 0, "")
+	// goalList = append(goalList, regularGoals...)
+	// targetList = targets
+
+	if len(goalList) > 0 {
+		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+	}
+
+	if len(targetList) > 0 {
+		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+	}
+
+	// Check friends list
+	isFriend := false
+	for _, friend := range sm.config.Friends {
+		if callsign == friend {
+			isFriend = true
+			break
+		}
+	}
+
+	if isFriend {
+		report = append(report, "friend")
+	}
+
+	if status != "" {
+		// Strip HTML tags and extra whitespace
+		cleanStatus := strings.TrimSpace(status)
+		report = append(report, fmt.Sprintf("STATUS: %s", cleanStatus))
+	}
+
+	// Only return report if there are goals, targets, or is a friend
+	if len(goalList) > 0 || len(targetList) > 0 || isFriend {
+		return report
+	}
+
+	return nil
+}
+
+// processSpecialEvent processes K3Y or SKM special events from status
+func (sm *SkedMonitor) processSpecialEvent(eventType, station, status string, goalList *[]string) {
+	// Check if K3Y is in goals
+	hasK3YGoal := false
+	for _, goal := range sm.config.Goals {
+		if goal == "K3Y" {
+			hasK3YGoal = true
+			break
+		}
+	}
+
+	if !hasK3YGoal {
+		return
+	}
+
+	// Try to extract frequency from status
+	if matches := sm.freqRegex.FindStringSubmatch(status); matches != nil {
+		var freqKHz float64
+		var freqStr string
+
+		// Try different match groups (different frequency formats)
+		for i := 1; i <= 4; i++ {
+			if matches[i] != "" {
+				freqStr = matches[i]
+				break
+			}
+		}
+
+		if freqStr != "" {
+			// Parse frequency based on format
+			if matches[1] != "" {
+				// Format: XX.XXX.XXX (e.g., 14.050.000)
+				freqStr = strings.ReplaceAll(freqStr, ".", "")
+				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+					freqKHz = val / 1000.0
+				}
+			} else if matches[2] != "" {
+				// Format: XX.XXX (MHz, e.g., 14.050)
+				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+					freqKHz = val * 1000.0
+				}
+			} else if matches[3] != "" {
+				// Format: XXXXX.X (kHz with decimal, e.g., 14050.0)
+				freqStr = strings.ReplaceAll(freqStr, ".", "")
+				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+					freqKHz = val
+				}
+			} else if matches[4] != "" {
+				// Format: XXXXX (kHz, e.g., 14050)
+				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+					freqKHz = val
+				}
+			}
+
+			if freqKHz > 0 {
+				// Determine band from frequency
+				band := whichBand(freqKHz)
+				if band > 0 {
+					// TODO: Check if already worked (needs K3Y contacts tracking)
+					// For now, always show as needed
+					if eventType == "SKM" {
+						*goalList = append(*goalList, fmt.Sprintf("SKM-%s (%dm)", station, band))
+					} else {
+						*goalList = append(*goalList, fmt.Sprintf("K3Y/%s (%dm)", station, band))
+					}
+					return
+				}
+			}
+		}
+	}
+
+	// No frequency found or couldn't determine band, just show event without band
+	if eventType == "SKM" {
+		*goalList = append(*goalList, fmt.Sprintf("SKM-%s", station))
+	} else {
+		*goalList = append(*goalList, fmt.Sprintf("K3Y/%s", station))
+	}
+}
+
+// whichBand determines the amateur band from a frequency in kHz
+func whichBand(freqKHz float64) int {
+	bands := []struct {
+		band  int
+		lower float64
+		upper float64
+	}{
+		{160, 1800, 2000},
+		{80, 3500, 4000},
+		{60, 5330, 5405},
+		{40, 7000, 7300},
+		{30, 10100, 10150},
+		{20, 14000, 14350},
+		{17, 18068, 18168},
+		{15, 21000, 21450},
+		{12, 24890, 24990},
+		{10, 28000, 29700},
+		{6, 50000, 54000},
+	}
+
+	for _, b := range bands {
+		if freqKHz >= b.lower && freqKHz <= b.upper {
+			return b.band
+		}
+	}
+
+	return 0
+}
+
+// DisplayLogins fetches and displays current sked logins
+func (sm *SkedMonitor) DisplayLogins() error {
+	logins, err := sm.FetchLogins()
+	if err != nil {
+		return err
+	}
+
+	skedHits := sm.ProcessLogins(logins)
+
+	if len(skedHits) > 0 {
+		now := time.Now().UTC()
+		zuluTime := now.Format("1504") + "Z"
+		zuluDate := now.Format("2006-01-02")
+
+		// Determine new logins
+		var newLogins []string
+		sm.mu.RLock()
+		if !sm.firstPass {
+			skedSet := make(map[string]bool)
+			for call := range skedHits {
+				skedSet[call] = true
+			}
+			prevSet := make(map[string]bool)
+			for call := range sm.previousLogins {
+				prevSet[call] = true
+			}
+			for call := range skedSet {
+				if !prevSet[call] {
+					newLogins = append(newLogins, call)
+				}
+			}
+		}
+		firstPass := sm.firstPass
+		sm.mu.RUnlock()
+
+		// Display header
+		fmt.Println("=========== SKCC Sked Page ===========")
+
+		// Sort callsigns for consistent display
+		var callsigns []string
+		for call := range skedHits {
+			callsigns = append(callsigns, call)
+		}
+		sort.Strings(callsigns)
+
+		// Display each login
+		for _, callsign := range callsigns {
+			goalList := []string{}
+			targetList := []string{}
+
+			// Parse report to find goals and targets
+			for _, item := range skedHits[callsign] {
+				if strings.HasPrefix(item, "YOU need them for ") {
+					goals := strings.TrimPrefix(item, "YOU need them for ")
+					goalList = strings.Split(goals, ",")
+				} else if strings.HasPrefix(item, "THEY need you for ") {
+					targets := strings.TrimPrefix(item, "THEY need you for ")
+					targetList = strings.Split(targets, ",")
+				}
+			}
+
+			// Check if this is a new login
+			isNew := false
+			if !firstPass {
+				for _, newCall := range newLogins {
+					if callsign == newCall {
+						isNew = true
+						break
+					}
+				}
+			}
+
+			// Handle notification
+			newIndicator := " "
+			if isNew {
+				if shouldNotifyLogin(sm.config, goalList, targetList) {
+					// TODO: Implement beep sound
+					// beep()
+				}
+				newIndicator = "+"
+			}
+
+			// Format and display output
+			output := fmt.Sprintf("%s%s%-6s %s", zuluTime, newIndicator, callsign, strings.Join(skedHits[callsign], "; "))
+			fmt.Println(output)
+
+			// TODO: Log to file if enabled
+			_ = zuluDate // Will be used for logging
+		}
+
+		fmt.Println("=======================================")
+
+		// Update previous logins
+		sm.mu.Lock()
+		sm.previousLogins = skedHits
+		sm.firstPass = false
+		sm.mu.Unlock()
+	}
+
+	return nil
+}
+
+// shouldNotifyLogin determines if notification should be triggered for a sked login
+func shouldNotifyLogin(config *Config, goalList, targetList []string) bool {
+	if !config.Notification.Enabled {
+		return false
+	}
+
+	hasGoals := len(goalList) > 0
+	hasTargets := len(targetList) > 0
+
+	for _, cond := range config.Notification.Condition {
+		switch cond {
+		case "goals":
+			if hasGoals {
+				return true
+			}
+		case "targets":
+			if hasTargets {
+				return true
+			}
+		case "both":
+			if hasGoals && hasTargets {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// MonitorTask runs the sked monitoring loop
+func (sm *SkedMonitor) MonitorTask(ctx context.Context) {
+	ticker := time.NewTicker(time.Duration(sm.config.Sked.CheckSeconds) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := sm.DisplayLogins(); err != nil {
+				fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
+			}
+		}
+	}
+}
+
+// ============================================================================
+// MEMBER INFO & GOAL/TARGET MATCHING
+// ============================================================================
+
+// MemberData represents SKCC member information (simplified for now)
+// TODO: This should match the full member structure when member database is implemented
+type MemberData struct {
+	PlainNumber string
+	Name        string
+	SPC         string // State/Province/Country
+	MbrStatus   string // A=Active, IA=Inactive, SK=Silent Key
+	CDate       string
+	TDate       string
+	Tx8Date     string
+	SDate       string
+	JoinDate    string
+	DXCode      string
+}
+
+// buildMemberInfo formats member information for display
+// Format: (NUMBER SUFFIX NAME SPC)
+// Example: (12345 Cx3  John      WA)
+func buildMemberInfo(callsign string, members map[string]MemberData, rosters *Rosters) string {
+	member, exists := members[callsign]
+	if !exists {
+		return ""
+	}
+
+	number, suffix := getFullMemberNumber(callsign, member, rosters)
+
+	// Truncate name to 9 characters max
+	name := member.Name
+	if len(name) > 9 {
+		name = name[:9]
+	}
+
+	return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
+}
+
+// getFullMemberNumber returns the member number and award suffix
+// Suffix examples: "C", "Cx5", "T", "Tx3", "S", "Sx2"
+func getFullMemberNumber(callsign string, member MemberData, rosters *Rosters) (string, string) {
+	number := member.PlainNumber
+	suffix := ""
+	level := 1
+
+	// Check award dates to determine highest achievement
+	sDate := effectiveDate(member.SDate)
+	tDate := effectiveDate(member.TDate)
+	cDate := effectiveDate(member.CDate)
+	tx8Date := effectiveDate(member.Tx8Date)
+
+	if sDate != "" {
+		suffix = "S"
+		if lvl, ok := rosters.Senator[number]; ok {
+			level = lvl
+		}
+	} else if tDate != "" {
+		suffix = "T"
+		if lvl, ok := rosters.Tribune[number]; ok {
+			level = lvl
+		}
+		// Special case: if Tx8 not achieved, cap at Tx7
+		if level == 8 && tx8Date == "" {
+			level = 7
+		}
+	} else if cDate != "" {
+		suffix = "C"
+		if lvl, ok := rosters.Centurion[number]; ok {
+			level = lvl
+		}
+	}
+
+	if level > 1 {
+		suffix = fmt.Sprintf("%sx%d", suffix, level)
+	}
+
+	return number, suffix
+}
+
+// effectiveDate returns empty string if date is "0000-00-00" or empty
+func effectiveDate(date string) string {
+	if date == "" || date == "0000-00-00" {
+		return ""
+	}
+	return date
+}
+
+// buildGoalTargetReport builds lists of goals and targets for a spotted callsign
+// This is the key function that determines what awards you need from them and vice versa
+func buildGoalTargetReport(callsign string, freqKHz float64, k3ySuffix string,
+	config *Config, members map[string]MemberData, rosters *Rosters,
+	myMemberData MemberData, contactsForC, contactsForT, contactsForS map[string]bool,
+	contactsForWAS, contactsForWASC, contactsForWAST, contactsForWASS map[string]bool,
+	contactsForDXC map[string]bool, contactsForDXQ map[string]bool,
+	contactsForK3Y map[string]map[int]bool, bragContacts map[string]bool,
+	qsosByMemberNumber map[string][]string) ([]string, []string) {
+
+	var goals []string
+	var targets []string
+
+	// Handle K3Y special case
+	if k3ySuffix != "" && hasGoal(config.Goals, "K3Y") && freqKHz > 0 {
+		band := whichBand(freqKHz)
+		if band > 0 {
+			// Check if we've worked this K3Y station on this band
+			if bandMap, exists := contactsForK3Y[k3ySuffix]; !exists || !bandMap[band] {
+				goals = append(goals, fmt.Sprintf("K3Y/%s (%dm)", k3ySuffix, band))
+			}
+		}
+	}
+
+	// Regular member checks
+	member, exists := members[callsign]
+	if !exists || callsign == config.MyCallsign {
+		return goals, targets
+	}
+
+	// Don't spot inactive members
+	if member.MbrStatus != "A" {
+		return goals, targets
+	}
+
+	theirNumber := member.PlainNumber
+	theirCDate := effectiveDate(member.CDate)
+	theirTDate := effectiveDate(member.TDate)
+	theirSDate := effectiveDate(member.SDate)
+	theirTx8Date := effectiveDate(member.Tx8Date)
+	theirJoinDate := effectiveDate(member.JoinDate)
+
+	myCDate := effectiveDate(myMemberData.CDate)
+	myTDate := effectiveDate(myMemberData.TDate)
+	myTx8Date := effectiveDate(myMemberData.Tx8Date)
+	mySDate := effectiveDate(myMemberData.SDate)
+	myJoinDate := effectiveDate(myMemberData.JoinDate)
+
+	// BRAG goal check
+	if hasGoal(config.Goals, "BRAG") && !bragContacts[theirNumber] {
+		// For sked (no frequency), always show BRAG
+		// For spots with frequency, check WARC or not during sprint
+		if freqKHz == 0 { // Sked page, no frequency
+			goals = append(goals, "BRAG")
+		}
+		// TODO: Add isOnWARCFrequency and isDuringSprint checks for RBN spots
+	}
+
+	// C award goal check
+	if hasGoal(config.Goals, "C") {
+		if result := checkCTSGoal("C", theirNumber, contactsForC, myCDate, rosters.Centurion); result != "" {
+			goals = append(goals, result)
+		}
+	}
+
+	// T award goal check (requires both parties have C)
+	if hasGoal(config.Goals, "T") && myCDate != "" && theirCDate != "" {
+		if result := checkCTSGoal("T", theirNumber, contactsForT, myTDate, rosters.Tribune); result != "" {
+			goals = append(goals, result)
+		}
+	}
+
+	// S award goal check (requires I have Tx8, they have T)
+	if hasGoal(config.Goals, "S") && myTx8Date != "" && theirTDate != "" {
+		if result := checkCTSGoal("S", theirNumber, contactsForS, mySDate, rosters.Senator); result != "" {
+			goals = append(goals, result)
+		}
+	}
+
+	// WAS goal checks
+	spc := member.SPC
+	if hasGoal(config.Goals, "WAS") && isUSState(spc) && !contactsForWAS[spc] {
+		goals = append(goals, "WAS")
+	}
+	if hasGoal(config.Goals, "WAS-C") && theirCDate != "" && isUSState(spc) && !contactsForWASC[spc] {
+		goals = append(goals, "WAS-C")
+	}
+	if hasGoal(config.Goals, "WAS-T") && theirTDate != "" && isUSState(spc) && !contactsForWAST[spc] {
+		goals = append(goals, "WAS-T")
+	}
+	if hasGoal(config.Goals, "WAS-S") && theirSDate != "" && isUSState(spc) && !contactsForWASS[spc] {
+		goals = append(goals, "WAS-S")
+	}
+
+	// DX goal checks
+	if hasGoal(config.Goals, "DX") && member.DXCode != "" {
+		// DXC - unique countries
+		if !contactsForDXC[member.DXCode] {
+			// TODO: Calculate next level based on current count
+			goals = append(goals, "DXCx1") // Placeholder
+		}
+
+		// DXQ - foreign member QSOs
+		myDXCode := myMemberData.DXCode
+		if member.DXCode != myDXCode && !contactsForDXQ[theirNumber] {
+			goals = append(goals, "DXQx1") // Placeholder
+		}
+	}
+
+	// C target check
+	if hasTarget(config.Targets, "C") {
+		if result := checkCTSTarget("C", theirNumber, theirCDate, theirJoinDate, myJoinDate,
+			rosters.Centurion, qsosByMemberNumber); result != "" {
+			targets = append(targets, result)
+		}
+	}
+
+	// T target check (requires both have C)
+	if hasTarget(config.Targets, "T") && theirCDate != "" && myCDate != "" {
+		if result := checkCTSTarget("T", theirNumber, theirTDate, theirCDate, myCDate,
+			rosters.Tribune, qsosByMemberNumber); result != "" {
+			targets = append(targets, result)
+		}
+	}
+
+	// S target check (requires they have Tx8, I have T)
+	if hasTarget(config.Targets, "S") && theirTx8Date != "" && myTDate != "" {
+		if result := checkCTSTarget("S", theirNumber, theirSDate, theirTx8Date, myTDate,
+			rosters.Senator, qsosByMemberNumber); result != "" {
+			targets = append(targets, result)
+		}
+	}
+
+	return goals, targets
+}
+
+// checkCTSGoal checks if a member is needed for C/T/S goal
+func checkCTSGoal(awardType, theirNumber string, contacts map[string]bool,
+	myAwardDate string, levelRoster map[string]int) string {
+
+	if !contacts[theirNumber] {
+		if myAwardDate == "" {
+			// Working toward initial award
+			return awardType
+		}
+		// Already have award, working toward multipliers
+		xFactor := 1
+		if level, ok := levelRoster[theirNumber]; ok {
+			xFactor = level
+		}
+		if xFactor > 1 {
+			return fmt.Sprintf("%sx%d", awardType, xFactor)
+		}
+		return awardType
+	}
+	return ""
+}
+
+// checkCTSTarget checks if I can help them with C/T/S award
+func checkCTSTarget(awardType, theirNumber, theirAwardDate, date1, date2 string,
+	levelRoster map[string]int, qsosByMemberNumber map[string][]string) string {
+
+	if theirAwardDate == "" {
+		// They're working toward initial award
+		// Check if we've worked them after their qualifying date
+		if dates, exists := qsosByMemberNumber[theirNumber]; !exists || allDatesBeforeOrEqual(dates, date1, date2) {
+			return awardType
+		}
+	} else {
+		// They already have award, working toward multipliers
+		if level, ok := levelRoster[theirNumber]; ok {
+			nextLevel := level + 1
+			if nextLevel <= 10 {
+				if dates, exists := qsosByMemberNumber[theirNumber]; !exists || allDatesBeforeOrEqual(dates, date1, date2) {
+					return fmt.Sprintf("%sx%d", awardType, nextLevel)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// allDatesBeforeOrEqual checks if all QSO dates are before or equal to date1 or date2
+func allDatesBeforeOrEqual(dates []string, date1, date2 string) bool {
+	for _, date := range dates {
+		if date > date1 && date > date2 {
+			return false
+		}
+	}
+	return true
+}
+
+// hasGoal checks if a goal is in the goals list
+func hasGoal(goals []string, goal string) bool {
+	for _, g := range goals {
+		if g == goal {
+			return true
+		}
+	}
+	return false
+}
+
+// hasTarget checks if a target is in the targets list
+func hasTarget(targets []string, target string) bool {
+	for _, t := range targets {
+		if t == target {
+			return true
+		}
+	}
+	return false
+}
+
+// isUSState checks if SPC is a US state
+func isUSState(spc string) bool {
+	for _, state := range usStates {
+		if spc == state {
+			return true
+		}
+	}
+	return false
+}
+
+// ============================================================================
 // CONFIGURATION
 // ============================================================================
 
 func parseConfig(filename string) (*Config, error) {
 	cfg := &Config{
-		SpotterRadius: 750,
-		Bands:         []int{160, 80, 60, 40, 30, 20, 17, 15, 12, 10, 6},
-		Verbose:       false,
-		DistanceUnits: "mi",
-		K3YYear:       2026,
-		SpottersNearby: make(map[string]bool),
+		SpotterRadius:          750,
+		Bands:                  []int{160, 80, 60, 40, 30, 20, 17, 15, 12, 10, 6},
+		Verbose:                false,
+		DistanceUnits:          "mi",
+		K3YYear:                2026,
+		SpottersNearby:         make(map[string]bool),
+		SpotPersistenceMinutes: 30,
 		// Initialize sub-configs with defaults
 		HighWPM: HighWPMConfig{
 			Action:    "always-display",
@@ -2954,24 +3735,6 @@ func printProgress(awards map[string]interface{}) {
 	}
 
 	fmt.Println()
-}
-
-// getFullMemberNumber returns (SKCC#, suffix) for a given callsign
-// Returns ("", "") if not found
-func getFullMemberNumber(callsign string, memberDB map[string]*Member) (string, string) {
-	baseCall := extractCallsign(callsign)
-
-	// Look up in member database by callsign
-	members, exists := memberDB[baseCall]
-	if !exists {
-		return "", ""
-	}
-
-	// Extract suffix from SKCC number (e.g., "2748S" -> "S")
-	skccNum := members.SKCCNumber
-	suffix := suffixStripPattern.FindString(skccNum)
-
-	return skccNum, suffix
 }
 
 // getCountryName returns the country name for a DXCC code
