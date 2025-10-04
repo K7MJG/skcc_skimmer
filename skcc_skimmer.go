@@ -11,9 +11,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -65,6 +69,21 @@ var qrpBandPoints = map[string]float64{
 	"160M": 4.0, "80M": 3.0, "60M": 2.0, "40M": 2.0, "30M": 2.0,
 	"20M": 1.0, "17M": 1.0, "15M": 1.0, "12M": 1.0, "10M": 3.0,
 	"6M": 0.5, "2M": 0.5,
+}
+
+// SKCC calling frequencies (in kHz)
+var skccCallingFrequencies = map[int][]float64{
+	160: {1813.5},
+	80:  {3530, 3550},
+	60:  {}, // 60m has special handling (entire band)
+	40:  {7038, 7055, 7114},
+	30:  {10120},
+	20:  {14050, 14114},
+	17:  {18080},
+	15:  {21050, 21114},
+	12:  {24910},
+	10:  {28050, 28114},
+	6:   {50090},
 }
 
 // DXCC country codes - hardcoded for reliability
@@ -444,6 +463,723 @@ func formatSkippedQSO(date, time, call, band, reason string) string {
 	timeStr := formatTime(time)
 	return fmt.Sprintf("Date: %s     Time: %s     Call: %-10s     Band: %-4s     Reason: %s",
 		dateStr, timeStr, call, band, reason)
+}
+
+// ============================================================================
+// RBN (Reverse Beacon Network) CONNECTION
+// ============================================================================
+
+// RBNConnection manages connection to the Reverse Beacon Network
+type RBNConnection struct {
+	callsign string
+	ctx      context.Context
+	cancel   context.CancelFunc
+	spotChan chan string
+}
+
+// NewRBNConnection creates a new RBN connection
+func NewRBNConnection(callsign string) *RBNConnection {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &RBNConnection{
+		callsign: callsign,
+		ctx:      ctx,
+		cancel:   cancel,
+		spotChan: make(chan string, 100), // Buffered channel for spots
+	}
+}
+
+// Connect establishes connection to RBN with IPv6/IPv4 fallback
+func (rbn *RBNConnection) Connect() error {
+	// Resolve hostname
+	addrs, err := net.LookupIP(RBNServer)
+	if err != nil {
+		return fmt.Errorf("DNS resolution failed: %w", err)
+	}
+
+	if len(addrs) == 0 {
+		return fmt.Errorf("no IP addresses found for %s", RBNServer)
+	}
+
+	// Sort addresses - prefer IPv6
+	sort.Slice(addrs, func(i, j int) bool {
+		return addrs[i].To4() == nil && addrs[j].To4() != nil
+	})
+
+	// Try each address
+	var lastErr error
+	for _, addr := range addrs {
+		protocol := "IPv4"
+		if addr.To4() == nil {
+			protocol = "IPv6"
+		}
+
+		target := fmt.Sprintf("[%s]:%d", addr, RBNPort)
+		if addr.To4() != nil {
+			target = fmt.Sprintf("%s:%d", addr, RBNPort)
+		}
+
+		conn, err := net.DialTimeout("tcp", target, 30*time.Second)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// Enable TCP keepalive
+		if tcpConn, ok := conn.(*net.TCPConn); ok {
+			tcpConn.SetKeepAlive(true)
+			tcpConn.SetKeepAlivePeriod(5 * time.Minute)
+		}
+
+		fmt.Printf("Connected to '%s' using %s.\n", RBNServer, protocol)
+
+		// Authenticate
+		if err := rbn.authenticate(conn); err != nil {
+			conn.Close()
+			return err
+		}
+
+		// Start reading spots in background
+		go rbn.readSpots(conn)
+		return nil
+	}
+
+	return fmt.Errorf("failed to connect: %w", lastErr)
+}
+
+// authenticate logs in to the RBN server
+func (rbn *RBNConnection) authenticate(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+
+	// Read "call: " prompt
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if _, err := reader.ReadString(':'); err != nil {
+		return fmt.Errorf("login prompt timeout: %w", err)
+	}
+
+	// Send callsign
+	if _, err := fmt.Fprintf(conn, "%s\r\n", rbn.callsign); err != nil {
+		return fmt.Errorf("failed to send callsign: %w", err)
+	}
+
+	// Wait for ">" prompt
+	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			return fmt.Errorf("authentication failed: %w", err)
+		}
+		if strings.Contains(line, ">") {
+			break
+		}
+	}
+
+	return nil
+}
+
+// readSpots reads spot data from RBN and sends to channel
+func (rbn *RBNConnection) readSpots(conn net.Conn) {
+	defer conn.Close()
+	defer close(rbn.spotChan)
+
+	reader := bufio.NewReader(conn)
+
+	for {
+		select {
+		case <-rbn.ctx.Done():
+			return
+		default:
+			// Set read deadline (10 minute timeout)
+			conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
+
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Send keepalive
+					conn.Write([]byte("\r\n"))
+					continue
+				}
+				fmt.Printf("RBN connection error: %v\n", err)
+				return
+			}
+
+			line = strings.TrimSpace(line)
+			if line != "" {
+				select {
+				case rbn.spotChan <- line:
+				case <-rbn.ctx.Done():
+					return
+				}
+			}
+		}
+	}
+}
+
+// Spots returns the channel for receiving spots
+func (rbn *RBNConnection) Spots() <-chan string {
+	return rbn.spotChan
+}
+
+// Close terminates the RBN connection
+func (rbn *RBNConnection) Close() {
+	rbn.cancel()
+}
+
+// ============================================================================
+// SKCC FREQUENCY UTILITIES
+// ============================================================================
+
+// isOnSKCCFrequency checks if a frequency is on an SKCC calling frequency
+func isOnSKCCFrequency(frequencyKHz float64, toleranceKHz int) bool {
+	tolerance := float64(toleranceKHz)
+
+	for band, midPoints := range skccCallingFrequencies {
+		// Special handling for 60m band (entire band is SKCC)
+		if band == 60 {
+			if frequencyKHz >= (5332-1.5) && frequencyKHz <= (5405+1.5) {
+				return true
+			}
+		} else {
+			// Check each calling frequency with tolerance
+			for _, midPoint := range midPoints {
+				if frequencyKHz >= (midPoint-tolerance) && frequencyKHz <= (midPoint+tolerance) {
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// ============================================================================
+// SPOT PROCESSING (cSPOTS)
+// ============================================================================
+
+// Spot represents a parsed DX spot from RBN
+type Spot struct {
+	Zulu           string
+	Spotter        string
+	FrequencyKHz   float64
+	CallSign       string
+	CallSignSuffix string
+	DB             int
+	WPM            int
+}
+
+// SpotProcessor handles parsing and filtering of RBN spots
+type SpotProcessor struct {
+	config      *Config
+	lastSpotted map[string]SpotTime
+	notified    map[string]float64
+	mu          sync.RWMutex
+	zuluRegex   *regexp.Regexp
+	dbRegex     *regexp.Regexp
+}
+
+// SpotTime tracks when a callsign was last spotted
+type SpotTime struct {
+	FrequencyKHz float64
+	Timestamp    float64
+}
+
+// NewSpotProcessor creates a new spot processor
+func NewSpotProcessor(config *Config) *SpotProcessor {
+	return &SpotProcessor{
+		config:      config,
+		lastSpotted: make(map[string]SpotTime),
+		notified:    make(map[string]float64),
+		zuluRegex:   regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
+		dbRegex:     regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
+	}
+}
+
+// ParseSpot parses a DX spot line from RBN
+// Returns nil if the line is invalid or should be filtered
+func (sp *SpotProcessor) ParseSpot(line string) *Spot {
+	// DX spot lines are exactly 75 characters and start with "DX de "
+	if len(line) != 75 || !strings.HasPrefix(line, "DX de ") {
+		return nil
+	}
+
+	// Extract components by position (RBN format is fixed-width)
+	// Format: DX de SPOTTER-#:  FREQ CALL         CW  XX dB  XX WPM  BEACON  HHMMZ
+	// Example: DX de N6TV-#:      14023.0  W1AW         CW  22 dB  25 WPM  K3Y     2130Z
+
+	spotterFreq := line[6:24] // "SPOTTER-#:  FREQ"
+	parts := strings.Split(spotterFreq, "-#:")
+	if len(parts) != 2 {
+		return nil
+	}
+	spotter := strings.TrimSpace(parts[0])
+	freqStr := strings.TrimSpace(parts[1])
+
+	callsign := strings.TrimSpace(line[26:35])
+	cw := strings.TrimSpace(line[41:47])
+	beacon := strings.TrimSpace(line[62:68])
+	zulu := line[70:75]
+
+	// Filter non-CW and beacons
+	if cw != "CW" || beacon == "BEACON" {
+		return nil
+	}
+
+	// Validate format
+	dbField := line[47:52]
+	if !sp.zuluRegex.MatchString(zulu) || !sp.dbRegex.MatchString(dbField) {
+		return nil
+	}
+
+	// Extract numeric values
+	dbStr := strings.TrimSpace(line[47:49])
+	db, err := strconv.Atoi(dbStr)
+	if err != nil {
+		return nil
+	}
+
+	wpmStr := strings.TrimSpace(line[53:56])
+	wpm, err := strconv.Atoi(wpmStr)
+	if err != nil {
+		return nil
+	}
+
+	freq, err := strconv.ParseFloat(freqStr, 64)
+	if err != nil {
+		return nil
+	}
+
+	// Handle callsign suffixes (e.g., W1AW/4)
+	callSignSuffix := ""
+	if strings.Contains(callsign, "/") {
+		parts := strings.SplitN(callsign, "/", 2)
+		callsign = parts[0]
+		callSignSuffix = strings.ToUpper(parts[1])
+	}
+
+	return &Spot{
+		Zulu:           zulu,
+		Spotter:        spotter,
+		FrequencyKHz:   freq,
+		CallSign:       callsign,
+		CallSignSuffix: callSignSuffix,
+		DB:             db,
+		WPM:            wpm,
+	}
+}
+
+// HandleSpot processes a parsed spot and determines if it should be displayed
+func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output string) {
+	if spot == nil {
+		return false, ""
+	}
+
+	// Extract and validate callsign
+	callsign := extractCallsign(spot.CallSign)
+	if callsign == "" {
+		return false, ""
+	}
+
+	// Check exclusion list
+	for _, excluded := range sp.config.Exclusions {
+		if callsign == excluded {
+			return false, ""
+		}
+	}
+
+	// Check if frequency is in configured bands
+	if !sp.isInBands(spot.FrequencyKHz) {
+		return false, ""
+	}
+
+	// Check if spotter is nearby
+	spottedNearby := sp.config.SpottersNearby[spot.Spotter]
+
+	// Build report components
+	var report []string
+
+	// Add spotter info if nearby or if it's the user's callsign
+	if spottedNearby || callsign == sp.config.MyCallsign {
+		report = append(report, fmt.Sprintf("by %s(%ddB)", spot.Spotter, spot.DB))
+	}
+
+	// Check if this is the user's callsign
+	if callsign == sp.config.MyCallsign {
+		report = append(report, "(you)")
+	}
+
+	// Check frequency (skip for K3Y special event)
+	if callsign != "K3Y" {
+		onFrequency := isOnSKCCFrequency(spot.FrequencyKHz, sp.config.OffFrequency.Tolerance)
+		if !onFrequency {
+			switch sp.config.OffFrequency.Action {
+			case "warn":
+				report = append(report, "OFF SKCC FREQUENCY!")
+			case "suppress":
+				return false, ""
+			}
+		}
+	}
+
+	// Handle WPM warnings
+	switch sp.config.HighWPM.Action {
+	case "always-display":
+		report = append(report, fmt.Sprintf("%d WPM", spot.WPM))
+	case "warn":
+		if spot.WPM >= sp.config.HighWPM.Threshold {
+			report = append(report, fmt.Sprintf("%d WPM!", spot.WPM))
+		}
+	case "suppress":
+		if spot.WPM >= sp.config.HighWPM.Threshold {
+			return false, ""
+		}
+	}
+
+	// Check friends list
+	for _, friend := range sp.config.Friends {
+		if callsign == friend {
+			report = append(report, "friend")
+			break
+		}
+	}
+
+	// Get goal and target hits
+	k3ySuffix := ""
+	if callsign == "K3Y" {
+		k3ySuffix = spot.CallSignSuffix
+	}
+	goalList, targetList := sp.buildGoalTargetReport(callsign, spot.FrequencyKHz, k3ySuffix)
+
+	if len(goalList) > 0 {
+		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+	}
+
+	if len(targetList) > 0 {
+		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+	}
+
+	// Determine if we should display this spot
+	// Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
+	isFriend := false
+	for _, friend := range sp.config.Friends {
+		if callsign == friend {
+			isFriend = true
+			break
+		}
+	}
+
+	if !((spottedNearby && (len(goalList) > 0 || len(targetList) > 0)) ||
+		callsign == sp.config.MyCallsign ||
+		isFriend) {
+		return false, ""
+	}
+
+	// Record spot
+	sp.mu.Lock()
+	sp.lastSpotted[callsign] = SpotTime{
+		FrequencyKHz: spot.FrequencyKHz,
+		Timestamp:    float64(time.Now().Unix()),
+	}
+	sp.mu.Unlock()
+
+	// Build output string
+	freqStr := fmt.Sprintf("%.1f", spot.FrequencyKHz)
+	notificationFlag := sp.handleNotification(callsign, goalList, targetList)
+
+	if callsign == "K3Y" {
+		output = fmt.Sprintf("%s%sK3Y/%s on %8s %s",
+			spot.Zulu, notificationFlag, spot.CallSignSuffix, freqStr, strings.Join(report, "; "))
+	} else {
+		// TODO: Implement buildMemberInfo to show member number and awards
+		memberInfo := ""
+		output = fmt.Sprintf("%s%s%-6s %s on %8s %s",
+			spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
+	}
+
+	return true, output
+}
+
+// handleNotification determines if a beep should be played and returns the notification flag
+func (sp *SpotProcessor) handleNotification(callsign string, goalList, targetList []string) string {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+
+	now := float64(time.Now().Unix())
+
+	// Clean expired notifications
+	for call, expiry := range sp.notified {
+		if now > expiry {
+			delete(sp.notified, call)
+		}
+	}
+
+	// Check if we should notify
+	if _, exists := sp.notified[callsign]; !exists {
+		if sp.shouldNotify(callsign, goalList, targetList) {
+			// TODO: Implement beep sound
+			// beep()
+		}
+
+		sp.notified[callsign] = now + float64(sp.config.Notification.RenotificationDelaySeconds)
+		return "+"
+	}
+
+	return " "
+}
+
+// shouldNotify determines if notification should be triggered
+func (sp *SpotProcessor) shouldNotify(callsign string, goalList, targetList []string) bool {
+	if !sp.config.Notification.Enabled {
+		return false
+	}
+
+	// Check each condition type in the notification conditions list
+	hasGoals := len(goalList) > 0
+	hasTargets := len(targetList) > 0
+
+	for _, cond := range sp.config.Notification.Condition {
+		switch cond {
+		case "goals":
+			if hasGoals {
+				return true
+			}
+		case "targets":
+			if hasTargets {
+				return true
+			}
+		case "both":
+			if hasGoals && hasTargets {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isInBands checks if a frequency is in one of the configured bands
+func (sp *SpotProcessor) isInBands(freqKHz float64) bool {
+	for _, band := range sp.config.Bands {
+		low, high := getBandEdges(band)
+		if freqKHz >= low && freqKHz <= high {
+			return true
+		}
+	}
+	return false
+}
+
+// getBandEdges returns the frequency range for a band in kHz
+func getBandEdges(band int) (float64, float64) {
+	switch band {
+	case 160:
+		return 1800.0, 2000.0
+	case 80:
+		return 3500.0, 4000.0
+	case 60:
+		return 5330.0, 5405.0
+	case 40:
+		return 7000.0, 7300.0
+	case 30:
+		return 10100.0, 10150.0
+	case 20:
+		return 14000.0, 14350.0
+	case 17:
+		return 18068.0, 18168.0
+	case 15:
+		return 21000.0, 21450.0
+	case 12:
+		return 24890.0, 24990.0
+	case 10:
+		return 28000.0, 29700.0
+	case 6:
+		return 50000.0, 54000.0
+	case 2:
+		return 144000.0, 148000.0
+	default:
+		return 0, 0
+	}
+}
+
+// buildGoalTargetReport builds lists of goals and targets for a spotted callsign
+func (sp *SpotProcessor) buildGoalTargetReport(callsign string, freqKHz float64, k3ySuffix string) ([]string, []string) {
+	var goals []string
+	var targets []string
+
+	// TODO: Implement goal/target matching logic using rosters
+	// This will check if the spotted callsign is needed for user's goals
+	// and if the user can help the spotted callsign with their targets
+
+	return goals, targets
+}
+
+// ============================================================================
+// MAIDENHEAD GRID & DISTANCE CALCULATION (cSpotters)
+// ============================================================================
+
+// Spotter represents an RBN spotter with distance and bands
+type Spotter struct {
+	Miles int
+	Bands []int
+}
+
+// SpotterManager manages RBN spotters and distance calculations
+type SpotterManager struct {
+	spotters map[string]Spotter
+	mu       sync.RWMutex
+}
+
+// NewSpotterManager creates a new spotter manager
+func NewSpotterManager() *SpotterManager {
+	return &SpotterManager{
+		spotters: make(map[string]Spotter),
+	}
+}
+
+// LocatorToLatLong converts a Maidenhead locator to latitude/longitude
+func LocatorToLatLong(locator string) (lat, lon float64, err error) {
+	locator = strings.ToUpper(locator)
+	length := len(locator)
+
+	if length != 4 && length != 6 {
+		return 0, 0, fmt.Errorf("invalid Maidenhead locator length: %d", length)
+	}
+
+	// Validate format
+	if locator[0] < 'A' || locator[0] > 'R' ||
+		locator[1] < 'A' || locator[1] > 'R' ||
+		locator[2] < '0' || locator[2] > '9' ||
+		locator[3] < '0' || locator[3] > '9' {
+		return 0, 0, fmt.Errorf("invalid Maidenhead locator format")
+	}
+
+	if length == 6 {
+		if locator[4] < 'A' || locator[4] > 'X' ||
+			locator[5] < 'A' || locator[5] > 'X' {
+			return 0, 0, fmt.Errorf("invalid Maidenhead locator subsquare")
+		}
+	}
+
+	// Calculate base longitude and latitude
+	lon = float64(locator[0]-'A')*20 - 180 + float64(locator[2]-'0')*2
+	lat = float64(locator[1]-'A')*10 - 90 + float64(locator[3]-'0')
+
+	// Add subsquare precision if 6-character
+	if length == 6 {
+		lon += float64(locator[4]-'A') * (2.0 / 24.0) + (1.0 / 24.0)
+		lat += float64(locator[5]-'A') * (1.0 / 24.0) + (0.5 / 24.0)
+	} else {
+		lon += 1.0
+		lat += 0.5
+	}
+
+	return lat, lon, nil
+}
+
+// CalculateDistance calculates the great-circle distance between two Maidenhead locators in km
+func CalculateDistance(locator1, locator2 string) (float64, error) {
+	const earthRadiusKm = 6371.0
+
+	lat1, lon1, err := LocatorToLatLong(locator1)
+	if err != nil {
+		return 0, fmt.Errorf("invalid locator1: %w", err)
+	}
+
+	lat2, lon2, err := LocatorToLatLong(locator2)
+	if err != nil {
+		return 0, fmt.Errorf("invalid locator2: %w", err)
+	}
+
+	// Convert to radians
+	lat1Rad := lat1 * math.Pi / 180.0
+	lat2Rad := lat2 * math.Pi / 180.0
+	dLat := (lat2 - lat1) * math.Pi / 180.0
+	dLon := (lon2 - lon1) * math.Pi / 180.0
+
+	// Haversine formula
+	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+			math.Sin(dLon/2)*math.Sin(dLon/2)
+
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	return earthRadiusKm * c, nil
+}
+
+// AddSpotter adds a spotter with distance and band information
+func (sm *SpotterManager) AddSpotter(callsign string, myGrid, spotterGrid string, csvBands string) error {
+	distKm, err := CalculateDistance(myGrid, spotterGrid)
+	if err != nil {
+		return err
+	}
+
+	miles := int(distKm * 0.62137) // km to miles
+
+	// Parse bands from CSV
+	validBands := map[string]bool{
+		"160m": true, "80m": true, "60m": true, "40m": true, "30m": true,
+		"20m": true, "17m": true, "15m": true, "12m": true, "10m": true, "6m": true,
+	}
+
+	var bands []int
+	for _, bandStr := range strings.Split(csvBands, ",") {
+		bandStr = strings.TrimSpace(bandStr)
+		if validBands[bandStr] {
+			// Extract numeric part (e.g., "40m" -> 40)
+			bandNum, err := strconv.Atoi(strings.TrimSuffix(bandStr, "m"))
+			if err == nil {
+				bands = append(bands, bandNum)
+			}
+		}
+	}
+
+	sm.mu.Lock()
+	sm.spotters[callsign] = Spotter{
+		Miles: miles,
+		Bands: bands,
+	}
+	sm.mu.Unlock()
+
+	return nil
+}
+
+// GetDistance returns the distance to a spotter in miles
+func (sm *SpotterManager) GetDistance(callsign string) (int, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	spotter, exists := sm.spotters[callsign]
+	if !exists {
+		return 0, false
+	}
+
+	return spotter.Miles, true
+}
+
+// SpotterDistance represents a spotter with distance
+type SpotterDistance struct {
+	Callsign string
+	Miles    int
+}
+
+// GetNearbySpotters returns a list of spotters within the radius, sorted by distance
+func (sm *SpotterManager) GetNearbySpotters(radiusMiles int) []SpotterDistance {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	var nearby []SpotterDistance
+	for callsign, spotter := range sm.spotters {
+		if spotter.Miles <= radiusMiles {
+			nearby = append(nearby, SpotterDistance{
+				Callsign: callsign,
+				Miles:    spotter.Miles,
+			})
+		}
+	}
+
+	// Sort by distance
+	sort.Slice(nearby, func(i, j int) bool {
+		return nearby[i].Miles < nearby[j].Miles
+	})
+
+	return nearby
 }
 
 // ============================================================================
