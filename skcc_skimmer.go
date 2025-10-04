@@ -1636,7 +1636,8 @@ func shouldNotifyLogin(config *Config, goalList, targetList []string) bool {
 }
 
 // MonitorTask runs the sked monitoring loop
-func (sm *SkedMonitor) MonitorTask(ctx context.Context) {
+func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
 	ticker := time.NewTicker(time.Duration(sm.config.Sked.CheckSeconds) * time.Second)
 	defer ticker.Stop()
 
@@ -4127,6 +4128,10 @@ func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
 // ============================================================================
 // MAIN
 // ============================================================================
+//
+// NOTE: Real-time monitoring components (RBN connection, Sked monitoring,
+// progress dots, file watching) are implemented but not yet integrated into
+// the main loop. Current functionality focuses on award calculation from ADI files.
 
 func main() {
 	// Parse command-line flags
@@ -4275,6 +4280,14 @@ func main() {
 		return
 	}
 
-	// Interactive mode or RBN connection would go here
-	// For now, just exit after awards
+	// TODO: Real-time monitoring not yet fully integrated
+	// The following features are implemented but need integration:
+	// 1. Get nearby spotters and display
+	// 2. Launch RBN connection and spot processing
+	// 3. Launch Sked monitoring (if enabled)
+	// 4. Launch progress dots (if enabled)
+	// 5. File watching for ADI updates
+	//
+	// For now, the program calculates awards and exits
+	// This allows testing of award calculation logic without RBN connection
 }
