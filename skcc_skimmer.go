@@ -1654,6 +1654,118 @@ func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 // ============================================================================
+// FILE WATCHING
+// ============================================================================
+
+// FileWatcher monitors ADI file for changes and triggers award recalculation
+type FileWatcher struct {
+	config         *Config
+	adiFile        string
+	lastModTime    time.Time
+	lastSize       int64
+	mu             sync.RWMutex
+}
+
+// NewFileWatcher creates a new file watcher
+func NewFileWatcher(config *Config, adiFile string) *FileWatcher {
+	return &FileWatcher{
+		config:  config,
+		adiFile: adiFile,
+	}
+}
+
+// WatchTask monitors the ADI file for changes
+func (fw *FileWatcher) WatchTask(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := fw.checkForChanges(); err != nil {
+				if !os.IsNotExist(err) {
+					fmt.Printf("Error watching log file: %v\n", err)
+				}
+			}
+		}
+	}
+}
+
+// checkForChanges checks if the ADI file has been modified
+func (fw *FileWatcher) checkForChanges() error {
+	stat, err := os.Stat(fw.adiFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet - not an error, just skip
+			return nil
+		}
+		return err
+	}
+
+	fw.mu.RLock()
+	modTime := fw.lastModTime
+	size := fw.lastSize
+	fw.mu.RUnlock()
+
+	// Check if file has been modified
+	if stat.ModTime().Equal(modTime) && stat.Size() == size {
+		return nil
+	}
+
+	fmt.Printf("'%s' file is changing. Waiting for write to finish...\n", fw.adiFile)
+
+	// Wait for file size to stabilize
+	if err := fw.waitForStableSize(); err != nil {
+		return err
+	}
+
+	// Update tracking
+	fw.mu.Lock()
+	fw.lastModTime = stat.ModTime()
+	fw.lastSize = stat.Size()
+	fw.mu.Unlock()
+
+	// Trigger refresh
+	fmt.Println("File stable, refreshing awards...")
+	return fw.refresh()
+}
+
+// waitForStableSize waits until the file size stops changing
+func (fw *FileWatcher) waitForStableSize() error {
+	var currentSize int64
+
+	for {
+		stat, err := os.Stat(fw.adiFile)
+		if err != nil {
+			return err
+		}
+
+		if currentSize == stat.Size() {
+			// Size hasn't changed, file is stable
+			break
+		}
+
+		currentSize = stat.Size()
+		time.Sleep(1 * time.Second)
+	}
+
+	return nil
+}
+
+// refresh reprocesses the ADI file and recalculates awards
+func (fw *FileWatcher) refresh() error {
+	// TODO: This needs to call the award processing pipeline
+	// For now, just print a message
+	fmt.Println("Award refresh would happen here")
+	fmt.Println("(Full refresh implementation pending - needs award processor refactoring)")
+	return nil
+}
+
+// ============================================================================
 // MEMBER INFO & GOAL/TARGET MATCHING
 // ============================================================================
 
