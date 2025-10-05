@@ -768,7 +768,7 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
     // Check if spotter is nearby
     spottedNearby := sp.config.SpottersNearby[spot.Spotter]
 
-    if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
+    if sp.config.Verbose && (callsign == "WB2SMK" || callsign == "W2XU" || callsign == "K0FL" || callsign == "AC9HP" || callsign == "KC9HEK") {
         fmt.Printf("[DEBUG HandleSpot] %s: spottedNearby=%v (spotter=%s)\n", callsign, spottedNearby, spot.Spotter)
     }
 
@@ -828,7 +828,7 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
     goalList, targetList := sp.buildGoalTargetReport(callsign, spot.FrequencyKHz, k3ySuffix)
 
     // DEBUG: Log goal/target result for spotted callsigns
-    if sp.config.Verbose && (len(goalList) > 0 || len(targetList) > 0) {
+    if sp.config.Verbose && (callsign == "WB2SMK" || callsign == "W2XU" || callsign == "K0FL" || len(goalList) > 0 || len(targetList) > 0) {
         fmt.Printf("[DEBUG HandleSpot] %s: goals=%v, targets=%v\n", callsign, goalList, targetList)
     }
 
@@ -1008,9 +1008,6 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
     // Check if this is an SKCC member
     member, exists := sp.members[callsign]
     if !exists {
-        if sp.config.Verbose {
-            fmt.Printf("[DEBUG buildGoalTargetReport] %s: not found in members database\n", callsign)
-        }
         return goals, targets
     }
 
@@ -2475,25 +2472,31 @@ func parseConfig(filename string) (*Config, error) {
             key := strings.TrimSpace(parts[0])
             value := strings.TrimSpace(parts[1])
 
+            // Helper function to strip inline comments from a line
+            stripComment := func(s string) string {
+                if idx := strings.Index(s, "#"); idx != -1 {
+                    // Only strip if # is outside quotes
+                    inQuotes := false
+                    for i, ch := range s {
+                        if ch == '\'' || ch == '"' {
+                            inQuotes = !inQuotes
+                        }
+                        if !inQuotes && i == idx {
+                            return strings.TrimSpace(s[:idx])
+                        }
+                    }
+                }
+                return s
+            }
+
+            // Strip inline comment from initial value
+            value = stripComment(value)
+
             // If value starts with {, it's a multi-line dictionary - accumulate until }
             if strings.HasPrefix(value, "{") {
                 for !strings.Contains(value, "}") && scanner.Scan() {
-                    value += " " + strings.TrimSpace(scanner.Text())
-                }
-            }
-
-            // Strip inline comments (must be done before quote removal)
-            if idx := strings.Index(value, "#"); idx != -1 {
-                // Only strip if # is outside quotes
-                inQuotes := false
-                for i, ch := range value {
-                    if ch == '\'' || ch == '"' {
-                        inQuotes = !inQuotes
-                    }
-                    if !inQuotes && i == idx {
-                        value = strings.TrimSpace(value[:idx])
-                        break
-                    }
+                    nextLine := stripComment(strings.TrimSpace(scanner.Text()))
+                    value += " " + nextLine
                 }
             }
 
