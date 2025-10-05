@@ -10,25 +10,25 @@ package main
  */
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
-	"flag"
-	"fmt"
-	"io"
-	"math"
-	"net"
-	"net/http"
-	"os"
-	"os/signal"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
-	"sync"
-	"syscall"
-	"time"
+    "bufio"
+    "context"
+    "encoding/json"
+    "flag"
+    "fmt"
+    "io"
+    "math"
+    "net"
+    "net/http"
+    "os"
+    "os/signal"
+    "path/filepath"
+    "regexp"
+    "sort"
+    "strconv"
+    "strings"
+    "sync"
+    "syscall"
+    "time"
 )
 
 // Version information
@@ -36,124 +36,84 @@ const Version = "9.0.0-go"
 
 // Global state for progress dot coordination
 var (
-	dotsOnLine   int
-	dotsMutex    sync.Mutex
+    dotsOnLine   int
+    dotsMutex    sync.Mutex
 )
 
 // printWithDotClear prints text, clearing any progress dots on the current line first
 func printWithDotClear(text string) {
-	dotsMutex.Lock()
-	defer dotsMutex.Unlock()
+    dotsMutex.Lock()
+    defer dotsMutex.Unlock()
 
-	if dotsOnLine > 0 {
-		fmt.Println() // Move to new line
-	}
-	fmt.Println(text)
-	dotsOnLine = 0
+    if dotsOnLine > 0 {
+        fmt.Println() // Move to new line
+    }
+    fmt.Println(text)
+    dotsOnLine = 0
 }
 
 // Network constants
 const (
-	RBNServer      = "telnet.reversebeacon.net"
-	RBNPort        = 7000
-	RBNStatusURL   = "https://reversebeacon.net/cont_includes/status.php?t=skt"
-	SKCCDataURL    = "https://skccgroup.com/skimmer-data.txt"
-	SKCCBaseURL    = "https://www.skccgroup.com/"
-	SkedStatusURL  = "http://sked.skccgroup.com/get-status.php"
+    RBNServer      = "telnet.reversebeacon.net"
+    RBNPort        = 7000
+    RBNStatusURL   = "https://reversebeacon.net/cont_includes/status.php?t=skt"
+    SKCCDataURL    = "https://skccgroup.com/skimmer-data.txt"
+    SKCCBaseURL    = "https://www.skccgroup.com/"
+    SkedStatusURL  = "http://sked.skccgroup.com/get-status.php"
 )
 
 // US States for WAS awards
 var usStates = []string{
-	"AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-	"HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-	"MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-	"NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-	"SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
 }
 
 // All states including territories (for validation)
 var allStates = []string{
-	"AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-	"HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-	"MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-	"NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-	"SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
-	"GU", "PR", "VI",
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "GU", "PR", "VI",
 }
 
 // Canadian provinces
 var provinces = []string{
-	"AB", "BC", "MB", "NB", "NF", "NS", "ON", "PE", "QC", "SK",
+    "AB", "BC", "MB", "NB", "NF", "NS", "ON", "PE", "QC", "SK",
 }
 
 // QRP band points
 var qrpBandPoints = map[string]float64{
-	"160M": 4.0, "80M": 3.0, "60M": 2.0, "40M": 2.0, "30M": 2.0,
-	"20M": 1.0, "17M": 1.0, "15M": 1.0, "12M": 1.0, "10M": 3.0,
-	"6M": 0.5, "2M": 0.5,
+    "160M": 4.0, "80M": 3.0, "60M": 2.0, "40M": 2.0, "30M": 2.0,
+    "20M": 1.0, "17M": 1.0, "15M": 1.0, "12M": 1.0, "10M": 3.0,
+    "6M": 0.5, "2M": 0.5,
 }
 
 // SKCC calling frequencies (in kHz)
 var skccCallingFrequencies = map[int][]float64{
-	160: {1813.5},
-	80:  {3530, 3550},
-	60:  {}, // 60m has special handling (entire band)
-	40:  {7038, 7055, 7114},
-	30:  {10120},
-	20:  {14050, 14114},
-	17:  {18080},
-	15:  {21050, 21114},
-	12:  {24910},
-	10:  {28050, 28114},
-	6:   {50090},
-}
-
-// DXCC country codes - hardcoded for reliability
-// Generated from SKCC member database (158 entities with SKCC members)
-var dxccCountries = map[string]string{
-	"001": "Canada", "003": "Afghanistan", "006": "Alaska", "007": "Albania",
-	"014": "Armenia", "015": "Asiatic Russia", "016": "Auckland & Campbell Is.",
-	"021": "Balearic Is.", "027": "Belarus", "029": "Canary Is.", "033": "Chagos Is.",
-	"046": "East Malaysia", "048": "E. Kiribati (Line Is.)", "050": "Mexico",
-	"052": "Estonia", "054": "European Russia", "060": "Bahamas", "062": "Barbados",
-	"064": "Bermuda", "066": "Belize", "069": "Cayman Is.", "070": "Cuba",
-	"072": "Dominican Republic", "074": "El Salvador", "076": "Guatemala",
-	"079": "Guadeloupe", "080": "Honduras", "088": "Panama", "090": "Trinidad & Tobago",
-	"091": "Aruba", "095": "Dominica", "100": "Argentina", "103": "Guam",
-	"104": "Bolivia", "106": "Guernsey", "108": "Brazil", "110": "Hawaii",
-	"112": "Chile", "114": "Isle of Man", "116": "Colombia", "120": "Ecuador",
-	"122": "Jersey", "126": "Kaliningrad", "130": "Kazakhstan", "132": "Paraguay",
-	"135": "Kyrgyzstan", "136": "Peru", "137": "Republic of Korea", "140": "Suriname",
-	"144": "Uruguay", "145": "Latvia", "146": "Lithuania", "148": "Venezuela",
-	"149": "Azores", "150": "Australia", "158": "Vanuatu", "162": "New Caledonia",
-	"163": "Papua New Guinea", "165": "Mauritius", "170": "New Zealand",
-	"175": "French Polynesia", "179": "Moldova", "181": "Mozambique",
-	"185": "Solomon Is.", "190": "Samoa", "192": "Ogasawara", "202": "Puerto Rico",
-	"206": "Austria", "209": "Belgium", "212": "Bulgaria", "214": "Corsica",
-	"215": "Cyprus", "221": "Denmark", "223": "England", "224": "Finland",
-	"225": "Sardinia", "227": "France", "230": "Fed. Rep. of Germany",
-	"233": "Gibraltar", "234": "S. Cook Is.", "236": "Greece", "237": "Greenland",
-	"239": "Hungary", "242": "Iceland", "245": "Ireland", "248": "Italy",
-	"249": "St. Kitts & Nevis", "254": "Luxembourg", "256": "Madeira Is.",
-	"257": "Malta", "260": "Monaco", "263": "Netherlands", "265": "Northern Ireland",
-	"266": "Fed. Rep. of Germany", "269": "Poland", "272": "Portugal",
-	"275": "Romania", "279": "Scotland", "281": "Spain", "284": "Sweden",
-	"287": "Switzerland", "288": "Ukraine", "291": "United States", "296": "Serbia",
-	"308": "Costa Rica", "315": "Czech Republic", "324": "St. Lucia",
-	"336": "Israel", "339": "Japan", "390": "Turkiye", "446": "Morocco",
-	"462": "South Africa", "497": "Croatia", "499": "Slovenia", "503": "Slovak Republic",
+    160: {1813.5},
+    80:  {3530, 3550},
+    60:  {}, // 60m has special handling (entire band)
+    40:  {7038, 7055, 7114},
+    30:  {10120},
+    20:  {14050, 14114},
+    17:  {18080},
+    15:  {21050, 21114},
+    12:  {24910},
+    10:  {28050, 28114},
+    6:   {50090},
 }
 
 // Compiled regex patterns (global for performance)
 var (
-	eohPattern        = regexp.MustCompile(`(?i)<eoh>`)
-	eorPattern        = regexp.MustCompile(`(?i)<eor>`)
-	fieldPattern      = regexp.MustCompile(`(?i)<(\w+?):\d+[^>]*>([^<\r\n]*)`)
-	prefixPattern     = regexp.MustCompile(`(?:.*/)?([0-9]*[a-zA-Z]+\d+)`)
-	memberNumPattern  = regexp.MustCompile(`^(\d+)`)
-	k3yPattern        = regexp.MustCompile(`(?i).*?(?:K3Y|SKM)[/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)`)
-	slashedCallPattern = regexp.MustCompile(`^([^/]+)/(.+)$|^(.+)/([^/]+)$`)
-	suffixStripPattern = regexp.MustCompile(`[A-Z]+$`)
+    eohPattern         = regexp.MustCompile(`(?i)<eoh>`)
+    eorPattern         = regexp.MustCompile(`(?i)<eor>`)
+    fieldPattern       = regexp.MustCompile(`(?i)<(\w+?):\d+[^>]*>([^<\r\n]*)`)
+    slashedCallPattern = regexp.MustCompile(`^([^/]+)/(.+)$|^(.+)/([^/]+)$`)
 )
 
 // ============================================================================
@@ -162,219 +122,219 @@ var (
 
 // Config holds all configuration settings
 type Config struct {
-	MyCallsign              string
-	MyGridsquare            string
-	SpotterRadius           int
-	ADIFile                 string
-	Goals                   []string
-	Targets                 []string
-	Bands                   []int
-	Exclusions              []string
-	Friends                 []string
-	Verbose                 bool
-	DistanceUnits           string
-	K3YYear                 int
-	AwardsOnly              bool
-	Interactive             bool
-	SpottersNearby          map[string]bool
-	SpotPersistenceMinutes  int // How long to remember spots (default: 30)
+    MyCallsign              string
+    MyGridsquare            string
+    SpotterRadius           int
+    ADIFile                 string
+    Goals                   []string
+    Targets                 []string
+    Bands                   []int
+    Exclusions              []string
+    Friends                 []string
+    Verbose                 bool
+    DistanceUnits           string
+    K3YYear                 int
+    AwardsOnly              bool
+    Interactive             bool
+    SpottersNearby          map[string]bool
+    SpotPersistenceMinutes  int // How long to remember spots (default: 30)
 
-	// Sub-configurations
-	HighWPM      HighWPMConfig
-	OffFrequency OffFrequencyConfig
-	Notification NotificationConfig
-	Sked         SkedConfig
-	LogFile      LogFileConfig
-	ProgressDots ProgressDotsConfig
+    // Sub-configurations
+    HighWPM      HighWPMConfig
+    OffFrequency OffFrequencyConfig
+    Notification NotificationConfig
+    Sked         SkedConfig
+    LogFile      LogFileConfig
+    ProgressDots ProgressDotsConfig
 }
 
 // HighWPMConfig controls high WPM warnings
 type HighWPMConfig struct {
-	Action    string // "suppress", "warn", "always-display"
-	Threshold int    // WPM threshold (default: 15)
+    Action    string // "suppress", "warn", "always-display"
+    Threshold int    // WPM threshold (default: 15)
 }
 
 // OffFrequencyConfig controls off-frequency warnings
 type OffFrequencyConfig struct {
-	Action    string // "suppress", "warn"
-	Tolerance int    // kHz tolerance (default: 0)
+    Action    string // "suppress", "warn"
+    Tolerance int    // kHz tolerance (default: 0)
 }
 
 // NotificationConfig controls notification beeps
 type NotificationConfig struct {
-	Enabled                   bool
-	Condition                 []string // "goals", "targets", "friends"
-	RenotificationDelaySeconds int
+    Enabled                   bool
+    Condition                 []string // "goals", "targets", "friends"
+    RenotificationDelaySeconds int
 }
 
 // SkedConfig controls SKCC Sked monitoring
 type SkedConfig struct {
-	Enabled      bool
-	CheckSeconds int // How often to check (default: 60)
+    Enabled      bool
+    CheckSeconds int // How often to check (default: 60)
 }
 
 // LogFileConfig controls logging to file
 type LogFileConfig struct {
-	Enabled          bool
-	FileName         string
-	DeleteOnStartup  bool
+    Enabled          bool
+    FileName         string
+    DeleteOnStartup  bool
 }
 
 // ProgressDotsConfig controls progress dot display
 type ProgressDotsConfig struct {
-	Enabled        bool
-	DisplaySeconds int
-	DotsPerLine    int
+    Enabled        bool
+    DisplaySeconds int
+    DotsPerLine    int
 }
 
 // Rosters holds award level data for all rosters
 type Rosters struct {
-	Centurion map[string]int // SKCC# -> level
-	Tribune   map[string]int
-	Senator   map[string]int
-	WAS       map[string]int // Callsign -> level
-	WASC      map[string]int
-	WAST      map[string]int
-	WASS      map[string]int
-	Prefix    map[string]int // Callsign -> level
-	DXC       map[string]int // SKCC# -> level
-	DXQ       map[string]int // SKCC# -> level
-	QRP1x     map[string]int // SKCC# -> level
-	QRP2x     map[string]int // SKCC# -> level
-	TKA       map[string]int // SKCC# -> level
-	RC        map[string]int // SKCC# -> level
+    Centurion map[string]int // SKCC# -> level
+    Tribune   map[string]int
+    Senator   map[string]int
+    WAS       map[string]int // Callsign -> level
+    WASC      map[string]int
+    WAST      map[string]int
+    WASS      map[string]int
+    Prefix    map[string]int // Callsign -> level
+    DXC       map[string]int // SKCC# -> level
+    DXQ       map[string]int // SKCC# -> level
+    QRP1x     map[string]int // SKCC# -> level
+    QRP2x     map[string]int // SKCC# -> level
+    TKA       map[string]int // SKCC# -> level
+    RC        map[string]int // SKCC# -> level
 }
 
 // Member represents an SKCC member from the database
 type Member struct {
-	SKCCNumber  string   // With suffix (e.g., "2748S")
-	PlainNumber string   // Without suffix (e.g., "2748")
-	Callsign    string   // Primary callsign (stored as-is from database, may include /SK, /EX)
-	Name        string   // Member name
-	SPC         string   // State/Province/Country
-	OldCalls    []string // Previous callsigns
-	DXCode      string   // DXCC entity code
-	JoinDate    string   // Date joined SKCC
-	CDate       string   // Centurion date
-	TDate       string   // Tribune date
-	TX8Date     string   // Tx8 date
-	SDate       string   // Senator date
-	Status      string   // A=Active, SK=Silent Key
+    SKCCNumber  string   // With suffix (e.g., "2748S")
+    PlainNumber string   // Without suffix (e.g., "2748")
+    Callsign    string   // Primary callsign (stored as-is from database, may include /SK, /EX)
+    Name        string   // Member name
+    SPC         string   // State/Province/Country
+    OldCalls    []string // Previous callsigns
+    DXCode      string   // DXCC entity code
+    JoinDate    string   // Date joined SKCC
+    CDate       string   // Centurion date
+    TDate       string   // Tribune date
+    TX8Date     string   // Tx8 date
+    SDate       string   // Senator date
+    Status      string   // A=Active, SK=Silent Key
 }
 
 // QSO represents a QSO from the ADI log
 type QSO struct {
-	Call       string
-	SKCC       string // As logged
-	SKCCPre    string // Numeric portion only
-	QSODate    string
-	TimeOn     string
-	TimeOff    string
-	Band       string
-	Mode       string
-	State      string
-	Country    string
-	DXCC       string
-	TxPwr      string
-	RxPwr      string
-	KeyType    string
-	Comment    string
-	Name       string
-	QTH        string
-	RSTRcvd    string
-	RSTSent    string
-	Freq       string
-	Gridsquare string
+    Call       string
+    SKCC       string // As logged
+    SKCCPre    string // Numeric portion only
+    QSODate    string
+    TimeOn     string
+    TimeOff    string
+    Band       string
+    Mode       string
+    State      string
+    Country    string
+    DXCC       string
+    TxPwr      string
+    RxPwr      string
+    KeyType    string
+    Comment    string
+    Name       string
+    QTH        string
+    RSTRcvd    string
+    RSTSent    string
+    Freq       string
+    Gridsquare string
 }
 
 // ProcessedQSO represents a validated QSO with award qualification flags
 type ProcessedQSO struct {
-	// Basic fields
-	Call        string
-	CallPri     string // Member's primary call
-	QSODate     string
-	TimeOn      string
-	TimeOff     string
-	Band        string
-	BandNr      int
-	Mode        string
-	State       string
-	Country     string
-	DXCC        string
-	SKCCNr      string // Member number
-	SKCC        string // With suffix
-	TxPwr       string
-	RxPwr       string
-	KeyType     string
-	Name        string
-	QTH         string
-	Comment     string
-	RSTRcvd     string
-	RSTSent     string
-	Freq        string
-	Gridsquare  string
+    // Basic fields
+    Call        string
+    CallPri     string // Member's primary call
+    QSODate     string
+    TimeOn      string
+    TimeOff     string
+    Band        string
+    BandNr      int
+    Mode        string
+    State       string
+    Country     string
+    DXCC        string
+    SKCCNr      string // Member number
+    SKCC        string // With suffix
+    TxPwr       string
+    RxPwr       string
+    KeyType     string
+    Name        string
+    QTH         string
+    Comment     string
+    RSTRcvd     string
+    RSTSent     string
+    Freq        string
+    Gridsquare  string
 
-	// Award qualification flags
-	WasQSO       bool
-	WasCQSO      bool
-	WasTQSO      bool
-	WasSQSO      bool
-	TribAwardQSO bool
-	SenAwardQSO  bool
-	DXQQSO       bool
-	DXCQSO       bool
-	DXCode       string
-	PfxCall      string
-	Pfx          string
-	PfxPts       string // SKCC number for prefix
-	RagChewQSO   bool
-	RagChewMins  int
-	QRPx1QSO     bool
-	QRPx2QSO     bool
-	TKAQSO       bool
+    // Award qualification flags
+    WasQSO       bool
+    WasCQSO      bool
+    WasTQSO      bool
+    WasSQSO      bool
+    TribAwardQSO bool
+    SenAwardQSO  bool
+    DXQQSO       bool
+    DXCQSO       bool
+    DXCode       string
+    PfxCall      string
+    Pfx          string
+    PfxPts       string // SKCC number for prefix
+    RagChewQSO   bool
+    RagChewMins  int
+    QRPx1QSO     bool
+    QRPx2QSO     bool
+    TKAQSO       bool
 }
 
 // AwardProcessor handles all award calculation logic
 type AwardProcessor struct {
-	memberDB      map[string]*Member     // SKCC number -> Member
-	callsignDB    map[string][]*Member   // Callsign -> list of Members
-	myMember      *Member
-	myMemberNr    string
-	myJoinDate    string
-	myCDate       string
-	myTDate       string
-	myTX8Date     string
-	mySDate       string
-	myDXCode      string
+    memberDB      map[string]*Member     // SKCC number -> Member
+    callsignDB    map[string][]*Member   // Callsign -> list of Members
+    myMember      *Member
+    myMemberNr    string
+    myJoinDate    string
+    myCDate       string
+    myTDate       string
+    myTX8Date     string
+    mySDate       string
+    myDXCode      string
 
-	qsosProcessed    int
-	qsosAdded        int
-	qsosSkipped      []string
-	qsosNeedSKCC     []NeedSKCCEntry
-	qsosMissingSKCC  int
-	qsosAutoMatched  []AutoMatchEntry
-	processedQSOs    []ProcessedQSO
-	dxcHomeUsed      bool
+    qsosProcessed    int
+    qsosAdded        int
+    qsosSkipped      []string
+    qsosNeedSKCC     []NeedSKCCEntry
+    qsosMissingSKCC  int
+    qsosAutoMatched  []AutoMatchEntry
+    processedQSOs    []ProcessedQSO
+    dxcHomeUsed      bool
 }
 
 // NeedSKCCEntry tracks QSOs that need SKCC numbers
 type NeedSKCCEntry struct {
-	Date  string
-	Time  string
-	Entry string
+    Date  string
+    Time  string
+    Entry string
 }
 
 // AutoMatchEntry tracks auto-matched QSOs
 type AutoMatchEntry struct {
-	QSO       QSO
-	SKCCNr    string
-	Member    *Member
+    QSO       QSO
+    SKCCNr    string
+    Member    *Member
 }
 
 // Global state
 var (
-	config  *Config
-	members map[string]*Member // All members indexed by all callsigns (current + old)
+    config  *Config
+    members map[string]*Member // All members indexed by all callsigns (current + old)
 )
 
 // ============================================================================
@@ -382,109 +342,87 @@ var (
 // ============================================================================
 
 func formatDate(dateStr string) string {
-	if len(dateStr) >= 8 {
-		return dateStr[0:4] + "-" + dateStr[4:6] + "-" + dateStr[6:8]
-	}
-	return dateStr
+    if len(dateStr) >= 8 {
+        return dateStr[0:4] + "-" + dateStr[4:6] + "-" + dateStr[6:8]
+    }
+    return dateStr
 }
 
 func formatTime(timeStr string) string {
-	if len(timeStr) >= 4 {
-		hh := timeStr[0:2]
-		mm := timeStr[2:4]
-		ss := "00"
-		if len(timeStr) >= 6 {
-			ss = timeStr[4:6]
-		}
-		return hh + ":" + mm + ":" + ss + "Z"
-	}
-	return "00:00:00Z"
+    if len(timeStr) >= 4 {
+        hh := timeStr[0:2]
+        mm := timeStr[2:4]
+        ss := "00"
+        if len(timeStr) >= 6 {
+            ss = timeStr[4:6]
+        }
+        return hh + ":" + mm + ":" + ss + "Z"
+    }
+    return "00:00:00Z"
 }
 
 func cleanSKCCNumber(skcc string) string {
-	var result strings.Builder
-	for _, r := range skcc {
-		if r >= '0' && r <= '9' {
-			result.WriteRune(r)
-		}
-	}
-	return result.String()
+    var result strings.Builder
+    for _, r := range skcc {
+        if r >= '0' && r <= '9' {
+            result.WriteRune(r)
+        }
+    }
+    return result.String()
 }
 
 // extractCallsign extracts the base callsign from a slashed call
 // Examples: W1AW/4 -> W1AW, KH6/W6XX -> W6XX, VE3/K7MJG -> K7MJG
 func extractCallsign(call string) string {
-	call = strings.TrimSpace(strings.ToUpper(call))
-	if call == "" {
-		return ""
-	}
+    call = strings.TrimSpace(strings.ToUpper(call))
+    if call == "" {
+        return ""
+    }
 
-	// Check for slashed callsign
-	matches := slashedCallPattern.FindStringSubmatch(call)
-	if matches != nil {
-		// Pattern 1: prefix/call (e.g., KH6/W6XX, VE3/K7MJG)
-		if matches[1] != "" && matches[2] != "" {
-			prefix := matches[1]
-			suffix := matches[2]
-			// If prefix looks like a location indicator (short), use suffix
-			if len(prefix) <= 3 || strings.Contains("KH6 KL7 KP4", prefix) {
-				return suffix
-			}
-			// Otherwise use prefix
-			return prefix
-		}
-		// Pattern 2: call/suffix (e.g., W1AW/4, AC2C/M)
-		if matches[3] != "" && matches[4] != "" {
-			return matches[3]
-		}
-	}
+    // Check for slashed callsign
+    matches := slashedCallPattern.FindStringSubmatch(call)
+    if matches != nil {
+        // Pattern 1: prefix/call (e.g., KH6/W6XX, VE3/K7MJG)
+        if matches[1] != "" && matches[2] != "" {
+            prefix := matches[1]
+            suffix := matches[2]
+            // If prefix looks like a location indicator (short), use suffix
+            if len(prefix) <= 3 || strings.Contains("KH6 KL7 KP4", prefix) {
+                return suffix
+            }
+            // Otherwise use prefix
+            return prefix
+        }
+        // Pattern 2: call/suffix (e.g., W1AW/4, AC2C/M)
+        if matches[3] != "" && matches[4] != "" {
+            return matches[3]
+        }
+    }
 
-	return call
-}
-
-func extractPrefix(call string) string {
-	matches := prefixPattern.FindStringSubmatch(call)
-	if len(matches) > 1 {
-		prefix := matches[1]
-		if len(prefix) >= 3 && prefix[2] >= '0' && prefix[2] <= '9' {
-			return prefix[:3]
-		} else if len(prefix) >= 2 {
-			return prefix[:2]
-		}
-	}
-	return ""
+    return call
 }
 
 func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
-func containsInt(slice []int, item int) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
+    for _, s := range slice {
+        if s == item {
+            return true
+        }
+    }
+    return false
 }
 
 func normalizeDate(date string) string {
-	if len(date) > 8 {
-		return date[:8]
-	}
-	return date
+    if len(date) > 8 {
+        return date[:8]
+    }
+    return date
 }
 
 func formatSkippedQSO(date, time, call, band, reason string) string {
-	dateStr := formatDate(date)
-	timeStr := formatTime(time)
-	return fmt.Sprintf("Date: %s     Time: %s     Call: %-10s     Band: %-4s     Reason: %s",
-		dateStr, timeStr, call, band, reason)
+    dateStr := formatDate(date)
+    timeStr := formatTime(time)
+    return fmt.Sprintf("Date: %s     Time: %s     Call: %-10s     Band: %-4s     Reason: %s",
+        dateStr, timeStr, call, band, reason)
 }
 
 // ============================================================================
@@ -493,157 +431,157 @@ func formatSkippedQSO(date, time, call, band, reason string) string {
 
 // RBNConnection manages connection to the Reverse Beacon Network
 type RBNConnection struct {
-	callsign string
-	ctx      context.Context
-	cancel   context.CancelFunc
-	spotChan chan string
+    callsign string
+    ctx      context.Context
+    cancel   context.CancelFunc
+    spotChan chan string
 }
 
 // NewRBNConnection creates a new RBN connection
 func NewRBNConnection(callsign string) *RBNConnection {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &RBNConnection{
-		callsign: callsign,
-		ctx:      ctx,
-		cancel:   cancel,
-		spotChan: make(chan string, 100), // Buffered channel for spots
-	}
+    ctx, cancel := context.WithCancel(context.Background())
+    return &RBNConnection{
+        callsign: callsign,
+        ctx:      ctx,
+        cancel:   cancel,
+        spotChan: make(chan string, 100), // Buffered channel for spots
+    }
 }
 
 // Connect establishes connection to RBN with IPv6/IPv4 fallback
 func (rbn *RBNConnection) Connect() error {
-	// Resolve hostname
-	addrs, err := net.LookupIP(RBNServer)
-	if err != nil {
-		return fmt.Errorf("DNS resolution failed: %w", err)
-	}
+    // Resolve hostname
+    addrs, err := net.LookupIP(RBNServer)
+    if err != nil {
+        return fmt.Errorf("DNS resolution failed: %w", err)
+    }
 
-	if len(addrs) == 0 {
-		return fmt.Errorf("no IP addresses found for %s", RBNServer)
-	}
+    if len(addrs) == 0 {
+        return fmt.Errorf("no IP addresses found for %s", RBNServer)
+    }
 
-	// Sort addresses - prefer IPv6
-	sort.Slice(addrs, func(i, j int) bool {
-		return addrs[i].To4() == nil && addrs[j].To4() != nil
-	})
+    // Sort addresses - prefer IPv6
+    sort.Slice(addrs, func(i, j int) bool {
+        return addrs[i].To4() == nil && addrs[j].To4() != nil
+    })
 
-	// Try each address
-	var lastErr error
-	for _, addr := range addrs {
-		protocol := "IPv4"
-		if addr.To4() == nil {
-			protocol = "IPv6"
-		}
+    // Try each address
+    var lastErr error
+    for _, addr := range addrs {
+        protocol := "IPv4"
+        if addr.To4() == nil {
+            protocol = "IPv6"
+        }
 
-		target := fmt.Sprintf("[%s]:%d", addr, RBNPort)
-		if addr.To4() != nil {
-			target = fmt.Sprintf("%s:%d", addr, RBNPort)
-		}
+        target := fmt.Sprintf("[%s]:%d", addr, RBNPort)
+        if addr.To4() != nil {
+            target = fmt.Sprintf("%s:%d", addr, RBNPort)
+        }
 
-		conn, err := net.DialTimeout("tcp", target, 30*time.Second)
-		if err != nil {
-			lastErr = err
-			continue
-		}
+        conn, err := net.DialTimeout("tcp", target, 30*time.Second)
+        if err != nil {
+            lastErr = err
+            continue
+        }
 
-		// Enable TCP keepalive
-		if tcpConn, ok := conn.(*net.TCPConn); ok {
-			tcpConn.SetKeepAlive(true)
-			tcpConn.SetKeepAlivePeriod(5 * time.Minute)
-		}
+        // Enable TCP keepalive
+        if tcpConn, ok := conn.(*net.TCPConn); ok {
+            tcpConn.SetKeepAlive(true)
+            tcpConn.SetKeepAlivePeriod(5 * time.Minute)
+        }
 
-		fmt.Printf("Connected to '%s' using %s.\n", RBNServer, protocol)
+        fmt.Printf("Connected to '%s' using %s.\n", RBNServer, protocol)
 
-		// Authenticate
-		if err := rbn.authenticate(conn); err != nil {
-			conn.Close()
-			return err
-		}
+        // Authenticate
+        if err := rbn.authenticate(conn); err != nil {
+            conn.Close()
+            return err
+        }
 
-		// Start reading spots in background
-		go rbn.readSpots(conn)
-		return nil
-	}
+        // Start reading spots in background
+        go rbn.readSpots(conn)
+        return nil
+    }
 
-	return fmt.Errorf("failed to connect: %w", lastErr)
+    return fmt.Errorf("failed to connect: %w", lastErr)
 }
 
 // authenticate logs in to the RBN server
 func (rbn *RBNConnection) authenticate(conn net.Conn) error {
-	reader := bufio.NewReader(conn)
+    reader := bufio.NewReader(conn)
 
-	// Read "call: " prompt
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	if _, err := reader.ReadString(':'); err != nil {
-		return fmt.Errorf("login prompt timeout: %w", err)
-	}
+    // Read "call: " prompt
+    conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+    if _, err := reader.ReadString(':'); err != nil {
+        return fmt.Errorf("login prompt timeout: %w", err)
+    }
 
-	// Send callsign
-	if _, err := fmt.Fprintf(conn, "%s\r\n", rbn.callsign); err != nil {
-		return fmt.Errorf("failed to send callsign: %w", err)
-	}
+    // Send callsign
+    if _, err := fmt.Fprintf(conn, "%s\r\n", rbn.callsign); err != nil {
+        return fmt.Errorf("failed to send callsign: %w", err)
+    }
 
-	// Wait for ">" prompt
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("authentication failed: %w", err)
-		}
-		if strings.Contains(line, ">") {
-			break
-		}
-	}
+    // Wait for ">" prompt
+    conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+    for {
+        line, err := reader.ReadString('\n')
+        if err != nil {
+            return fmt.Errorf("authentication failed: %w", err)
+        }
+        if strings.Contains(line, ">") {
+            break
+        }
+    }
 
-	return nil
+    return nil
 }
 
 // readSpots reads spot data from RBN and sends to channel
 func (rbn *RBNConnection) readSpots(conn net.Conn) {
-	defer conn.Close()
-	defer close(rbn.spotChan)
+    defer conn.Close()
+    defer close(rbn.spotChan)
 
-	reader := bufio.NewReader(conn)
+    reader := bufio.NewReader(conn)
 
-	for {
-		select {
-		case <-rbn.ctx.Done():
-			return
-		default:
-			// Set read deadline (10 minute timeout)
-			conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
+    for {
+        select {
+        case <-rbn.ctx.Done():
+            return
+        default:
+            // Set read deadline (10 minute timeout)
+            conn.SetReadDeadline(time.Now().Add(10 * time.Minute))
 
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					// Send keepalive
-					conn.Write([]byte("\r\n"))
-					continue
-				}
-				fmt.Printf("RBN connection error: %v\n", err)
-				return
-			}
+            line, err := reader.ReadString('\n')
+            if err != nil {
+                if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+                    // Send keepalive
+                    conn.Write([]byte("\r\n"))
+                    continue
+                }
+                fmt.Printf("RBN connection error: %v\n", err)
+                return
+            }
 
-			line = strings.TrimSpace(line)
-			if line != "" {
-				select {
-				case rbn.spotChan <- line:
-				case <-rbn.ctx.Done():
-					return
-				}
-			}
-		}
-	}
+            line = strings.TrimSpace(line)
+            if line != "" {
+                select {
+                case rbn.spotChan <- line:
+                case <-rbn.ctx.Done():
+                    return
+                }
+            }
+        }
+    }
 }
 
 // Spots returns the channel for receiving spots
 func (rbn *RBNConnection) Spots() <-chan string {
-	return rbn.spotChan
+    return rbn.spotChan
 }
 
 // Close terminates the RBN connection
 func (rbn *RBNConnection) Close() {
-	rbn.cancel()
+    rbn.cancel()
 }
 
 // ============================================================================
@@ -652,25 +590,25 @@ func (rbn *RBNConnection) Close() {
 
 // isOnSKCCFrequency checks if a frequency is on an SKCC calling frequency
 func isOnSKCCFrequency(frequencyKHz float64, toleranceKHz int) bool {
-	tolerance := float64(toleranceKHz)
+    tolerance := float64(toleranceKHz)
 
-	for band, midPoints := range skccCallingFrequencies {
-		// Special handling for 60m band (entire band is SKCC)
-		if band == 60 {
-			if frequencyKHz >= (5332-1.5) && frequencyKHz <= (5405+1.5) {
-				return true
-			}
-		} else {
-			// Check each calling frequency with tolerance
-			for _, midPoint := range midPoints {
-				if frequencyKHz >= (midPoint-tolerance) && frequencyKHz <= (midPoint+tolerance) {
-					return true
-				}
-			}
-		}
-	}
+    for band, midPoints := range skccCallingFrequencies {
+        // Special handling for 60m band (entire band is SKCC)
+        if band == 60 {
+            if frequencyKHz >= (5332-1.5) && frequencyKHz <= (5405+1.5) {
+                return true
+            }
+        } else {
+            // Check each calling frequency with tolerance
+            for _, midPoint := range midPoints {
+                if frequencyKHz >= (midPoint-tolerance) && frequencyKHz <= (midPoint+tolerance) {
+                    return true
+                }
+            }
+        }
+    }
 
-	return false
+    return false
 }
 
 // ============================================================================
@@ -679,391 +617,447 @@ func isOnSKCCFrequency(frequencyKHz float64, toleranceKHz int) bool {
 
 // Spot represents a parsed DX spot from RBN
 type Spot struct {
-	Zulu           string
-	Spotter        string
-	FrequencyKHz   float64
-	CallSign       string
-	CallSignSuffix string
-	DB             int
-	WPM            int
+    Zulu           string
+    Spotter        string
+    FrequencyKHz   float64
+    CallSign       string
+    CallSignSuffix string
+    DB             int
+    WPM            int
 }
 
 // SpotProcessor handles parsing and filtering of RBN spots
 type SpotProcessor struct {
-	config      *Config
-	members     map[string]*Member
-	rosters     *Rosters
-	lastSpotted map[string]SpotTime
-	notified    map[string]float64
-	mu          sync.RWMutex
-	zuluRegex   *regexp.Regexp
-	dbRegex     *regexp.Regexp
+    config      *Config
+    members     map[string]*Member
+    rosters     *Rosters
+    lastSpotted map[string]SpotTime
+    notified    map[string]float64
+    mu          sync.RWMutex
+    zuluRegex   *regexp.Regexp
+    dbRegex     *regexp.Regexp
 }
 
 // SpotTime tracks when a callsign was last spotted
 type SpotTime struct {
-	FrequencyKHz float64
-	Timestamp    float64
+    FrequencyKHz float64
+    Timestamp    float64
 }
 
 // NewSpotProcessor creates a new spot processor
 func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters) *SpotProcessor {
-	return &SpotProcessor{
-		config:      config,
-		members:     members,
-		rosters:     rosters,
-		lastSpotted: make(map[string]SpotTime),
-		notified:    make(map[string]float64),
-		zuluRegex:   regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
-		dbRegex:     regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
-	}
+    return &SpotProcessor{
+        config:      config,
+        members:     members,
+        rosters:     rosters,
+        lastSpotted: make(map[string]SpotTime),
+        notified:    make(map[string]float64),
+        zuluRegex:   regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
+        dbRegex:     regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
+    }
 }
 
 // ParseSpot parses a DX spot line from RBN
 // Returns nil if the line is invalid or should be filtered
 func (sp *SpotProcessor) ParseSpot(line string) *Spot {
-	// DX spot lines are exactly 75 characters and start with "DX de "
-	if len(line) != 75 || !strings.HasPrefix(line, "DX de ") {
-		return nil
-	}
+    // DX spot lines are exactly 75 characters and start with "DX de "
+    if len(line) != 75 || !strings.HasPrefix(line, "DX de ") {
+        return nil
+    }
 
-	// Extract components by position (RBN format is fixed-width)
-	// Format: DX de SPOTTER-#:  FREQ CALL         CW  XX dB  XX WPM  BEACON  HHMMZ
-	// Example: DX de N6TV-#:      14023.0  W1AW         CW  22 dB  25 WPM  K3Y     2130Z
+    // Extract components by position (RBN format is fixed-width)
+    // Format: DX de SPOTTER-#:  FREQ CALL         CW  XX dB  XX WPM  BEACON  HHMMZ
+    // Example: DX de N6TV-#:      14023.0  W1AW         CW  22 dB  25 WPM  K3Y     2130Z
 
-	spotterFreq := line[6:24] // "SPOTTER-#:  FREQ"
-	parts := strings.Split(spotterFreq, "-#:")
-	if len(parts) != 2 {
-		return nil
-	}
-	spotter := strings.TrimSpace(parts[0])
-	freqStr := strings.TrimSpace(parts[1])
+    spotterFreq := line[6:24] // "SPOTTER-#:  FREQ"
+    parts := strings.Split(spotterFreq, "-#:")
+    if len(parts) != 2 {
+        return nil
+    }
+    spotter := strings.TrimSpace(parts[0])
+    freqStr := strings.TrimSpace(parts[1])
 
-	callsign := strings.TrimSpace(line[26:35])
-	cw := strings.TrimSpace(line[41:47])
-	beacon := strings.TrimSpace(line[62:68])
-	zulu := line[70:75]
+    callsign := strings.TrimSpace(line[26:35])
+    cw := strings.TrimSpace(line[41:47])
+    beacon := strings.TrimSpace(line[62:68])
+    zulu := line[70:75]
 
-	// Filter non-CW and beacons
-	if cw != "CW" || beacon == "BEACON" {
-		return nil
-	}
+    // Filter non-CW and beacons
+    if cw != "CW" || beacon == "BEACON" {
+        return nil
+    }
 
-	// Validate format
-	dbField := line[47:52]
-	if !sp.zuluRegex.MatchString(zulu) || !sp.dbRegex.MatchString(dbField) {
-		return nil
-	}
+    // Validate format
+    dbField := line[47:52]
+    if !sp.zuluRegex.MatchString(zulu) || !sp.dbRegex.MatchString(dbField) {
+        return nil
+    }
 
-	// Extract numeric values
-	dbStr := strings.TrimSpace(line[47:49])
-	db, err := strconv.Atoi(dbStr)
-	if err != nil {
-		return nil
-	}
+    // Extract numeric values
+    dbStr := strings.TrimSpace(line[47:49])
+    db, err := strconv.Atoi(dbStr)
+    if err != nil {
+        return nil
+    }
 
-	wpmStr := strings.TrimSpace(line[53:56])
-	wpm, err := strconv.Atoi(wpmStr)
-	if err != nil {
-		return nil
-	}
+    wpmStr := strings.TrimSpace(line[53:56])
+    wpm, err := strconv.Atoi(wpmStr)
+    if err != nil {
+        return nil
+    }
 
-	freq, err := strconv.ParseFloat(freqStr, 64)
-	if err != nil {
-		return nil
-	}
+    freq, err := strconv.ParseFloat(freqStr, 64)
+    if err != nil {
+        return nil
+    }
 
-	// Handle callsign suffixes (e.g., W1AW/4)
-	callSignSuffix := ""
-	if strings.Contains(callsign, "/") {
-		parts := strings.SplitN(callsign, "/", 2)
-		callsign = parts[0]
-		callSignSuffix = strings.ToUpper(parts[1])
-	}
+    // Handle callsign suffixes (e.g., W1AW/4)
+    callSignSuffix := ""
+    if strings.Contains(callsign, "/") {
+        parts := strings.SplitN(callsign, "/", 2)
+        callsign = parts[0]
+        callSignSuffix = strings.ToUpper(parts[1])
+    }
 
-	return &Spot{
-		Zulu:           zulu,
-		Spotter:        spotter,
-		FrequencyKHz:   freq,
-		CallSign:       callsign,
-		CallSignSuffix: callSignSuffix,
-		DB:             db,
-		WPM:            wpm,
-	}
+    return &Spot{
+        Zulu:           zulu,
+        Spotter:        spotter,
+        FrequencyKHz:   freq,
+        CallSign:       callsign,
+        CallSignSuffix: callSignSuffix,
+        DB:             db,
+        WPM:            wpm,
+    }
 }
 
 // HandleSpot processes a parsed spot and determines if it should be displayed
 func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output string) {
-	if spot == nil {
-		return false, ""
-	}
+    if spot == nil {
+        return false, ""
+    }
 
-	// Extract and validate callsign
-	callsign := extractCallsign(spot.CallSign)
-	if callsign == "" {
-		return false, ""
-	}
+    // Extract and validate callsign
+    callsign := extractCallsign(spot.CallSign)
+    if callsign == "" {
+        return false, ""
+    }
 
-	// Check exclusion list
-	for _, excluded := range sp.config.Exclusions {
-		if callsign == excluded {
-			return false, ""
-		}
-	}
+    // DEBUG: Log entry for specific callsigns
+    if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
+        fmt.Printf("[DEBUG HandleSpot ENTRY] %s on %.1f by %s\n", callsign, spot.FrequencyKHz, spot.Spotter)
+    }
 
-	// Check if frequency is in configured bands
-	if !sp.isInBands(spot.FrequencyKHz) {
-		return false, ""
-	}
+    // Check exclusion list
+    for _, excluded := range sp.config.Exclusions {
+        if callsign == excluded {
+            if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
+                fmt.Printf("[DEBUG HandleSpot] %s: excluded\n", callsign)
+            }
+            return false, ""
+        }
+    }
 
-	// Check if spotter is nearby
-	spottedNearby := sp.config.SpottersNearby[spot.Spotter]
+    // Check if frequency is in configured bands
+    if !sp.isInBands(spot.FrequencyKHz) {
+        if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
+            fmt.Printf("[DEBUG HandleSpot] %s: not in configured bands (%.1f)\n", callsign, spot.FrequencyKHz)
+        }
+        return false, ""
+    }
 
-	// Build report components
-	var report []string
+    // Check if spotter is nearby
+    spottedNearby := sp.config.SpottersNearby[spot.Spotter]
 
-	// Add spotter info if nearby or if it's the user's callsign
-	if spottedNearby || callsign == sp.config.MyCallsign {
-		report = append(report, fmt.Sprintf("by %s(%ddB)", spot.Spotter, spot.DB))
-	}
+    if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
+        fmt.Printf("[DEBUG HandleSpot] %s: spottedNearby=%v (spotter=%s)\n", callsign, spottedNearby, spot.Spotter)
+    }
 
-	// Check if this is the user's callsign
-	if callsign == sp.config.MyCallsign {
-		report = append(report, "(you)")
-	}
+    // Build report components
+    var report []string
 
-	// Check frequency (skip for K3Y special event)
-	if callsign != "K3Y" {
-		onFrequency := isOnSKCCFrequency(spot.FrequencyKHz, sp.config.OffFrequency.Tolerance)
-		if !onFrequency {
-			switch sp.config.OffFrequency.Action {
-			case "warn":
-				report = append(report, "OFF SKCC FREQUENCY!")
-			case "suppress":
-				return false, ""
-			}
-		}
-	}
+    // Add spotter info if nearby or if it's the user's callsign
+    if spottedNearby || callsign == sp.config.MyCallsign {
+        report = append(report, fmt.Sprintf("by %s(%ddB)", spot.Spotter, spot.DB))
+    }
 
-	// Handle WPM warnings
-	switch sp.config.HighWPM.Action {
-	case "always-display":
-		report = append(report, fmt.Sprintf("%d WPM", spot.WPM))
-	case "warn":
-		if spot.WPM >= sp.config.HighWPM.Threshold {
-			report = append(report, fmt.Sprintf("%d WPM!", spot.WPM))
-		}
-	case "suppress":
-		if spot.WPM >= sp.config.HighWPM.Threshold {
-			return false, ""
-		}
-	}
+    // Check if this is the user's callsign
+    if callsign == sp.config.MyCallsign {
+        report = append(report, "(you)")
+    }
 
-	// Check friends list
-	for _, friend := range sp.config.Friends {
-		if callsign == friend {
-			report = append(report, "friend")
-			break
-		}
-	}
+    // Check frequency (skip for K3Y special event)
+    if callsign != "K3Y" {
+        onFrequency := isOnSKCCFrequency(spot.FrequencyKHz, sp.config.OffFrequency.Tolerance)
+        if !onFrequency {
+            switch sp.config.OffFrequency.Action {
+            case "warn":
+                report = append(report, "OFF SKCC FREQUENCY!")
+            case "suppress":
+                return false, ""
+            }
+        }
+    }
 
-	// Get goal and target hits
-	k3ySuffix := ""
-	if callsign == "K3Y" {
-		k3ySuffix = spot.CallSignSuffix
-	}
-	goalList, targetList := sp.buildGoalTargetReport(callsign, spot.FrequencyKHz, k3ySuffix)
+    // Handle WPM warnings
+    switch sp.config.HighWPM.Action {
+    case "always-display":
+        report = append(report, fmt.Sprintf("%d WPM", spot.WPM))
+    case "warn":
+        if spot.WPM >= sp.config.HighWPM.Threshold {
+            report = append(report, fmt.Sprintf("%d WPM!", spot.WPM))
+        }
+    case "suppress":
+        if spot.WPM >= sp.config.HighWPM.Threshold {
+            return false, ""
+        }
+    }
 
-	if len(goalList) > 0 {
-		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
-	}
+    // Check friends list
+    for _, friend := range sp.config.Friends {
+        if callsign == friend {
+            report = append(report, "friend")
+            break
+        }
+    }
 
-	if len(targetList) > 0 {
-		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
-	}
+    // Get goal and target hits
+    k3ySuffix := ""
+    if callsign == "K3Y" {
+        k3ySuffix = spot.CallSignSuffix
+    }
+    goalList, targetList := sp.buildGoalTargetReport(callsign, spot.FrequencyKHz, k3ySuffix)
 
-	// Determine if we should display this spot
-	// Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
-	isFriend := false
-	for _, friend := range sp.config.Friends {
-		if callsign == friend {
-			isFriend = true
-			break
-		}
-	}
+    // DEBUG: Log goal/target result for spotted callsigns
+    if sp.config.Verbose && (len(goalList) > 0 || len(targetList) > 0) {
+        fmt.Printf("[DEBUG HandleSpot] %s: goals=%v, targets=%v\n", callsign, goalList, targetList)
+    }
 
-	if !((spottedNearby && (len(goalList) > 0 || len(targetList) > 0)) ||
-		callsign == sp.config.MyCallsign ||
-		isFriend) {
-		return false, ""
-	}
+    if len(goalList) > 0 {
+        report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+    }
 
-	// Record spot
-	sp.mu.Lock()
-	sp.lastSpotted[callsign] = SpotTime{
-		FrequencyKHz: spot.FrequencyKHz,
-		Timestamp:    float64(time.Now().Unix()),
-	}
-	sp.mu.Unlock()
+    if len(targetList) > 0 {
+        report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+    }
 
-	// Build output string
-	freqStr := fmt.Sprintf("%.1f", spot.FrequencyKHz)
-	notificationFlag := sp.handleNotification(callsign, goalList, targetList)
+    // Determine if we should display this spot
+    // Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
+    isFriend := false
+    for _, friend := range sp.config.Friends {
+        if callsign == friend {
+            isFriend = true
+            break
+        }
+    }
 
-	if callsign == "K3Y" {
-		output = fmt.Sprintf("%s%sK3Y/%s on %8s %s",
-			spot.Zulu, notificationFlag, spot.CallSignSuffix, freqStr, strings.Join(report, "; "))
-	} else {
-		// Build member info string
-		memberInfo := ""
-		if member, exists := sp.members[callsign]; exists {
-			memberData := MemberData{
-				PlainNumber: member.PlainNumber,
-				Name:        member.Name,
-				SPC:         member.SPC,
-				MbrStatus:   member.Status,
-				CDate:       member.CDate,
-				TDate:       member.TDate,
-				Tx8Date:     member.TX8Date,
-				SDate:       member.SDate,
-				JoinDate:    member.JoinDate,
-				DXCode:      member.DXCode,
-			}
-			memberInfo = buildMemberInfo(callsign, map[string]MemberData{callsign: memberData}, sp.rosters)
-		}
-		output = fmt.Sprintf("%s%s%-6s %s on %8s %s",
-			spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
-	}
+    if !((spottedNearby && (len(goalList) > 0 || len(targetList) > 0)) ||
+        callsign == sp.config.MyCallsign ||
+        isFriend) {
+        return false, ""
+    }
 
-	return true, output
+    // Record spot
+    sp.mu.Lock()
+    sp.lastSpotted[callsign] = SpotTime{
+        FrequencyKHz: spot.FrequencyKHz,
+        Timestamp:    float64(time.Now().Unix()),
+    }
+    sp.mu.Unlock()
+
+    // Build output string
+    freqStr := fmt.Sprintf("%.1f", spot.FrequencyKHz)
+    notificationFlag := sp.handleNotification(callsign, goalList, targetList)
+
+    if callsign == "K3Y" {
+        output = fmt.Sprintf("%s%sK3Y/%s on %8s %s",
+            spot.Zulu, notificationFlag, spot.CallSignSuffix, freqStr, strings.Join(report, "; "))
+    } else {
+        // Build member info string
+        memberInfo := ""
+        if member, exists := sp.members[callsign]; exists {
+            memberData := MemberData{
+                PlainNumber: member.PlainNumber,
+                Name:        member.Name,
+                SPC:         member.SPC,
+                MbrStatus:   member.Status,
+                CDate:       member.CDate,
+                TDate:       member.TDate,
+                Tx8Date:     member.TX8Date,
+                SDate:       member.SDate,
+                JoinDate:    member.JoinDate,
+                DXCode:      member.DXCode,
+            }
+            memberInfo = buildMemberInfo(callsign, map[string]MemberData{callsign: memberData}, sp.rosters)
+        }
+        output = fmt.Sprintf("%s%s%-6s %s on %8s %s",
+            spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
+    }
+
+    return true, output
 }
 
 // handleNotification determines if a beep should be played and returns the notification flag
 func (sp *SpotProcessor) handleNotification(callsign string, goalList, targetList []string) string {
-	sp.mu.Lock()
-	defer sp.mu.Unlock()
+    sp.mu.Lock()
+    defer sp.mu.Unlock()
 
-	now := float64(time.Now().Unix())
+    now := float64(time.Now().Unix())
 
-	// Clean expired notifications
-	for call, expiry := range sp.notified {
-		if now > expiry {
-			delete(sp.notified, call)
-		}
-	}
+    // Clean expired notifications
+    for call, expiry := range sp.notified {
+        if now > expiry {
+            delete(sp.notified, call)
+        }
+    }
 
-	// Check if we should notify
-	if _, exists := sp.notified[callsign]; !exists {
-		if sp.shouldNotify(callsign, goalList, targetList) {
-			// TODO: Implement beep sound
-			// beep()
-		}
+    // Check if we should notify
+    if _, exists := sp.notified[callsign]; !exists {
+        if sp.shouldNotify(callsign, goalList, targetList) {
+            // TODO: Implement beep sound
+            // beep()
+        }
 
-		sp.notified[callsign] = now + float64(sp.config.Notification.RenotificationDelaySeconds)
-		return "+"
-	}
+        sp.notified[callsign] = now + float64(sp.config.Notification.RenotificationDelaySeconds)
+        return "+"
+    }
 
-	return " "
+    return " "
 }
 
 // shouldNotify determines if notification should be triggered
-func (sp *SpotProcessor) shouldNotify(callsign string, goalList, targetList []string) bool {
-	if !sp.config.Notification.Enabled {
-		return false
-	}
+func (sp *SpotProcessor) shouldNotify(_ string, goalList, targetList []string) bool {
+    if !sp.config.Notification.Enabled {
+        return false
+    }
 
-	// Check each condition type in the notification conditions list
-	hasGoals := len(goalList) > 0
-	hasTargets := len(targetList) > 0
+    // Check each condition type in the notification conditions list
+    hasGoals := len(goalList) > 0
+    hasTargets := len(targetList) > 0
 
-	for _, cond := range sp.config.Notification.Condition {
-		switch cond {
-		case "goals":
-			if hasGoals {
-				return true
-			}
-		case "targets":
-			if hasTargets {
-				return true
-			}
-		case "both":
-			if hasGoals && hasTargets {
-				return true
-			}
-		}
-	}
+    for _, cond := range sp.config.Notification.Condition {
+        switch cond {
+        case "goals":
+            if hasGoals {
+                return true
+            }
+        case "targets":
+            if hasTargets {
+                return true
+            }
+        case "both":
+            if hasGoals && hasTargets {
+                return true
+            }
+        }
+    }
 
-	return false
+    return false
 }
 
 // isInBands checks if a frequency is in one of the configured bands
 func (sp *SpotProcessor) isInBands(freqKHz float64) bool {
-	for _, band := range sp.config.Bands {
-		low, high := getBandEdges(band)
-		if freqKHz >= low && freqKHz <= high {
-			return true
-		}
-	}
-	return false
+    for _, band := range sp.config.Bands {
+        low, high := getBandEdges(band)
+        if freqKHz >= low && freqKHz <= high {
+            return true
+        }
+    }
+    return false
 }
 
 // getBandEdges returns the frequency range for a band in kHz
 func getBandEdges(band int) (float64, float64) {
-	switch band {
-	case 160:
-		return 1800.0, 2000.0
-	case 80:
-		return 3500.0, 4000.0
-	case 60:
-		return 5330.0, 5405.0
-	case 40:
-		return 7000.0, 7300.0
-	case 30:
-		return 10100.0, 10150.0
-	case 20:
-		return 14000.0, 14350.0
-	case 17:
-		return 18068.0, 18168.0
-	case 15:
-		return 21000.0, 21450.0
-	case 12:
-		return 24890.0, 24990.0
-	case 10:
-		return 28000.0, 29700.0
-	case 6:
-		return 50000.0, 54000.0
-	case 2:
-		return 144000.0, 148000.0
-	default:
-		return 0, 0
-	}
+    switch band {
+    case 160:
+        return 1800.0, 2000.0
+    case 80:
+        return 3500.0, 4000.0
+    case 60:
+        return 5330.0, 5405.0
+    case 40:
+        return 7000.0, 7300.0
+    case 30:
+        return 10100.0, 10150.0
+    case 20:
+        return 14000.0, 14350.0
+    case 17:
+        return 18068.0, 18168.0
+    case 15:
+        return 21000.0, 21450.0
+    case 12:
+        return 24890.0, 24990.0
+    case 10:
+        return 28000.0, 29700.0
+    case 6:
+        return 50000.0, 54000.0
+    case 2:
+        return 144000.0, 148000.0
+    default:
+        return 0, 0
+    }
 }
 
 // buildGoalTargetReport builds lists of goals and targets for a spotted callsign
-func (sp *SpotProcessor) buildGoalTargetReport(callsign string, freqKHz float64, k3ySuffix string) ([]string, []string) {
-	var goals []string
-	var targets []string
+func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ string) ([]string, []string) {
+    var goals []string
+    var targets []string
 
-	// For now, we'll implement a simplified version that just checks if the callsign is an SKCC member
-	// and adds basic goal markers. Full implementation requires award tracking state.
+    // For now, we'll implement a simplified version that just checks if the callsign is an SKCC member
+    // and adds basic goal markers. Full implementation requires award tracking state.
 
-	// Check if this is an SKCC member
-	member, exists := sp.members[callsign]
-	if !exists || callsign == sp.config.MyCallsign {
-		return goals, targets
-	}
+    // Check if this is an SKCC member
+    member, exists := sp.members[callsign]
+    if !exists {
+        if sp.config.Verbose {
+            fmt.Printf("[DEBUG buildGoalTargetReport] %s: not found in members database\n", callsign)
+        }
+        return goals, targets
+    }
 
-	// Don't spot inactive members
-	if member.Status != "A" {
-		return goals, targets
-	}
+    if callsign == sp.config.MyCallsign {
+        return goals, targets
+    }
 
-	// For now, just indicate they're an SKCC member and needed for BRAG
-	// TODO: Add full award tracking to determine specific goals/targets
-	goals = append(goals, "BRAG")
-	goals = append(goals, "TKA")
+    // Don't spot inactive members
+    if member.Status != "A" {
+        return goals, targets
+    }
 
-	return goals, targets
+    // For now, just indicate they're an SKCC member and needed for goals the user has configured
+    // TODO: Add full award tracking to determine specific goals/targets
+
+    // Check if BRAG is in user's goals
+    for _, goal := range sp.config.Goals {
+        if goal == "BRAG" {
+            goals = append(goals, "BRAG")
+            break
+        }
+    }
+
+    // Check if TKA is in user's goals
+    for _, goal := range sp.config.Goals {
+        if goal == "TKA" {
+            goals = append(goals, "TKA")
+            break
+        }
+    }
+
+    // Check targets similarly
+    for _, target := range sp.config.Targets {
+        if target == "BRAG" {
+            targets = append(targets, "BRAG")
+            break
+        }
+    }
+
+    for _, target := range sp.config.Targets {
+        if target == "TKA" {
+            targets = append(targets, "TKA")
+            break
+        }
+    }
+
+    return goals, targets
 }
 
 // ============================================================================
@@ -1072,279 +1066,279 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, freqKHz float64,
 
 // Spotter represents an RBN spotter with distance and bands
 type Spotter struct {
-	Miles int
-	Bands []int
+    Miles int
+    Bands []int
 }
 
 // SpotterManager manages RBN spotters and distance calculations
 type SpotterManager struct {
-	spotters map[string]Spotter
-	mu       sync.RWMutex
+    spotters map[string]Spotter
+    mu       sync.RWMutex
 }
 
 // NewSpotterManager creates a new spotter manager
 func NewSpotterManager() *SpotterManager {
-	return &SpotterManager{
-		spotters: make(map[string]Spotter),
-	}
+    return &SpotterManager{
+        spotters: make(map[string]Spotter),
+    }
 }
 
 // LocatorToLatLong converts a Maidenhead locator to latitude/longitude
 func LocatorToLatLong(locator string) (lat, lon float64, err error) {
-	locator = strings.ToUpper(locator)
-	length := len(locator)
+    locator = strings.ToUpper(locator)
+    length := len(locator)
 
-	if length != 4 && length != 6 {
-		return 0, 0, fmt.Errorf("invalid Maidenhead locator length: %d", length)
-	}
+    if length != 4 && length != 6 {
+        return 0, 0, fmt.Errorf("invalid Maidenhead locator length: %d", length)
+    }
 
-	// Validate format
-	if locator[0] < 'A' || locator[0] > 'R' ||
-		locator[1] < 'A' || locator[1] > 'R' ||
-		locator[2] < '0' || locator[2] > '9' ||
-		locator[3] < '0' || locator[3] > '9' {
-		return 0, 0, fmt.Errorf("invalid Maidenhead locator format")
-	}
+    // Validate format
+    if locator[0] < 'A' || locator[0] > 'R' ||
+        locator[1] < 'A' || locator[1] > 'R' ||
+        locator[2] < '0' || locator[2] > '9' ||
+        locator[3] < '0' || locator[3] > '9' {
+        return 0, 0, fmt.Errorf("invalid Maidenhead locator format")
+    }
 
-	if length == 6 {
-		if locator[4] < 'A' || locator[4] > 'X' ||
-			locator[5] < 'A' || locator[5] > 'X' {
-			return 0, 0, fmt.Errorf("invalid Maidenhead locator subsquare")
-		}
-	}
+    if length == 6 {
+        if locator[4] < 'A' || locator[4] > 'X' ||
+            locator[5] < 'A' || locator[5] > 'X' {
+            return 0, 0, fmt.Errorf("invalid Maidenhead locator subsquare")
+        }
+    }
 
-	// Calculate base longitude and latitude
-	lon = float64(locator[0]-'A')*20 - 180 + float64(locator[2]-'0')*2
-	lat = float64(locator[1]-'A')*10 - 90 + float64(locator[3]-'0')
+    // Calculate base longitude and latitude
+    lon = float64(locator[0]-'A')*20 - 180 + float64(locator[2]-'0')*2
+    lat = float64(locator[1]-'A')*10 - 90 + float64(locator[3]-'0')
 
-	// Add subsquare precision if 6-character
-	if length == 6 {
-		lon += float64(locator[4]-'A') * (2.0 / 24.0) + (1.0 / 24.0)
-		lat += float64(locator[5]-'A') * (1.0 / 24.0) + (0.5 / 24.0)
-	} else {
-		lon += 1.0
-		lat += 0.5
-	}
+    // Add subsquare precision if 6-character
+    if length == 6 {
+        lon += float64(locator[4]-'A') * (2.0 / 24.0) + (1.0 / 24.0)
+        lat += float64(locator[5]-'A') * (1.0 / 24.0) + (0.5 / 24.0)
+    } else {
+        lon += 1.0
+        lat += 0.5
+    }
 
-	return lat, lon, nil
+    return lat, lon, nil
 }
 
 // CalculateDistance calculates the great-circle distance between two Maidenhead locators in km
 func CalculateDistance(locator1, locator2 string) (float64, error) {
-	const earthRadiusKm = 6371.0
+    const earthRadiusKm = 6371.0
 
-	lat1, lon1, err := LocatorToLatLong(locator1)
-	if err != nil {
-		return 0, fmt.Errorf("invalid locator1: %w", err)
-	}
+    lat1, lon1, err := LocatorToLatLong(locator1)
+    if err != nil {
+        return 0, fmt.Errorf("invalid locator1: %w", err)
+    }
 
-	lat2, lon2, err := LocatorToLatLong(locator2)
-	if err != nil {
-		return 0, fmt.Errorf("invalid locator2: %w", err)
-	}
+    lat2, lon2, err := LocatorToLatLong(locator2)
+    if err != nil {
+        return 0, fmt.Errorf("invalid locator2: %w", err)
+    }
 
-	// Convert to radians
-	lat1Rad := lat1 * math.Pi / 180.0
-	lat2Rad := lat2 * math.Pi / 180.0
-	dLat := (lat2 - lat1) * math.Pi / 180.0
-	dLon := (lon2 - lon1) * math.Pi / 180.0
+    // Convert to radians
+    lat1Rad := lat1 * math.Pi / 180.0
+    lat2Rad := lat2 * math.Pi / 180.0
+    dLat := (lat2 - lat1) * math.Pi / 180.0
+    dLon := (lon2 - lon1) * math.Pi / 180.0
 
-	// Haversine formula
-	a := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
-			math.Sin(dLon/2)*math.Sin(dLon/2)
+    // Haversine formula
+    a := math.Sin(dLat/2)*math.Sin(dLat/2) +
+        math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+            math.Sin(dLon/2)*math.Sin(dLon/2)
 
-	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+    c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 
-	return earthRadiusKm * c, nil
+    return earthRadiusKm * c, nil
 }
 
 // AddSpotter adds a spotter with distance and band information
 func (sm *SpotterManager) AddSpotter(callsign string, myGrid, spotterGrid string, csvBands string) error {
-	distKm, err := CalculateDistance(myGrid, spotterGrid)
-	if err != nil {
-		return err
-	}
+    distKm, err := CalculateDistance(myGrid, spotterGrid)
+    if err != nil {
+        return err
+    }
 
-	miles := int(distKm * 0.62137) // km to miles
+    miles := int(distKm * 0.62137) // km to miles
 
-	// Parse bands from CSV
-	validBands := map[string]bool{
-		"160m": true, "80m": true, "60m": true, "40m": true, "30m": true,
-		"20m": true, "17m": true, "15m": true, "12m": true, "10m": true, "6m": true,
-	}
+    // Parse bands from CSV
+    validBands := map[string]bool{
+        "160m": true, "80m": true, "60m": true, "40m": true, "30m": true,
+        "20m": true, "17m": true, "15m": true, "12m": true, "10m": true, "6m": true,
+    }
 
-	var bands []int
-	for _, bandStr := range strings.Split(csvBands, ",") {
-		bandStr = strings.TrimSpace(bandStr)
-		if validBands[bandStr] {
-			// Extract numeric part (e.g., "40m" -> 40)
-			bandNum, err := strconv.Atoi(strings.TrimSuffix(bandStr, "m"))
-			if err == nil {
-				bands = append(bands, bandNum)
-			}
-		}
-	}
+    var bands []int
+    for _, bandStr := range strings.Split(csvBands, ",") {
+        bandStr = strings.TrimSpace(bandStr)
+        if validBands[bandStr] {
+            // Extract numeric part (e.g., "40m" -> 40)
+            bandNum, err := strconv.Atoi(strings.TrimSuffix(bandStr, "m"))
+            if err == nil {
+                bands = append(bands, bandNum)
+            }
+        }
+    }
 
-	sm.mu.Lock()
-	sm.spotters[callsign] = Spotter{
-		Miles: miles,
-		Bands: bands,
-	}
-	sm.mu.Unlock()
+    sm.mu.Lock()
+    sm.spotters[callsign] = Spotter{
+        Miles: miles,
+        Bands: bands,
+    }
+    sm.mu.Unlock()
 
-	return nil
+    return nil
 }
 
 // GetDistance returns the distance to a spotter in miles
 func (sm *SpotterManager) GetDistance(callsign string) (int, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+    sm.mu.RLock()
+    defer sm.mu.RUnlock()
 
-	spotter, exists := sm.spotters[callsign]
-	if !exists {
-		return 0, false
-	}
+    spotter, exists := sm.spotters[callsign]
+    if !exists {
+        return 0, false
+    }
 
-	return spotter.Miles, true
+    return spotter.Miles, true
 }
 
 // SpotterDistance represents a spotter with distance
 type SpotterDistance struct {
-	Callsign string
-	Miles    int
+    Callsign string
+    Miles    int
 }
 
 // GetNearbySpotters returns a list of spotters within the radius, sorted by distance
 func (sm *SpotterManager) GetNearbySpotters(radiusMiles int) []SpotterDistance {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+    sm.mu.RLock()
+    defer sm.mu.RUnlock()
 
-	var nearby []SpotterDistance
-	for callsign, spotter := range sm.spotters {
-		if spotter.Miles <= radiusMiles {
-			nearby = append(nearby, SpotterDistance{
-				Callsign: callsign,
-				Miles:    spotter.Miles,
-			})
-		}
-	}
+    var nearby []SpotterDistance
+    for callsign, spotter := range sm.spotters {
+        if spotter.Miles <= radiusMiles {
+            nearby = append(nearby, SpotterDistance{
+                Callsign: callsign,
+                Miles:    spotter.Miles,
+            })
+        }
+    }
 
-	// Sort by distance
-	sort.Slice(nearby, func(i, j int) bool {
-		return nearby[i].Miles < nearby[j].Miles
-	})
+    // Sort by distance
+    sort.Slice(nearby, func(i, j int) bool {
+        return nearby[i].Miles < nearby[j].Miles
+    })
 
-	return nearby
+    return nearby
 }
 
 // DiscoverSpotters fetches RBN spotters and populates the spotter manager
 func (sm *SpotterManager) DiscoverSpotters(myGrid string) error {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+    client := &http.Client{
+        Timeout: 10 * time.Second,
+    }
 
-	resp, err := client.Get(RBNStatusURL)
-	if err != nil {
-		return fmt.Errorf("failed to fetch RBN status: %w", err)
-	}
-	defer resp.Body.Close()
+    resp, err := client.Get(RBNStatusURL)
+    if err != nil {
+        return fmt.Errorf("failed to fetch RBN status: %w", err)
+    }
+    defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("RBN status returned HTTP %d", resp.StatusCode)
-	}
+    if resp.StatusCode != 200 {
+        return fmt.Errorf("RBN status returned HTTP %d", resp.StatusCode)
+    }
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read RBN status: %w", err)
-	}
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return fmt.Errorf("failed to read RBN status: %w", err)
+    }
 
-	html := string(body)
+    html := string(body)
 
-	// Parse HTML to extract spotter information using Python's regex patterns
-	// Match Python: r'<tr.*?online24h online7d total">(.*?)</tr>'
-	rowRegex := regexp.MustCompile(`(?s)<tr.*?online24h online7d total">(.*?)</tr>`)
-	rows := rowRegex.FindAllString(html, -1)
+    // Parse HTML to extract spotter information using Python's regex patterns
+    // Match Python: r'<tr.*?online24h online7d total">(.*?)</tr>'
+    rowRegex := regexp.MustCompile(`(?s)<tr.*?online24h online7d total">(.*?)</tr>`)
+    rows := rowRegex.FindAllString(html, -1)
 
-	// Match Python: r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>'
-	columnsRegex := regexp.MustCompile(`(?s)<td.*?><a href="/dxsd1\.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>`)
+    // Match Python: r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>'
+    columnsRegex := regexp.MustCompile(`(?s)<td.*?><a href="/dxsd1\.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>`)
 
-	for _, row := range rows {
-		matches := columnsRegex.FindStringSubmatch(row)
-		if len(matches) == 4 {
-			callsign := strings.TrimSpace(matches[1])
-			csvBands := strings.TrimSpace(matches[2])
-			grid := strings.TrimSpace(matches[3])
+    for _, row := range rows {
+        matches := columnsRegex.FindStringSubmatch(row)
+        if len(matches) == 4 {
+            callsign := strings.TrimSpace(matches[1])
+            csvBands := strings.TrimSpace(matches[2])
+            grid := strings.TrimSpace(matches[3])
 
-			// Skip invalid grids
-			if grid == "XX88LL" || grid == "" {
-				continue
-			}
+            // Skip invalid grids
+            if grid == "XX88LL" || grid == "" {
+                continue
+            }
 
-			// Add spotter (errors are silently ignored for invalid grids)
-			_ = sm.AddSpotter(callsign, myGrid, grid, csvBands)
-		}
-	}
+            // Add spotter (errors are silently ignored for invalid grids)
+            _ = sm.AddSpotter(callsign, myGrid, grid, csvBands)
+        }
+    }
 
-	return nil
+    return nil
 }
 
 // DisplaySpotters prints the nearby spotters in a formatted list
 func DisplaySpotters(sm *SpotterManager, radiusMiles int, gridSquare string, distanceUnits string) {
-	nearby := sm.GetNearbySpotters(radiusMiles)
+    nearby := sm.GetNearbySpotters(radiusMiles)
 
-	unit := "miles"
-	if distanceUnits == "km" {
-		unit = "kilometers"
-	}
+    unit := "miles"
+    if distanceUnits == "km" {
+        unit = "kilometers"
+    }
 
-	count := len(nearby)
-	spotterWord := "spotter"
-	if count != 1 {
-		spotterWord = "spotters"
-	}
+    count := len(nearby)
+    spotterWord := "spotter"
+    if count != 1 {
+        spotterWord = "spotters"
+    }
 
-	fmt.Printf("\nFinding RBN spotters within %d %s of '%s'...\n", radiusMiles, unit, gridSquare)
-	fmt.Printf("  Found %d nearby %s:\n", count, spotterWord)
+    fmt.Printf("\nFinding RBN spotters within %d %s of '%s'...\n", radiusMiles, unit, gridSquare)
+    fmt.Printf("  Found %d nearby %s:\n", count, spotterWord)
 
-	if count == 0 {
-		return
-	}
+    if count == 0 {
+        return
+    }
 
-	// Format spotters as "CALL(dist)"
-	var formatted []string
-	for _, spotter := range nearby {
-		var distStr string
-		if distanceUnits == "km" {
-			km := int(float64(spotter.Miles) / 0.62137)
-			distStr = fmt.Sprintf("%dkm", km)
-		} else {
-			distStr = fmt.Sprintf("%dmi", spotter.Miles)
-		}
-		formatted = append(formatted, fmt.Sprintf("%s(%s)", spotter.Callsign, distStr))
-	}
+    // Format spotters as "CALL(dist)"
+    var formatted []string
+    for _, spotter := range nearby {
+        var distStr string
+        if distanceUnits == "km" {
+            km := int(float64(spotter.Miles) / 0.62137)
+            distStr = fmt.Sprintf("%dkm", km)
+        } else {
+            distStr = fmt.Sprintf("%dmi", spotter.Miles)
+        }
+        formatted = append(formatted, fmt.Sprintf("%s(%s)", spotter.Callsign, distStr))
+    }
 
-	// Wrap to 80 characters, starting each line with "    "
-	line := "    "
-	for i, item := range formatted {
-		if i > 0 {
-			item = ", " + item
-		}
+    // Wrap to 80 characters, starting each line with "    "
+    line := "    "
+    for i, item := range formatted {
+        if i > 0 {
+            item = ", " + item
+        }
 
-		// Check if adding this item would exceed 80 chars
-		if len(line)+len(item) > 80 && len(line) > 4 {
-			// Print current line and start a new one
-			fmt.Println(line)
-			line = "    " + strings.TrimPrefix(item, ", ")
-		} else {
-			line += item
-		}
-	}
+        // Check if adding this item would exceed 80 chars
+        if len(line)+len(item) > 80 && len(line) > 4 {
+            // Print current line and start a new one
+            fmt.Println(line)
+            line = "    " + strings.TrimPrefix(item, ", ")
+        } else {
+            line += item
+        }
+    }
 
-	// Print any remaining content
-	if len(line) > 4 {
-		fmt.Println(line)
-	}
+    // Print any remaining content
+    if len(line) > 4 {
+        fmt.Println(line)
+    }
 }
 
 // ============================================================================
@@ -1353,622 +1347,622 @@ func DisplaySpotters(sm *SpotterManager, radiusMiles int, gridSquare string, dis
 
 // SkedLogin represents a login entry from the SKCC Sked page
 type SkedLogin struct {
-	Callsign string
-	Status   string
+    Callsign string
+    Status   string
 }
 
 // SkedMonitor manages SKCC Sked page monitoring
 type SkedMonitor struct {
-	config          *Config
-	spotProcessor   *SpotProcessor
-	members         map[string]*Member
-	rosters         *Rosters
-	previousLogins  map[string][]string
-	firstPass       bool
-	mu              sync.RWMutex
-	k3yRegex        *regexp.Regexp
-	skmRegex        *regexp.Regexp
-	freqRegex       *regexp.Regexp
+    config          *Config
+    spotProcessor   *SpotProcessor
+    members         map[string]*Member
+    rosters         *Rosters
+    previousLogins  map[string][]string
+    firstPass       bool
+    mu              sync.RWMutex
+    k3yRegex        *regexp.Regexp
+    skmRegex        *regexp.Regexp
+    freqRegex       *regexp.Regexp
 }
 
 // NewSkedMonitor creates a new sked monitor
 func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor, members map[string]*Member, rosters *Rosters) *SkedMonitor {
-	return &SkedMonitor{
-		config:         config,
-		spotProcessor:  spotProcessor,
-		members:        members,
-		rosters:        rosters,
-		previousLogins: make(map[string][]string),
-		firstPass:      true,
-		k3yRegex:       regexp.MustCompile(`\b(K3Y)/([0-9]|KP4|KH6|KL7)\b`),
-		skmRegex:       regexp.MustCompile(`\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b`),
-		freqRegex:      regexp.MustCompile(`\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$`),
-	}
+    return &SkedMonitor{
+        config:         config,
+        spotProcessor:  spotProcessor,
+        members:        members,
+        rosters:        rosters,
+        previousLogins: make(map[string][]string),
+        firstPass:      true,
+        k3yRegex:       regexp.MustCompile(`\b(K3Y)/([0-9]|KP4|KH6|KL7)\b`),
+        skmRegex:       regexp.MustCompile(`\b(SKM)[\/-](AF|AS|EU|NA|OC|SA)\b`),
+        freqRegex:      regexp.MustCompile(`\b(\d{1,2}\.\d{3}\.\d{1,3})|(\d{1,2}\.\d{3})|(\d{4,5}\.\d{1,3})|(\d{4,5})\b\s*$`),
+    }
 }
 
 // FetchLogins retrieves current logins from the SKCC Sked page
 func (sm *SkedMonitor) FetchLogins() ([]SkedLogin, error) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
-	}
+    client := &http.Client{
+        Timeout: 10 * time.Second,
+    }
 
-	resp, err := client.Get(SkedStatusURL)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
+    resp, err := client.Get(SkedStatusURL)
+    if err != nil {
+        return nil, fmt.Errorf("HTTP request failed: %w", err)
+    }
+    defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
-	}
+    if resp.StatusCode != 200 {
+        return nil, fmt.Errorf("HTTP status %d", resp.StatusCode)
+    }
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        return nil, fmt.Errorf("failed to read response: %w", err)
+    }
 
-	// The SKCC Sked page returns JSON array of [callsign, status] tuples
-	var rawLogins [][]string
-	if err := json.Unmarshal(body, &rawLogins); err != nil {
-		return nil, fmt.Errorf("JSON decode failed: %w", err)
-	}
+    // The SKCC Sked page returns JSON array of [callsign, status] tuples
+    var rawLogins [][]string
+    if err := json.Unmarshal(body, &rawLogins); err != nil {
+        return nil, fmt.Errorf("JSON decode failed: %w", err)
+    }
 
-	var logins []SkedLogin
-	for _, entry := range rawLogins {
-		if len(entry) >= 1 {
-			login := SkedLogin{
-				Callsign: entry[0],
-			}
-			if len(entry) >= 2 {
-				login.Status = entry[1]
-			}
-			logins = append(logins, login)
-		}
-	}
+    var logins []SkedLogin
+    for _, entry := range rawLogins {
+        if len(entry) >= 1 {
+            login := SkedLogin{
+                Callsign: entry[0],
+            }
+            if len(entry) >= 2 {
+                login.Status = entry[1]
+            }
+            logins = append(logins, login)
+        }
+    }
 
-	return logins, nil
+    return logins, nil
 }
 
 // ProcessLogins processes sked logins and returns hits for display
 func (sm *SkedMonitor) ProcessLogins(logins []SkedLogin) map[string][]string {
-	skedHits := make(map[string][]string)
+    skedHits := make(map[string][]string)
 
-	for _, login := range logins {
-		// Skip user's own callsign
-		if login.Callsign == sm.config.MyCallsign {
-			continue
-		}
+    for _, login := range logins {
+        // Skip user's own callsign
+        if login.Callsign == sm.config.MyCallsign {
+            continue
+        }
 
-		// Extract base callsign
-		callsign := extractCallsign(login.Callsign)
-		if callsign == "" {
-			continue
-		}
+        // Extract base callsign
+        callsign := extractCallsign(login.Callsign)
+        if callsign == "" {
+            continue
+        }
 
-		// Check exclusion list
-		excluded := false
-		for _, ex := range sm.config.Exclusions {
-			if callsign == ex {
-				excluded = true
-				break
-			}
-		}
-		if excluded {
-			continue
-		}
+        // Check exclusion list
+        excluded := false
+        for _, ex := range sm.config.Exclusions {
+            if callsign == ex {
+                excluded = true
+                break
+            }
+        }
+        if excluded {
+            continue
+        }
 
-		// Process this login
-		report := sm.processLogin(callsign, login.Status)
+        // Process this login
+        report := sm.processLogin(callsign, login.Status)
 
-		// Add to hits if there are goals, targets, or is a friend
-		if len(report) > 0 {
-			skedHits[callsign] = report
-		}
-	}
+        // Add to hits if there are goals, targets, or is a friend
+        if len(report) > 0 {
+            skedHits[callsign] = report
+        }
+    }
 
-	return skedHits
+    return skedHits
 }
 
 // processLogin processes a single login and returns report items
 func (sm *SkedMonitor) processLogin(callsign, status string) []string {
-	var report []string
+    var report []string
 
-	// Add member info
-	if member, exists := sm.members[callsign]; exists {
-		memberInfo := sm.buildMemberInfoForSked(callsign, member)
-		if memberInfo != "" {
-			report = append(report, memberInfo)
-		}
-	}
+    // Add member info
+    if member, exists := sm.members[callsign]; exists {
+        memberInfo := sm.buildMemberInfoForSked(callsign, member)
+        if memberInfo != "" {
+            report = append(report, memberInfo)
+        }
+    }
 
-	// Check if recently spotted
-	sm.spotProcessor.mu.RLock()
-	if spotTime, exists := sm.spotProcessor.lastSpotted[callsign]; exists {
-		now := time.Now().Unix()
-		deltaSeconds := int(now) - int(spotTime.Timestamp)
+    // Check if recently spotted
+    sm.spotProcessor.mu.RLock()
+    if spotTime, exists := sm.spotProcessor.lastSpotted[callsign]; exists {
+        now := time.Now().Unix()
+        deltaSeconds := int(now) - int(spotTime.Timestamp)
 
-		if deltaSeconds > sm.config.SpotPersistenceMinutes*60 {
-			// Spot is too old, remove it
-			sm.spotProcessor.mu.RUnlock()
-			sm.spotProcessor.mu.Lock()
-			delete(sm.spotProcessor.lastSpotted, callsign)
-			sm.spotProcessor.mu.Unlock()
-			sm.spotProcessor.mu.RLock()
-		} else if deltaSeconds > 60 {
-			deltaMinutes := deltaSeconds / 60
-			unit := "minute"
-			if deltaMinutes > 1 {
-				unit = "minutes"
-			}
-			report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaMinutes, unit, spotTime.FrequencyKHz))
-		} else {
-			unit := "second"
-			if deltaSeconds > 1 {
-				unit = "seconds"
-			}
-			report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaSeconds, unit, spotTime.FrequencyKHz))
-		}
-	}
-	sm.spotProcessor.mu.RUnlock()
+        if deltaSeconds > sm.config.SpotPersistenceMinutes*60 {
+            // Spot is too old, remove it
+            sm.spotProcessor.mu.RUnlock()
+            sm.spotProcessor.mu.Lock()
+            delete(sm.spotProcessor.lastSpotted, callsign)
+            sm.spotProcessor.mu.Unlock()
+            sm.spotProcessor.mu.RLock()
+        } else if deltaSeconds > 60 {
+            deltaMinutes := deltaSeconds / 60
+            unit := "minute"
+            if deltaMinutes > 1 {
+                unit = "minutes"
+            }
+            report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaMinutes, unit, spotTime.FrequencyKHz))
+        } else {
+            unit := "second"
+            if deltaSeconds > 1 {
+                unit = "seconds"
+            }
+            report = append(report, fmt.Sprintf("Last spotted %d %s ago on %.1f", deltaSeconds, unit, spotTime.FrequencyKHz))
+        }
+    }
+    sm.spotProcessor.mu.RUnlock()
 
-	var goalList []string
-	var targetList []string
+    var goalList []string
+    var targetList []string
 
-	// K3Y/SKM special event processing
-	if status != "" {
-		// Check for K3Y
-		if matches := sm.k3yRegex.FindStringSubmatch(status); matches != nil {
-			eventType := matches[1] // "K3Y"
-			station := strings.ToUpper(matches[2])
-			sm.processSpecialEvent(eventType, station, status, &goalList)
-		} else if matches := sm.skmRegex.FindStringSubmatch(status); matches != nil {
-			eventType := matches[1] // "SKM"
-			region := strings.ToUpper(matches[2])
-			sm.processSpecialEvent(eventType, region, status, &goalList)
-		}
-	}
+    // K3Y/SKM special event processing
+    if status != "" {
+        // Check for K3Y
+        if matches := sm.k3yRegex.FindStringSubmatch(status); matches != nil {
+            eventType := matches[1] // "K3Y"
+            station := strings.ToUpper(matches[2])
+            sm.processSpecialEvent(eventType, station, status, &goalList)
+        } else if matches := sm.skmRegex.FindStringSubmatch(status); matches != nil {
+            eventType := matches[1] // "SKM"
+            region := strings.ToUpper(matches[2])
+            sm.processSpecialEvent(eventType, region, status, &goalList)
+        }
+    }
 
-	// Add regular goal/target matching
-	// TODO: Pass actual awards data when Sked monitoring is integrated with award processor
-	emptyMap := make(map[string]bool)
-	regularGoals := sm.buildGoalsForSked(callsign, emptyMap, emptyMap, emptyMap, emptyMap, emptyMap)
-	goalList = append(goalList, regularGoals...)
+    // Add regular goal/target matching
+    // TODO: Pass actual awards data when Sked monitoring is integrated with award processor
+    emptyMap := make(map[string]bool)
+    regularGoals := sm.buildGoalsForSked(callsign, emptyMap, emptyMap, emptyMap, emptyMap, emptyMap)
+    goalList = append(goalList, regularGoals...)
 
-	if len(goalList) > 0 {
-		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
-	}
+    if len(goalList) > 0 {
+        report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+    }
 
-	if len(targetList) > 0 {
-		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
-	}
+    if len(targetList) > 0 {
+        report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+    }
 
-	// Check friends list
-	isFriend := false
-	for _, friend := range sm.config.Friends {
-		if callsign == friend {
-			isFriend = true
-			break
-		}
-	}
+    // Check friends list
+    isFriend := false
+    for _, friend := range sm.config.Friends {
+        if callsign == friend {
+            isFriend = true
+            break
+        }
+    }
 
-	if isFriend {
-		report = append(report, "friend")
-	}
+    if isFriend {
+        report = append(report, "friend")
+    }
 
-	if status != "" {
-		// Strip HTML tags and extra whitespace
-		cleanStatus := strings.TrimSpace(status)
-		report = append(report, fmt.Sprintf("STATUS: %s", cleanStatus))
-	}
+    if status != "" {
+        // Strip HTML tags and extra whitespace
+        cleanStatus := strings.TrimSpace(status)
+        report = append(report, fmt.Sprintf("STATUS: %s", cleanStatus))
+    }
 
-	// Only return report if there are goals, targets, or is a friend
-	if len(goalList) > 0 || len(targetList) > 0 || isFriend {
-		return report
-	}
+    // Only return report if there are goals, targets, or is a friend
+    if len(goalList) > 0 || len(targetList) > 0 || isFriend {
+        return report
+    }
 
-	return nil
+    return nil
 }
 
 // buildMemberInfoForSked formats member information for Sked page display
 func (sm *SkedMonitor) buildMemberInfoForSked(callsign string, member *Member) string {
-	number, suffix := sm.getFullMemberNumberForSked(callsign, member)
+    number, suffix := sm.getFullMemberNumberForSked(callsign, member)
 
-	// Truncate name to 9 characters max
-	name := member.Name
-	if len(name) > 9 {
-		name = name[:9]
-	}
+    // Truncate name to 9 characters max
+    name := member.Name
+    if len(name) > 9 {
+        name = name[:9]
+    }
 
-	return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
+    return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
 }
 
 // getFullMemberNumberForSked returns the member number and award suffix
-func (sm *SkedMonitor) getFullMemberNumberForSked(callsign string, member *Member) (string, string) {
-	number := member.PlainNumber
-	suffix := ""
-	level := 1
+func (sm *SkedMonitor) getFullMemberNumberForSked(_ string, member *Member) (string, string) {
+    number := member.PlainNumber
+    suffix := ""
+    level := 1
 
-	// Check award dates to determine highest achievement
-	sDate := effectiveDate(member.SDate)
-	tDate := effectiveDate(member.TDate)
-	cDate := effectiveDate(member.CDate)
-	tx8Date := effectiveDate(member.TX8Date)
+    // Check award dates to determine highest achievement
+    sDate := effectiveDate(member.SDate)
+    tDate := effectiveDate(member.TDate)
+    cDate := effectiveDate(member.CDate)
+    tx8Date := effectiveDate(member.TX8Date)
 
-	// Senator is highest
-	if sDate != "" {
-		suffix = "S"
-		if sm.rosters != nil && sm.rosters.Senator != nil {
-			if lvl, exists := sm.rosters.Senator[number]; exists {
-				level = lvl
-			}
-		}
-		if level > 1 {
-			suffix = fmt.Sprintf("Sx%d", level)
-		}
-		return number, suffix
-	}
+    // Senator is highest
+    if sDate != "" {
+        suffix = "S"
+        if sm.rosters != nil && sm.rosters.Senator != nil {
+            if lvl, exists := sm.rosters.Senator[number]; exists {
+                level = lvl
+            }
+        }
+        if level > 1 {
+            suffix = fmt.Sprintf("Sx%d", level)
+        }
+        return number, suffix
+    }
 
-	// Tribune second
-	if tDate != "" || tx8Date != "" {
-		suffix = "T"
-		if sm.rosters != nil && sm.rosters.Tribune != nil {
-			if lvl, exists := sm.rosters.Tribune[number]; exists {
-				level = lvl
-			}
-		}
-		if level > 1 {
-			suffix = fmt.Sprintf("Tx%d", level)
-		}
-		return number, suffix
-	}
+    // Tribune second
+    if tDate != "" || tx8Date != "" {
+        suffix = "T"
+        if sm.rosters != nil && sm.rosters.Tribune != nil {
+            if lvl, exists := sm.rosters.Tribune[number]; exists {
+                level = lvl
+            }
+        }
+        if level > 1 {
+            suffix = fmt.Sprintf("Tx%d", level)
+        }
+        return number, suffix
+    }
 
-	// Centurion third
-	if cDate != "" {
-		suffix = "C"
-		if sm.rosters != nil && sm.rosters.Centurion != nil {
-			if lvl, exists := sm.rosters.Centurion[number]; exists {
-				level = lvl
-			}
-		}
-		if level > 1 {
-			suffix = fmt.Sprintf("Cx%d", level)
-		}
-		return number, suffix
-	}
+    // Centurion third
+    if cDate != "" {
+        suffix = "C"
+        if sm.rosters != nil && sm.rosters.Centurion != nil {
+            if lvl, exists := sm.rosters.Centurion[number]; exists {
+                level = lvl
+            }
+        }
+        if level > 1 {
+            suffix = fmt.Sprintf("Cx%d", level)
+        }
+        return number, suffix
+    }
 
-	return number, suffix
+    return number, suffix
 }
 
 // buildGoalsForSked determines which goals the user needs this member for
 func (sm *SkedMonitor) buildGoalsForSked(callsign string, contactsForWAS, contactsForWASC, contactsForWAST, contactsForWASS, bragContacts map[string]bool) []string {
-	var goals []string
+    var goals []string
 
-	member, exists := sm.members[callsign]
-	if !exists {
-		return goals
-	}
+    member, exists := sm.members[callsign]
+    if !exists {
+        return goals
+    }
 
-	state := member.SPC
+    state := member.SPC
 
-	// Check each goal
-	for _, goal := range sm.config.Goals {
-		switch goal {
-		case "BRAG":
-			// Check if we need this member for BRAG
-			memberNumber := member.PlainNumber
-			if memberNumber != "" && !bragContacts[memberNumber] {
-				goals = append(goals, "BRAG")
-			}
+    // Check each goal
+    for _, goal := range sm.config.Goals {
+        switch goal {
+        case "BRAG":
+            // Check if we need this member for BRAG
+            memberNumber := member.PlainNumber
+            if memberNumber != "" && !bragContacts[memberNumber] {
+                goals = append(goals, "BRAG")
+            }
 
-		case "TKA":
-			// All SKCC members count for TKA
-			goals = append(goals, "TKA")
+        case "TKA":
+            // All SKCC members count for TKA
+            goals = append(goals, "TKA")
 
-		case "WAS-S":
-			// Need Senator members from different states that we haven't worked yet
-			sDate := effectiveDate(member.SDate)
-			if sDate != "" && isUSState(state) && !contactsForWASS[state] {
-				goals = append(goals, "WAS-S")
-			}
+        case "WAS-S":
+            // Need Senator members from different states that we haven't worked yet
+            sDate := effectiveDate(member.SDate)
+            if sDate != "" && isUSState(state) && !contactsForWASS[state] {
+                goals = append(goals, "WAS-S")
+            }
 
-		case "WAS-T":
-			// Need Tribune members from different states that we haven't worked yet
-			tDate := effectiveDate(member.TDate)
-			tx8Date := effectiveDate(member.TX8Date)
-			if (tDate != "" || tx8Date != "") && isUSState(state) && !contactsForWAST[state] {
-				goals = append(goals, "WAS-T")
-			}
+        case "WAS-T":
+            // Need Tribune members from different states that we haven't worked yet
+            tDate := effectiveDate(member.TDate)
+            tx8Date := effectiveDate(member.TX8Date)
+            if (tDate != "" || tx8Date != "") && isUSState(state) && !contactsForWAST[state] {
+                goals = append(goals, "WAS-T")
+            }
 
-		case "WAS-C":
-			// Need Centurion members from different states that we haven't worked yet
-			cDate := effectiveDate(member.CDate)
-			if cDate != "" && isUSState(state) && !contactsForWASC[state] {
-				goals = append(goals, "WAS-C")
-			}
+        case "WAS-C":
+            // Need Centurion members from different states that we haven't worked yet
+            cDate := effectiveDate(member.CDate)
+            if cDate != "" && isUSState(state) && !contactsForWASC[state] {
+                goals = append(goals, "WAS-C")
+            }
 
-		case "WAS":
-			// Need SKCC members from different states that we haven't worked yet
-			if isUSState(state) && !contactsForWAS[state] {
-				goals = append(goals, "WAS")
-			}
-		}
-	}
+        case "WAS":
+            // Need SKCC members from different states that we haven't worked yet
+            if isUSState(state) && !contactsForWAS[state] {
+                goals = append(goals, "WAS")
+            }
+        }
+    }
 
-	return goals
+    return goals
 }
 
 // processSpecialEvent processes K3Y or SKM special events from status
 func (sm *SkedMonitor) processSpecialEvent(eventType, station, status string, goalList *[]string) {
-	// Check if K3Y is in goals
-	hasK3YGoal := false
-	for _, goal := range sm.config.Goals {
-		if goal == "K3Y" {
-			hasK3YGoal = true
-			break
-		}
-	}
+    // Check if K3Y is in goals
+    hasK3YGoal := false
+    for _, goal := range sm.config.Goals {
+        if goal == "K3Y" {
+            hasK3YGoal = true
+            break
+        }
+    }
 
-	if !hasK3YGoal {
-		return
-	}
+    if !hasK3YGoal {
+        return
+    }
 
-	// Try to extract frequency from status
-	if matches := sm.freqRegex.FindStringSubmatch(status); matches != nil {
-		var freqKHz float64
-		var freqStr string
+    // Try to extract frequency from status
+    if matches := sm.freqRegex.FindStringSubmatch(status); matches != nil {
+        var freqKHz float64
+        var freqStr string
 
-		// Try different match groups (different frequency formats)
-		for i := 1; i <= 4; i++ {
-			if matches[i] != "" {
-				freqStr = matches[i]
-				break
-			}
-		}
+        // Try different match groups (different frequency formats)
+        for i := 1; i <= 4; i++ {
+            if matches[i] != "" {
+                freqStr = matches[i]
+                break
+            }
+        }
 
-		if freqStr != "" {
-			// Parse frequency based on format
-			if matches[1] != "" {
-				// Format: XX.XXX.XXX (e.g., 14.050.000)
-				freqStr = strings.ReplaceAll(freqStr, ".", "")
-				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
-					freqKHz = val / 1000.0
-				}
-			} else if matches[2] != "" {
-				// Format: XX.XXX (MHz, e.g., 14.050)
-				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
-					freqKHz = val * 1000.0
-				}
-			} else if matches[3] != "" {
-				// Format: XXXXX.X (kHz with decimal, e.g., 14050.0)
-				freqStr = strings.ReplaceAll(freqStr, ".", "")
-				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
-					freqKHz = val
-				}
-			} else if matches[4] != "" {
-				// Format: XXXXX (kHz, e.g., 14050)
-				if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
-					freqKHz = val
-				}
-			}
+        if freqStr != "" {
+            // Parse frequency based on format
+            if matches[1] != "" {
+                // Format: XX.XXX.XXX (e.g., 14.050.000)
+                freqStr = strings.ReplaceAll(freqStr, ".", "")
+                if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+                    freqKHz = val / 1000.0
+                }
+            } else if matches[2] != "" {
+                // Format: XX.XXX (MHz, e.g., 14.050)
+                if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+                    freqKHz = val * 1000.0
+                }
+            } else if matches[3] != "" {
+                // Format: XXXXX.X (kHz with decimal, e.g., 14050.0)
+                freqStr = strings.ReplaceAll(freqStr, ".", "")
+                if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+                    freqKHz = val
+                }
+            } else if matches[4] != "" {
+                // Format: XXXXX (kHz, e.g., 14050)
+                if val, err := strconv.ParseFloat(freqStr, 64); err == nil {
+                    freqKHz = val
+                }
+            }
 
-			if freqKHz > 0 {
-				// Determine band from frequency
-				band := whichBand(freqKHz)
-				if band > 0 {
-					// TODO: Check if already worked (needs K3Y contacts tracking)
-					// For now, always show as needed
-					if eventType == "SKM" {
-						*goalList = append(*goalList, fmt.Sprintf("SKM-%s (%dm)", station, band))
-					} else {
-						*goalList = append(*goalList, fmt.Sprintf("K3Y/%s (%dm)", station, band))
-					}
-					return
-				}
-			}
-		}
-	}
+            if freqKHz > 0 {
+                // Determine band from frequency
+                band := whichBand(freqKHz)
+                if band > 0 {
+                    // TODO: Check if already worked (needs K3Y contacts tracking)
+                    // For now, always show as needed
+                    if eventType == "SKM" {
+                        *goalList = append(*goalList, fmt.Sprintf("SKM-%s (%dm)", station, band))
+                    } else {
+                        *goalList = append(*goalList, fmt.Sprintf("K3Y/%s (%dm)", station, band))
+                    }
+                    return
+                }
+            }
+        }
+    }
 
-	// No frequency found or couldn't determine band, just show event without band
-	if eventType == "SKM" {
-		*goalList = append(*goalList, fmt.Sprintf("SKM-%s", station))
-	} else {
-		*goalList = append(*goalList, fmt.Sprintf("K3Y/%s", station))
-	}
+    // No frequency found or couldn't determine band, just show event without band
+    if eventType == "SKM" {
+        *goalList = append(*goalList, fmt.Sprintf("SKM-%s", station))
+    } else {
+        *goalList = append(*goalList, fmt.Sprintf("K3Y/%s", station))
+    }
 }
 
 // whichBand determines the amateur band from a frequency in kHz
 func whichBand(freqKHz float64) int {
-	bands := []struct {
-		band  int
-		lower float64
-		upper float64
-	}{
-		{160, 1800, 2000},
-		{80, 3500, 4000},
-		{60, 5330, 5405},
-		{40, 7000, 7300},
-		{30, 10100, 10150},
-		{20, 14000, 14350},
-		{17, 18068, 18168},
-		{15, 21000, 21450},
-		{12, 24890, 24990},
-		{10, 28000, 29700},
-		{6, 50000, 54000},
-	}
+    bands := []struct {
+        band  int
+        lower float64
+        upper float64
+    }{
+        {160, 1800, 2000},
+        {80, 3500, 4000},
+        {60, 5330, 5405},
+        {40, 7000, 7300},
+        {30, 10100, 10150},
+        {20, 14000, 14350},
+        {17, 18068, 18168},
+        {15, 21000, 21450},
+        {12, 24890, 24990},
+        {10, 28000, 29700},
+        {6, 50000, 54000},
+    }
 
-	for _, b := range bands {
-		if freqKHz >= b.lower && freqKHz <= b.upper {
-			return b.band
-		}
-	}
+    for _, b := range bands {
+        if freqKHz >= b.lower && freqKHz <= b.upper {
+            return b.band
+        }
+    }
 
-	return 0
+    return 0
 }
 
 // DisplayLogins fetches and displays current sked logins
 func (sm *SkedMonitor) DisplayLogins() error {
-	logins, err := sm.FetchLogins()
-	if err != nil {
-		return err
-	}
+    logins, err := sm.FetchLogins()
+    if err != nil {
+        return err
+    }
 
-	if sm.config.Verbose {
-		fmt.Printf("[DEBUG] Sked page returned %d logins\n", len(logins))
-	}
+    if sm.config.Verbose {
+        fmt.Printf("[DEBUG] Sked page returned %d logins\n", len(logins))
+    }
 
-	skedHits := sm.ProcessLogins(logins)
+    skedHits := sm.ProcessLogins(logins)
 
-	if sm.config.Verbose {
-		fmt.Printf("[DEBUG] %d logins match goals/targets\n", len(skedHits))
-	}
+    if sm.config.Verbose {
+        fmt.Printf("[DEBUG] %d logins match goals/targets\n", len(skedHits))
+    }
 
-	if len(skedHits) > 0 {
-		now := time.Now().UTC()
-		zuluTime := now.Format("1504") + "Z"
-		zuluDate := now.Format("2006-01-02")
+    if len(skedHits) > 0 {
+        now := time.Now().UTC()
+        zuluTime := now.Format("1504") + "Z"
+        zuluDate := now.Format("2006-01-02")
 
-		// Determine new logins
-		var newLogins []string
-		sm.mu.RLock()
-		if !sm.firstPass {
-			skedSet := make(map[string]bool)
-			for call := range skedHits {
-				skedSet[call] = true
-			}
-			prevSet := make(map[string]bool)
-			for call := range sm.previousLogins {
-				prevSet[call] = true
-			}
-			for call := range skedSet {
-				if !prevSet[call] {
-					newLogins = append(newLogins, call)
-				}
-			}
-		}
-		firstPass := sm.firstPass
-		sm.mu.RUnlock()
+        // Determine new logins
+        var newLogins []string
+        sm.mu.RLock()
+        if !sm.firstPass {
+            skedSet := make(map[string]bool)
+            for call := range skedHits {
+                skedSet[call] = true
+            }
+            prevSet := make(map[string]bool)
+            for call := range sm.previousLogins {
+                prevSet[call] = true
+            }
+            for call := range skedSet {
+                if !prevSet[call] {
+                    newLogins = append(newLogins, call)
+                }
+            }
+        }
+        firstPass := sm.firstPass
+        sm.mu.RUnlock()
 
-				// Display header (with newline before subsequent displays)
-	if !firstPass {
-		fmt.Println()
-	}
-		fmt.Println("=========== SKCC Sked Page ===========")
+                // Display header (with newline before subsequent displays)
+    if !firstPass {
+        fmt.Println()
+    }
+        fmt.Println("=========== SKCC Sked Page ===========")
 
-		// Sort callsigns for consistent display
-		var callsigns []string
-		for call := range skedHits {
-			callsigns = append(callsigns, call)
-		}
-		sort.Strings(callsigns)
+        // Sort callsigns for consistent display
+        var callsigns []string
+        for call := range skedHits {
+            callsigns = append(callsigns, call)
+        }
+        sort.Strings(callsigns)
 
-		// Display each login
-		for _, callsign := range callsigns {
-			goalList := []string{}
-			targetList := []string{}
+        // Display each login
+        for _, callsign := range callsigns {
+            goalList := []string{}
+            targetList := []string{}
 
-			// Parse report to find goals and targets
-			for _, item := range skedHits[callsign] {
-				if strings.HasPrefix(item, "YOU need them for ") {
-					goals := strings.TrimPrefix(item, "YOU need them for ")
-					goalList = strings.Split(goals, ",")
-				} else if strings.HasPrefix(item, "THEY need you for ") {
-					targets := strings.TrimPrefix(item, "THEY need you for ")
-					targetList = strings.Split(targets, ",")
-				}
-			}
+            // Parse report to find goals and targets
+            for _, item := range skedHits[callsign] {
+                if strings.HasPrefix(item, "YOU need them for ") {
+                    goals := strings.TrimPrefix(item, "YOU need them for ")
+                    goalList = strings.Split(goals, ",")
+                } else if strings.HasPrefix(item, "THEY need you for ") {
+                    targets := strings.TrimPrefix(item, "THEY need you for ")
+                    targetList = strings.Split(targets, ",")
+                }
+            }
 
-			// Check if this is a new login
-			isNew := false
-			if !firstPass {
-				for _, newCall := range newLogins {
-					if callsign == newCall {
-						isNew = true
-						break
-					}
-				}
-			}
+            // Check if this is a new login
+            isNew := false
+            if !firstPass {
+                for _, newCall := range newLogins {
+                    if callsign == newCall {
+                        isNew = true
+                        break
+                    }
+                }
+            }
 
-			// Handle notification
-			newIndicator := " "
-			if isNew {
-				if shouldNotifyLogin(sm.config, goalList, targetList) {
-					// TODO: Implement beep sound
-					// beep()
-				}
-				newIndicator = "+"
-			}
+            // Handle notification
+            newIndicator := " "
+            if isNew {
+                if shouldNotifyLogin(sm.config, goalList, targetList) {
+                    // TODO: Implement beep sound
+                    // beep()
+                }
+                newIndicator = "+"
+            }
 
-			// Format and display output
-			output := fmt.Sprintf("%s%s%-6s %s", zuluTime, newIndicator, callsign, strings.Join(skedHits[callsign], "; "))
-			printWithDotClear(output)
+            // Format and display output
+            output := fmt.Sprintf("%s%s%-6s %s", zuluTime, newIndicator, callsign, strings.Join(skedHits[callsign], "; "))
+            printWithDotClear(output)
 
-			// TODO: Log to file if enabled
-			_ = zuluDate // Will be used for logging
-		}
+            // TODO: Log to file if enabled
+            _ = zuluDate // Will be used for logging
+        }
 
-		fmt.Println("=======================================")
+        fmt.Println("=======================================")
 
-		// Update previous logins
-		sm.mu.Lock()
-		sm.previousLogins = skedHits
-		sm.firstPass = false
-		sm.mu.Unlock()
-	}
+        // Update previous logins
+        sm.mu.Lock()
+        sm.previousLogins = skedHits
+        sm.firstPass = false
+        sm.mu.Unlock()
+    }
 
-	return nil
+    return nil
 }
 
 // shouldNotifyLogin determines if notification should be triggered for a sked login
 func shouldNotifyLogin(config *Config, goalList, targetList []string) bool {
-	if !config.Notification.Enabled {
-		return false
-	}
+    if !config.Notification.Enabled {
+        return false
+    }
 
-	hasGoals := len(goalList) > 0
-	hasTargets := len(targetList) > 0
+    hasGoals := len(goalList) > 0
+    hasTargets := len(targetList) > 0
 
-	for _, cond := range config.Notification.Condition {
-		switch cond {
-		case "goals":
-			if hasGoals {
-				return true
-			}
-		case "targets":
-			if hasTargets {
-				return true
-			}
-		case "both":
-			if hasGoals && hasTargets {
-				return true
-			}
-		}
-	}
+    for _, cond := range config.Notification.Condition {
+        switch cond {
+        case "goals":
+            if hasGoals {
+                return true
+            }
+        case "targets":
+            if hasTargets {
+                return true
+            }
+        case "both":
+            if hasGoals && hasTargets {
+                return true
+            }
+        }
+    }
 
-	return false
+    return false
 }
 
 // MonitorTask runs the sked monitoring loop
 func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
+    defer wg.Done()
 
-	// Do initial check immediately
-	if err := sm.DisplayLogins(); err != nil {
-		fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
-	}
+    // Do initial check immediately
+    if err := sm.DisplayLogins(); err != nil {
+        fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
+    }
 
-	ticker := time.NewTicker(time.Duration(sm.config.Sked.CheckSeconds) * time.Second)
-	defer ticker.Stop()
+    ticker := time.NewTicker(time.Duration(sm.config.Sked.CheckSeconds) * time.Second)
+    defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := sm.DisplayLogins(); err != nil {
-				fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
-			}
-		}
-	}
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            if err := sm.DisplayLogins(); err != nil {
+                fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1977,124 +1971,124 @@ func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
 
 // FileWatcher monitors ADI file for changes and triggers award recalculation
 type FileWatcher struct {
-	config         *Config
-	adiFile        string
-	lastModTime    time.Time
-	lastSize       int64
-	mu             sync.RWMutex
+    config         *Config
+    adiFile        string
+    lastModTime    time.Time
+    lastSize       int64
+    mu             sync.RWMutex
 }
 
 // NewFileWatcher creates a new file watcher
 func NewFileWatcher(config *Config, adiFile string) *FileWatcher {
-	fw := &FileWatcher{
-		config:  config,
-		adiFile: adiFile,
-	}
+    fw := &FileWatcher{
+        config:  config,
+        adiFile: adiFile,
+    }
 
-	// Initialize with current file stats to avoid false change on first check
-	if stat, err := os.Stat(adiFile); err == nil {
-		fw.lastModTime = stat.ModTime()
-		fw.lastSize = stat.Size()
-	}
+    // Initialize with current file stats to avoid false change on first check
+    if stat, err := os.Stat(adiFile); err == nil {
+        fw.lastModTime = stat.ModTime()
+        fw.lastSize = stat.Size()
+    }
 
-	return fw
+    return fw
 }
 
 // WatchTask monitors the ADI file for changes
 func (fw *FileWatcher) WatchTask(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
+    defer wg.Done()
 
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+    ticker := time.NewTicker(3 * time.Second)
+    defer ticker.Stop()
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := fw.checkForChanges(); err != nil {
-				if !os.IsNotExist(err) {
-					fmt.Printf("Error watching log file: %v\n", err)
-				}
-			}
-		}
-	}
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case <-ticker.C:
+            if err := fw.checkForChanges(); err != nil {
+                if !os.IsNotExist(err) {
+                    fmt.Printf("Error watching log file: %v\n", err)
+                }
+            }
+        }
+    }
 }
 
 // checkForChanges checks if the ADI file has been modified
 func (fw *FileWatcher) checkForChanges() error {
-	stat, err := os.Stat(fw.adiFile)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// File doesn't exist yet - not an error, just skip
-			return nil
-		}
-		return err
-	}
+    stat, err := os.Stat(fw.adiFile)
+    if err != nil {
+        if os.IsNotExist(err) {
+            // File doesn't exist yet - not an error, just skip
+            return nil
+        }
+        return err
+    }
 
-	fw.mu.RLock()
-	modTime := fw.lastModTime
-	size := fw.lastSize
-	fw.mu.RUnlock()
+    fw.mu.RLock()
+    modTime := fw.lastModTime
+    size := fw.lastSize
+    fw.mu.RUnlock()
 
-	// Check if file has been modified
-	if stat.ModTime().Equal(modTime) && stat.Size() == size {
-		return nil
-	}
+    // Check if file has been modified
+    if stat.ModTime().Equal(modTime) && stat.Size() == size {
+        return nil
+    }
 
-	fmt.Printf("'%s' file is changing. Waiting for write to finish...\n", fw.adiFile)
+    fmt.Printf("'%s' file is changing. Waiting for write to finish...\n", fw.adiFile)
 
-	// Wait for file size to stabilize
-	if err := fw.waitForStableSize(); err != nil {
-		return err
-	}
+    // Wait for file size to stabilize
+    if err := fw.waitForStableSize(); err != nil {
+        return err
+    }
 
-	// Get final stat after file stabilized
-	finalStat, err := os.Stat(fw.adiFile)
-	if err != nil {
-		return err
-	}
+    // Get final stat after file stabilized
+    finalStat, err := os.Stat(fw.adiFile)
+    if err != nil {
+        return err
+    }
 
-	// Update tracking with final values
-	fw.mu.Lock()
-	fw.lastModTime = finalStat.ModTime()
-	fw.lastSize = finalStat.Size()
-	fw.mu.Unlock()
+    // Update tracking with final values
+    fw.mu.Lock()
+    fw.lastModTime = finalStat.ModTime()
+    fw.lastSize = finalStat.Size()
+    fw.mu.Unlock()
 
-	// Trigger refresh
-	fmt.Println("File stable, refreshing awards...")
-	return fw.refresh()
+    // Trigger refresh
+    fmt.Println("File stable, refreshing awards...")
+    return fw.refresh()
 }
 
 // waitForStableSize waits until the file size stops changing
 func (fw *FileWatcher) waitForStableSize() error {
-	var currentSize int64
+    var currentSize int64
 
-	for {
-		stat, err := os.Stat(fw.adiFile)
-		if err != nil {
-			return err
-		}
+    for {
+        stat, err := os.Stat(fw.adiFile)
+        if err != nil {
+            return err
+        }
 
-		if currentSize == stat.Size() {
-			// Size hasn't changed, file is stable
-			break
-		}
+        if currentSize == stat.Size() {
+            // Size hasn't changed, file is stable
+            break
+        }
 
-		currentSize = stat.Size()
-		time.Sleep(1 * time.Second)
-	}
+        currentSize = stat.Size()
+        time.Sleep(1 * time.Second)
+    }
 
-	return nil
+    return nil
 }
 
 // refresh reprocesses the ADI file and recalculates awards
 func (fw *FileWatcher) refresh() error {
-	// TODO: This needs to call the award processing pipeline
-	// For now, just print a message
-	fmt.Println("Award refresh would happen here")
-	fmt.Println("(Full refresh implementation pending - needs award processor refactoring)")
-	return nil
+    // TODO: This needs to call the award processing pipeline
+    // For now, just print a message
+    fmt.Println("Award refresh would happen here")
+    fmt.Println("(Full refresh implementation pending - needs award processor refactoring)")
+    return nil
 }
 
 // ============================================================================
@@ -2103,223 +2097,223 @@ func (fw *FileWatcher) refresh() error {
 
 // InteractiveMode handles user input for callsign lookups and commands
 type InteractiveMode struct {
-	config  *Config
-	members map[string]*Member
-	rosters *Rosters
+    config  *Config
+    members map[string]*Member
+    rosters *Rosters
 }
 
 // NewInteractiveMode creates a new interactive mode handler
 func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters) *InteractiveMode {
-	return &InteractiveMode{
-		config:  config,
-		members: members,
-		rosters: rosters,
-	}
+    return &InteractiveMode{
+        config:  config,
+        members: members,
+        rosters: rosters,
+    }
 }
 
 // Run starts the interactive mode loop
 func (im *InteractiveMode) Run() {
-	fmt.Println("\nInteractive mode. Enter callsigns or \"q\" to quit, \"r\" to refresh.")
+    fmt.Println("\nInteractive mode. Enter callsigns or \"q\" to quit, \"r\" to refresh.")
 
-	scanner := bufio.NewScanner(os.Stdin)
+    scanner := bufio.NewScanner(os.Stdin)
 
-	for {
-		fmt.Print("> ")
+    for {
+        fmt.Print("> ")
 
-		if !scanner.Scan() {
-			break
-		}
+        if !scanner.Scan() {
+            break
+        }
 
-		input := strings.TrimSpace(scanner.Text())
-		if input == "" {
-			continue
-		}
+        input := strings.TrimSpace(scanner.Text())
+        if input == "" {
+            continue
+        }
 
-		command := strings.ToLower(input)
+        command := strings.ToLower(input)
 
-		switch command {
-		case "q", "quit":
-			fmt.Println("\nExiting by user request...")
-			return
+        switch command {
+        case "q", "quit":
+            fmt.Println("\nExiting by user request...")
+            return
 
-		case "r", "refresh":
-			fmt.Println("Refreshing awards...")
-			// TODO: Call refresh logic
-			fmt.Println("(Refresh implementation pending)")
+        case "r", "refresh":
+            fmt.Println("Refreshing awards...")
+            // TODO: Call refresh logic
+            fmt.Println("(Refresh implementation pending)")
 
-		default:
-			// Treat as callsign lookup
-			im.lookupCallsigns(input)
-		}
-	}
+        default:
+            // Treat as callsign lookup
+            im.lookupCallsigns(input)
+        }
+    }
 
-	if err := scanner.Err(); err != nil {
-		fmt.Printf("Error reading input: %v\n", err)
-	}
+    if err := scanner.Err(); err != nil {
+        fmt.Printf("Error reading input: %v\n", err)
+    }
 }
 
 // lookupCallsigns looks up one or more callsigns (space/comma separated)
 func (im *InteractiveMode) lookupCallsigns(input string) {
-	// Split on spaces and commas
-	items := strings.FieldsFunc(strings.ToUpper(input), func(r rune) bool {
-		return r == ' ' || r == ','
-	})
+    // Split on spaces and commas
+    items := strings.FieldsFunc(strings.ToUpper(input), func(r rune) bool {
+        return r == ' ' || r == ','
+    })
 
-	for _, item := range items {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
+    for _, item := range items {
+        item = strings.TrimSpace(item)
+        if item == "" {
+            continue
+        }
 
-		// Check if it's a member number (digits only or digits with suffix)
-		if im.isNumericLookup(item) {
-			im.lookupByNumber(item)
-		} else {
-			// Treat as callsign
-			im.lookupByCallsign(item)
-		}
-	}
+        // Check if it's a member number (digits only or digits with suffix)
+        if im.isNumericLookup(item) {
+            im.lookupByNumber(item)
+        } else {
+            // Treat as callsign
+            im.lookupByCallsign(item)
+        }
+    }
 
-	fmt.Println()
+    fmt.Println()
 }
 
 // isNumericLookup checks if the input is a numeric member lookup
 func (im *InteractiveMode) isNumericLookup(s string) bool {
-	// Check if it's all digits or digits followed by C/T/S
-	if len(s) == 0 {
-		return false
-	}
+    // Check if it's all digits or digits followed by C/T/S
+    if len(s) == 0 {
+        return false
+    }
 
-	// Strip off C/T/S suffix if present
-	cleaned := s
-	if len(s) > 1 {
-		lastChar := s[len(s)-1]
-		if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
-			cleaned = s[:len(s)-1]
-		}
-	}
+    // Strip off C/T/S suffix if present
+    cleaned := s
+    if len(s) > 1 {
+        lastChar := s[len(s)-1]
+        if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
+            cleaned = s[:len(s)-1]
+        }
+    }
 
-	// Check if remaining is all digits
-	for _, ch := range cleaned {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
+    // Check if remaining is all digits
+    for _, ch := range cleaned {
+        if ch < '0' || ch > '9' {
+            return false
+        }
+    }
 
-	return true
+    return true
 }
 
 // lookupByNumber looks up a member by SKCC number
 func (im *InteractiveMode) lookupByNumber(numberStr string) {
-	// Strip suffix if present
-	cleaned := numberStr
-	if len(numberStr) > 1 {
-		lastChar := numberStr[len(numberStr)-1]
-		if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
-			cleaned = numberStr[:len(numberStr)-1]
-		}
-	}
+    // Strip suffix if present
+    cleaned := numberStr
+    if len(numberStr) > 1 {
+        lastChar := numberStr[len(numberStr)-1]
+        if lastChar == 'C' || lastChar == 'T' || lastChar == 'S' {
+            cleaned = numberStr[:len(numberStr)-1]
+        }
+    }
 
-	// Find member with this number
-	found := false
-	for callsign, member := range im.members {
-		if member.PlainNumber == cleaned && callsign == member.Callsign {
-			im.printMemberInfo(callsign, member)
-			found = true
-			break
-		}
-	}
+    // Find member with this number
+    found := false
+    for callsign, member := range im.members {
+        if member.PlainNumber == cleaned && callsign == member.Callsign {
+            im.printMemberInfo(callsign, member)
+            found = true
+            break
+        }
+    }
 
-	if !found {
-		fmt.Printf("  No member with the number %s.\n", cleaned)
-	}
+    if !found {
+        fmt.Printf("  No member with the number %s.\n", cleaned)
+    }
 }
 
 // lookupByCallsign looks up a member by callsign
 func (im *InteractiveMode) lookupByCallsign(callsign string) {
-	// Extract base callsign (handle slashed calls)
-	extractedCall := extractCallsign(callsign)
-	if extractedCall == "" {
-		fmt.Printf("  %s - not an SKCC member.\n", callsign)
-		return
-	}
+    // Extract base callsign (handle slashed calls)
+    extractedCall := extractCallsign(callsign)
+    if extractedCall == "" {
+        fmt.Printf("  %s - not an SKCC member.\n", callsign)
+        return
+    }
 
-	// Look up in members database
-	member, exists := im.members[extractedCall]
-	if !exists {
-		fmt.Printf("  %s - not an SKCC member.\n", callsign)
-		return
-	}
+    // Look up in members database
+    member, exists := im.members[extractedCall]
+    if !exists {
+        fmt.Printf("  %s - not an SKCC member.\n", callsign)
+        return
+    }
 
-	im.printMemberInfo(extractedCall, member)
+    im.printMemberInfo(extractedCall, member)
 }
 
 // printMemberInfo displays member information with goal/target analysis
 func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
-	// Build member info string  - create a map with one entry
-	memberData := im.convertToMemberData(member)
-	membersMap := map[string]MemberData{callsign: memberData}
-	memberInfo := buildMemberInfo(callsign, membersMap, im.rosters)
+    // Build member info string  - create a map with one entry
+    memberData := im.convertToMemberData(member)
+    membersMap := map[string]MemberData{callsign: memberData}
+    memberInfo := buildMemberInfo(callsign, membersMap, im.rosters)
 
-	var report []string
-	report = append(report, memberInfo)
+    var report []string
+    report = append(report, memberInfo)
 
-	// Check if it's the user
-	myMember, exists := im.members[im.config.MyCallsign]
-	if exists && member.PlainNumber == myMember.PlainNumber {
-		report = append(report, "(you)")
-		fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
-		return
-	}
+    // Check if it's the user
+    myMember, exists := im.members[im.config.MyCallsign]
+    if exists && member.PlainNumber == myMember.PlainNumber {
+        report = append(report, "(you)")
+        fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
+        return
+    }
 
-	// Get goal and target lists
-	// TODO: This needs the full award state to work properly
-	// For now, just show basic info
-	goalList := []string{}
-	targetList := []string{}
+    // Get goal and target lists
+    // TODO: This needs the full award state to work properly
+    // For now, just show basic info
+    goalList := []string{}
+    targetList := []string{}
 
-	// Check friend status
-	isFriend := false
-	for _, friend := range im.config.Friends {
-		if strings.EqualFold(friend, callsign) {
-			isFriend = true
-			break
-		}
-	}
+    // Check friend status
+    isFriend := false
+    for _, friend := range im.config.Friends {
+        if strings.EqualFold(friend, callsign) {
+            isFriend = true
+            break
+        }
+    }
 
-	if len(goalList) > 0 {
-		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
-	}
+    if len(goalList) > 0 {
+        report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
+    }
 
-	if len(targetList) > 0 {
-		report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
-	}
+    if len(targetList) > 0 {
+        report = append(report, fmt.Sprintf("THEY need you for %s", strings.Join(targetList, ",")))
+    }
 
-	if isFriend {
-		report = append(report, "friend")
-	}
+    if isFriend {
+        report = append(report, "friend")
+    }
 
-	if len(goalList) == 0 && len(targetList) == 0 {
-		report = append(report, "You don't need to work each other.")
-	}
+    if len(goalList) == 0 && len(targetList) == 0 {
+        report = append(report, "You don't need to work each other.")
+    }
 
-	fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
+    fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
 }
 
 // convertToMemberData converts Member to MemberData for display
 func (im *InteractiveMode) convertToMemberData(m *Member) MemberData {
-	return MemberData{
-		PlainNumber: m.PlainNumber,
-		Name:        m.Name,
-		SPC:         m.SPC,
-		MbrStatus:   m.Status,
-		CDate:       m.CDate,
-		TDate:       m.TDate,
-		Tx8Date:     m.TX8Date,
-		SDate:       m.SDate,
-		JoinDate:    m.JoinDate,
-		DXCode:      m.DXCode,
-	}
+    return MemberData{
+        PlainNumber: m.PlainNumber,
+        Name:        m.Name,
+        SPC:         m.SPC,
+        MbrStatus:   m.Status,
+        CDate:       m.CDate,
+        TDate:       m.TDate,
+        Tx8Date:     m.TX8Date,
+        SDate:       m.SDate,
+        JoinDate:    m.JoinDate,
+        DXCode:      m.DXCode,
+    }
 }
 
 // ============================================================================
@@ -2329,307 +2323,95 @@ func (im *InteractiveMode) convertToMemberData(m *Member) MemberData {
 // MemberData represents SKCC member information (simplified for now)
 // TODO: This should match the full member structure when member database is implemented
 type MemberData struct {
-	PlainNumber string
-	Name        string
-	SPC         string // State/Province/Country
-	MbrStatus   string // A=Active, IA=Inactive, SK=Silent Key
-	CDate       string
-	TDate       string
-	Tx8Date     string
-	SDate       string
-	JoinDate    string
-	DXCode      string
+    PlainNumber string
+    Name        string
+    SPC         string // State/Province/Country
+    MbrStatus   string // A=Active, IA=Inactive, SK=Silent Key
+    CDate       string
+    TDate       string
+    Tx8Date     string
+    SDate       string
+    JoinDate    string
+    DXCode      string
 }
 
 // buildMemberInfo formats member information for display
 // Format: (NUMBER SUFFIX NAME SPC)
 // Example: (12345 Cx3  John      WA)
 func buildMemberInfo(callsign string, members map[string]MemberData, rosters *Rosters) string {
-	member, exists := members[callsign]
-	if !exists {
-		return ""
-	}
+    member, exists := members[callsign]
+    if !exists {
+        return ""
+    }
 
-	number, suffix := getFullMemberNumber(callsign, member, rosters)
+    number, suffix := getFullMemberNumber(callsign, member, rosters)
 
-	// Truncate name to 9 characters max
-	name := member.Name
-	if len(name) > 9 {
-		name = name[:9]
-	}
+    // Truncate name to 9 characters max
+    name := member.Name
+    if len(name) > 9 {
+        name = name[:9]
+    }
 
-	return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
+    return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
 }
 
 // getFullMemberNumber returns the member number and award suffix
 // Suffix examples: "C", "Cx5", "T", "Tx3", "S", "Sx2"
-func getFullMemberNumber(callsign string, member MemberData, rosters *Rosters) (string, string) {
-	number := member.PlainNumber
-	suffix := ""
-	level := 1
+func getFullMemberNumber(_ string, member MemberData, rosters *Rosters) (string, string) {
+    number := member.PlainNumber
+    suffix := ""
+    level := 1
 
-	// Check award dates to determine highest achievement
-	sDate := effectiveDate(member.SDate)
-	tDate := effectiveDate(member.TDate)
-	cDate := effectiveDate(member.CDate)
-	tx8Date := effectiveDate(member.Tx8Date)
+    // Check award dates to determine highest achievement
+    sDate := effectiveDate(member.SDate)
+    tDate := effectiveDate(member.TDate)
+    cDate := effectiveDate(member.CDate)
+    tx8Date := effectiveDate(member.Tx8Date)
 
-	if sDate != "" {
-		suffix = "S"
-		if lvl, ok := rosters.Senator[number]; ok {
-			level = lvl
-		}
-	} else if tDate != "" {
-		suffix = "T"
-		if lvl, ok := rosters.Tribune[number]; ok {
-			level = lvl
-		}
-		// Special case: if Tx8 not achieved, cap at Tx7
-		if level == 8 && tx8Date == "" {
-			level = 7
-		}
-	} else if cDate != "" {
-		suffix = "C"
-		if lvl, ok := rosters.Centurion[number]; ok {
-			level = lvl
-		}
-	}
+    if sDate != "" {
+        suffix = "S"
+        if lvl, ok := rosters.Senator[number]; ok {
+            level = lvl
+        }
+    } else if tDate != "" {
+        suffix = "T"
+        if lvl, ok := rosters.Tribune[number]; ok {
+            level = lvl
+        }
+        // Special case: if Tx8 not achieved, cap at Tx7
+        if level == 8 && tx8Date == "" {
+            level = 7
+        }
+    } else if cDate != "" {
+        suffix = "C"
+        if lvl, ok := rosters.Centurion[number]; ok {
+            level = lvl
+        }
+    }
 
-	if level > 1 {
-		suffix = fmt.Sprintf("%sx%d", suffix, level)
-	}
+    if level > 1 {
+        suffix = fmt.Sprintf("%sx%d", suffix, level)
+    }
 
-	return number, suffix
+    return number, suffix
 }
 
 // effectiveDate returns empty string if date is "0000-00-00" or empty
 func effectiveDate(date string) string {
-	if date == "" || date == "0000-00-00" {
-		return ""
-	}
-	return date
-}
-
-// buildGoalTargetReport builds lists of goals and targets for a spotted callsign
-// This is the key function that determines what awards you need from them and vice versa
-func buildGoalTargetReport(callsign string, freqKHz float64, k3ySuffix string,
-	config *Config, members map[string]MemberData, rosters *Rosters,
-	myMemberData MemberData, contactsForC, contactsForT, contactsForS map[string]bool,
-	contactsForWAS, contactsForWASC, contactsForWAST, contactsForWASS map[string]bool,
-	contactsForDXC map[string]bool, contactsForDXQ map[string]bool,
-	contactsForK3Y map[string]map[int]bool, bragContacts map[string]bool,
-	qsosByMemberNumber map[string][]string) ([]string, []string) {
-
-	var goals []string
-	var targets []string
-
-	// Handle K3Y special case
-	if k3ySuffix != "" && hasGoal(config.Goals, "K3Y") && freqKHz > 0 {
-		band := whichBand(freqKHz)
-		if band > 0 {
-			// Check if we've worked this K3Y station on this band
-			if bandMap, exists := contactsForK3Y[k3ySuffix]; !exists || !bandMap[band] {
-				goals = append(goals, fmt.Sprintf("K3Y/%s (%dm)", k3ySuffix, band))
-			}
-		}
-	}
-
-	// Regular member checks
-	member, exists := members[callsign]
-	if !exists || callsign == config.MyCallsign {
-		return goals, targets
-	}
-
-	// Don't spot inactive members
-	if member.MbrStatus != "A" {
-		return goals, targets
-	}
-
-	theirNumber := member.PlainNumber
-	theirCDate := effectiveDate(member.CDate)
-	theirTDate := effectiveDate(member.TDate)
-	theirSDate := effectiveDate(member.SDate)
-	theirTx8Date := effectiveDate(member.Tx8Date)
-	theirJoinDate := effectiveDate(member.JoinDate)
-
-	myCDate := effectiveDate(myMemberData.CDate)
-	myTDate := effectiveDate(myMemberData.TDate)
-	myTx8Date := effectiveDate(myMemberData.Tx8Date)
-	mySDate := effectiveDate(myMemberData.SDate)
-	myJoinDate := effectiveDate(myMemberData.JoinDate)
-
-	// BRAG goal check
-	if hasGoal(config.Goals, "BRAG") && !bragContacts[theirNumber] {
-		// For sked (no frequency), always show BRAG
-		// For spots with frequency, check WARC or not during sprint
-		if freqKHz == 0 { // Sked page, no frequency
-			goals = append(goals, "BRAG")
-		}
-		// TODO: Add isOnWARCFrequency and isDuringSprint checks for RBN spots
-	}
-
-	// C award goal check
-	if hasGoal(config.Goals, "C") {
-		if result := checkCTSGoal("C", theirNumber, contactsForC, myCDate, rosters.Centurion); result != "" {
-			goals = append(goals, result)
-		}
-	}
-
-	// T award goal check (requires both parties have C)
-	if hasGoal(config.Goals, "T") && myCDate != "" && theirCDate != "" {
-		if result := checkCTSGoal("T", theirNumber, contactsForT, myTDate, rosters.Tribune); result != "" {
-			goals = append(goals, result)
-		}
-	}
-
-	// S award goal check (requires I have Tx8, they have T)
-	if hasGoal(config.Goals, "S") && myTx8Date != "" && theirTDate != "" {
-		if result := checkCTSGoal("S", theirNumber, contactsForS, mySDate, rosters.Senator); result != "" {
-			goals = append(goals, result)
-		}
-	}
-
-	// WAS goal checks
-	spc := member.SPC
-	if hasGoal(config.Goals, "WAS") && isUSState(spc) && !contactsForWAS[spc] {
-		goals = append(goals, "WAS")
-	}
-	if hasGoal(config.Goals, "WAS-C") && theirCDate != "" && isUSState(spc) && !contactsForWASC[spc] {
-		goals = append(goals, "WAS-C")
-	}
-	if hasGoal(config.Goals, "WAS-T") && theirTDate != "" && isUSState(spc) && !contactsForWAST[spc] {
-		goals = append(goals, "WAS-T")
-	}
-	if hasGoal(config.Goals, "WAS-S") && theirSDate != "" && isUSState(spc) && !contactsForWASS[spc] {
-		goals = append(goals, "WAS-S")
-	}
-
-	// DX goal checks
-	if hasGoal(config.Goals, "DX") && member.DXCode != "" {
-		// DXC - unique countries
-		if !contactsForDXC[member.DXCode] {
-			// TODO: Calculate next level based on current count
-			goals = append(goals, "DXCx1") // Placeholder
-		}
-
-		// DXQ - foreign member QSOs
-		myDXCode := myMemberData.DXCode
-		if member.DXCode != myDXCode && !contactsForDXQ[theirNumber] {
-			goals = append(goals, "DXQx1") // Placeholder
-		}
-	}
-
-	// C target check
-	if hasTarget(config.Targets, "C") {
-		if result := checkCTSTarget("C", theirNumber, theirCDate, theirJoinDate, myJoinDate,
-			rosters.Centurion, qsosByMemberNumber); result != "" {
-			targets = append(targets, result)
-		}
-	}
-
-	// T target check (requires both have C)
-	if hasTarget(config.Targets, "T") && theirCDate != "" && myCDate != "" {
-		if result := checkCTSTarget("T", theirNumber, theirTDate, theirCDate, myCDate,
-			rosters.Tribune, qsosByMemberNumber); result != "" {
-			targets = append(targets, result)
-		}
-	}
-
-	// S target check (requires they have Tx8, I have T)
-	if hasTarget(config.Targets, "S") && theirTx8Date != "" && myTDate != "" {
-		if result := checkCTSTarget("S", theirNumber, theirSDate, theirTx8Date, myTDate,
-			rosters.Senator, qsosByMemberNumber); result != "" {
-			targets = append(targets, result)
-		}
-	}
-
-	return goals, targets
-}
-
-// checkCTSGoal checks if a member is needed for C/T/S goal
-func checkCTSGoal(awardType, theirNumber string, contacts map[string]bool,
-	myAwardDate string, levelRoster map[string]int) string {
-
-	if !contacts[theirNumber] {
-		if myAwardDate == "" {
-			// Working toward initial award
-			return awardType
-		}
-		// Already have award, working toward multipliers
-		xFactor := 1
-		if level, ok := levelRoster[theirNumber]; ok {
-			xFactor = level
-		}
-		if xFactor > 1 {
-			return fmt.Sprintf("%sx%d", awardType, xFactor)
-		}
-		return awardType
-	}
-	return ""
-}
-
-// checkCTSTarget checks if I can help them with C/T/S award
-func checkCTSTarget(awardType, theirNumber, theirAwardDate, date1, date2 string,
-	levelRoster map[string]int, qsosByMemberNumber map[string][]string) string {
-
-	if theirAwardDate == "" {
-		// They're working toward initial award
-		// Check if we've worked them after their qualifying date
-		if dates, exists := qsosByMemberNumber[theirNumber]; !exists || allDatesBeforeOrEqual(dates, date1, date2) {
-			return awardType
-		}
-	} else {
-		// They already have award, working toward multipliers
-		if level, ok := levelRoster[theirNumber]; ok {
-			nextLevel := level + 1
-			if nextLevel <= 10 {
-				if dates, exists := qsosByMemberNumber[theirNumber]; !exists || allDatesBeforeOrEqual(dates, date1, date2) {
-					return fmt.Sprintf("%sx%d", awardType, nextLevel)
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// allDatesBeforeOrEqual checks if all QSO dates are before or equal to date1 or date2
-func allDatesBeforeOrEqual(dates []string, date1, date2 string) bool {
-	for _, date := range dates {
-		if date > date1 && date > date2 {
-			return false
-		}
-	}
-	return true
-}
-
-// hasGoal checks if a goal is in the goals list
-func hasGoal(goals []string, goal string) bool {
-	for _, g := range goals {
-		if g == goal {
-			return true
-		}
-	}
-	return false
-}
-
-// hasTarget checks if a target is in the targets list
-func hasTarget(targets []string, target string) bool {
-	for _, t := range targets {
-		if t == target {
-			return true
-		}
-	}
-	return false
+    if date == "" || date == "0000-00-00" {
+        return ""
+    }
+    return date
 }
 
 // isUSState checks if SPC is a US state
 func isUSState(spc string) bool {
-	for _, state := range usStates {
-		if spc == state {
-			return true
-		}
-	}
-	return false
+    for _, state := range usStates {
+        if spc == state {
+            return true
+        }
+    }
+    return false
 }
 
 // ============================================================================
@@ -2637,305 +2419,305 @@ func isUSState(spc string) bool {
 // ============================================================================
 
 func parseConfig(filename string) (*Config, error) {
-	cfg := &Config{
-		SpotterRadius:          750,
-		Bands:                  []int{160, 80, 60, 40, 30, 20, 17, 15, 12, 10, 6},
-		Verbose:                false,
-		DistanceUnits:          "mi",
-		K3YYear:                2026,
-		SpottersNearby:         make(map[string]bool),
-		SpotPersistenceMinutes: 30,
-		// Initialize sub-configs with defaults
-		HighWPM: HighWPMConfig{
-			Action:    "always-display",
-			Threshold: 15,
-		},
-		OffFrequency: OffFrequencyConfig{
-			Action:    "suppress",
-			Tolerance: 0,
-		},
-		Notification: NotificationConfig{
-			Enabled:                   true,
-			Condition:                 []string{"goals", "targets", "friends"},
-			RenotificationDelaySeconds: 30,
-		},
-		Sked: SkedConfig{
-			Enabled:      true,
-			CheckSeconds: 60,
-		},
-		LogFile: LogFileConfig{
-			Enabled:          false,
-			FileName:         "",
-			DeleteOnStartup:  false,
-		},
-		ProgressDots: ProgressDotsConfig{
-			Enabled:        true,
-			DisplaySeconds: 5,
-			DotsPerLine:    30,
-		},
-	}
+    cfg := &Config{
+        SpotterRadius:          750,
+        Bands:                  []int{160, 80, 60, 40, 30, 20, 17, 15, 12, 10, 6},
+        Verbose:                false,
+        DistanceUnits:          "mi",
+        K3YYear:                2026,
+        SpottersNearby:         make(map[string]bool),
+        SpotPersistenceMinutes: 30,
+        // Initialize sub-configs with defaults
+        HighWPM: HighWPMConfig{
+            Action:    "always-display",
+            Threshold: 15,
+        },
+        OffFrequency: OffFrequencyConfig{
+            Action:    "suppress",
+            Tolerance: 0,
+        },
+        Notification: NotificationConfig{
+            Enabled:                   true,
+            Condition:                 []string{"goals", "targets", "friends"},
+            RenotificationDelaySeconds: 30,
+        },
+        Sked: SkedConfig{
+            Enabled:      true,
+            CheckSeconds: 60,
+        },
+        LogFile: LogFileConfig{
+            Enabled:          false,
+            FileName:         "",
+            DeleteOnStartup:  false,
+        },
+        ProgressDots: ProgressDotsConfig{
+            Enabled:        true,
+            DisplaySeconds: 5,
+            DotsPerLine:    30,
+        },
+    }
 
-	file, err := os.Open(filename)
-	if err != nil {
-		return cfg, nil // Return defaults if no config file
-	}
-	defer file.Close()
+    file, err := os.Open(filename)
+    if err != nil {
+        return cfg, nil // Return defaults if no config file
+    }
+    defer file.Close()
 
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
+    scanner := bufio.NewScanner(file)
+    for scanner.Scan() {
+        line := strings.TrimSpace(scanner.Text())
+        if line == "" || strings.HasPrefix(line, "#") {
+            continue
+        }
 
-		if strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
+        if strings.Contains(line, "=") {
+            parts := strings.SplitN(line, "=", 2)
+            key := strings.TrimSpace(parts[0])
+            value := strings.TrimSpace(parts[1])
 
-			// If value starts with {, it's a multi-line dictionary - accumulate until }
-			if strings.HasPrefix(value, "{") {
-				for !strings.Contains(value, "}") && scanner.Scan() {
-					value += " " + strings.TrimSpace(scanner.Text())
-				}
-			}
+            // If value starts with {, it's a multi-line dictionary - accumulate until }
+            if strings.HasPrefix(value, "{") {
+                for !strings.Contains(value, "}") && scanner.Scan() {
+                    value += " " + strings.TrimSpace(scanner.Text())
+                }
+            }
 
-			// Strip inline comments (must be done before quote removal)
-			if idx := strings.Index(value, "#"); idx != -1 {
-				// Only strip if # is outside quotes
-				inQuotes := false
-				for i, ch := range value {
-					if ch == '\'' || ch == '"' {
-						inQuotes = !inQuotes
-					}
-					if !inQuotes && i == idx {
-						value = strings.TrimSpace(value[:idx])
-						break
-					}
-				}
-			}
+            // Strip inline comments (must be done before quote removal)
+            if idx := strings.Index(value, "#"); idx != -1 {
+                // Only strip if # is outside quotes
+                inQuotes := false
+                for i, ch := range value {
+                    if ch == '\'' || ch == '"' {
+                        inQuotes = !inQuotes
+                    }
+                    if !inQuotes && i == idx {
+                        value = strings.TrimSpace(value[:idx])
+                        break
+                    }
+                }
+            }
 
-			value = strings.Trim(value, "'\"")
-			value = strings.TrimPrefix(value, "r")
-			value = strings.Trim(value, "'\"")
+            value = strings.Trim(value, "'\"")
+            value = strings.TrimPrefix(value, "r")
+            value = strings.Trim(value, "'\"")
 
-			switch key {
-			case "MY_CALLSIGN":
-				cfg.MyCallsign = strings.ToUpper(value)
-			case "MY_GRIDSQUARE":
-				cfg.MyGridsquare = strings.ToUpper(value)
-			case "ADI_FILE":
-				cfg.ADIFile = value
-			case "GOALS":
-				cfg.Goals = parseGoalsTargets(value)
-			case "TARGETS":
-				cfg.Targets = parseGoalsTargets(value)
-			case "BANDS":
-				cfg.Bands = parseBands(value)
-			case "EXCLUSIONS":
-				cfg.Exclusions = strings.Fields(value)
-			case "FRIENDS":
-				cfg.Friends = strings.Fields(value)
-			case "K3Y_YEAR":
-				if v, err := strconv.Atoi(value); err == nil {
-					cfg.K3YYear = v
-				}
-			case "SPOTTER_RADIUS":
-				if v, err := strconv.Atoi(value); err == nil {
-					cfg.SpotterRadius = v
-				}
-			case "VERBOSE":
-				cfg.Verbose = strings.ToLower(value) == "true" || value == "1"
-			case "HIGH_WPM":
-				parseHighWPM(value, cfg)
-			case "OFF_FREQUENCY":
-				parseOffFrequency(value, cfg)
-			case "NOTIFICATION":
-				parseNotification(value, cfg)
-			case "SKED":
-				parseSked(value, cfg)
-			case "LOG_FILE":
-				parseLogFile(value, cfg)
-			case "PROGRESS_DOTS":
-				parseProgressDots(value, cfg)
-			}
-		}
-	}
+            switch key {
+            case "MY_CALLSIGN":
+                cfg.MyCallsign = strings.ToUpper(value)
+            case "MY_GRIDSQUARE":
+                cfg.MyGridsquare = strings.ToUpper(value)
+            case "ADI_FILE":
+                cfg.ADIFile = value
+            case "GOALS":
+                cfg.Goals = parseGoalsTargets(value)
+            case "TARGETS":
+                cfg.Targets = parseGoalsTargets(value)
+            case "BANDS":
+                cfg.Bands = parseBands(value)
+            case "EXCLUSIONS":
+                cfg.Exclusions = strings.Fields(value)
+            case "FRIENDS":
+                cfg.Friends = strings.Fields(value)
+            case "K3Y_YEAR":
+                if v, err := strconv.Atoi(value); err == nil {
+                    cfg.K3YYear = v
+                }
+            case "SPOTTER_RADIUS":
+                if v, err := strconv.Atoi(value); err == nil {
+                    cfg.SpotterRadius = v
+                }
+            case "VERBOSE":
+                cfg.Verbose = strings.ToLower(value) == "true" || value == "1"
+            case "HIGH_WPM":
+                parseHighWPM(value, cfg)
+            case "OFF_FREQUENCY":
+                parseOffFrequency(value, cfg)
+            case "NOTIFICATION":
+                parseNotification(value, cfg)
+            case "SKED":
+                parseSked(value, cfg)
+            case "LOG_FILE":
+                parseLogFile(value, cfg)
+            case "PROGRESS_DOTS":
+                parseProgressDots(value, cfg)
+            }
+        }
+    }
 
-	return cfg, nil
+    return cfg, nil
 }
 
 func parseGoalsTargets(value string) []string {
-	value = strings.ToUpper(value)
-	parts := strings.Split(value, ",")
-	var result []string
-	hasAll := false
-	var exclusions []string
+    value = strings.ToUpper(value)
+    parts := strings.Split(value, ",")
+    var result []string
+    hasAll := false
+    var exclusions []string
 
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p == "ALL" {
-			hasAll = true
-		} else if strings.HasPrefix(p, "-") {
-			exclusions = append(exclusions, strings.TrimPrefix(p, "-"))
-		} else if p != "" && p != "NONE" {
-			result = append(result, p)
-		}
-	}
+    for _, p := range parts {
+        p = strings.TrimSpace(p)
+        if p == "ALL" {
+            hasAll = true
+        } else if strings.HasPrefix(p, "-") {
+            exclusions = append(exclusions, strings.TrimPrefix(p, "-"))
+        } else if p != "" && p != "NONE" {
+            result = append(result, p)
+        }
+    }
 
-	if hasAll {
-		allAwards := []string{"C", "T", "S", "P", "WAS", "WAS-C", "WAS-T", "WAS-S", "DX", "QRP", "RC", "BRAG", "K3Y", "TKA"}
-		for _, award := range allAwards {
-			isExcluded := false
-			for _, ex := range exclusions {
-				if award == ex {
-					isExcluded = true
-					break
-				}
-			}
-			if !isExcluded {
-				result = append(result, award)
-			}
-		}
-	}
+    if hasAll {
+        allAwards := []string{"C", "T", "S", "P", "WAS", "WAS-C", "WAS-T", "WAS-S", "DX", "QRP", "RC", "BRAG", "K3Y", "TKA"}
+        for _, award := range allAwards {
+            isExcluded := false
+            for _, ex := range exclusions {
+                if award == ex {
+                    isExcluded = true
+                    break
+                }
+            }
+            if !isExcluded {
+                result = append(result, award)
+            }
+        }
+    }
 
-	return result
+    return result
 }
 
 // parseHighWPM parses HIGH_WPM dict from config
 func parseHighWPM(value string, cfg *Config) {
-	// Value is a Python dict string like "{'ACTION': 'warn', 'THRESHOLD': 35}"
-	// Simple extraction - look for ACTION and THRESHOLD values
-	if strings.Contains(value, "ACTION") {
-		if strings.Contains(value, "'suppress'") || strings.Contains(value, "\"suppress\"") {
-			cfg.HighWPM.Action = "suppress"
-		} else if strings.Contains(value, "'warn'") || strings.Contains(value, "\"warn\"") {
-			cfg.HighWPM.Action = "warn"
-		} else if strings.Contains(value, "'always-display'") || strings.Contains(value, "\"always-display\"") {
-			cfg.HighWPM.Action = "always-display"
-		}
-	}
-	if strings.Contains(value, "THRESHOLD") {
-		re := regexp.MustCompile(`THRESHOLD['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.HighWPM.Threshold = v
-			}
-		}
-	}
+    // Value is a Python dict string like "{'ACTION': 'warn', 'THRESHOLD': 35}"
+    // Simple extraction - look for ACTION and THRESHOLD values
+    if strings.Contains(value, "ACTION") {
+        if strings.Contains(value, "'suppress'") || strings.Contains(value, "\"suppress\"") {
+            cfg.HighWPM.Action = "suppress"
+        } else if strings.Contains(value, "'warn'") || strings.Contains(value, "\"warn\"") {
+            cfg.HighWPM.Action = "warn"
+        } else if strings.Contains(value, "'always-display'") || strings.Contains(value, "\"always-display\"") {
+            cfg.HighWPM.Action = "always-display"
+        }
+    }
+    if strings.Contains(value, "THRESHOLD") {
+        re := regexp.MustCompile(`THRESHOLD['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.HighWPM.Threshold = v
+            }
+        }
+    }
 }
 
 // parseOffFrequency parses OFF_FREQUENCY dict from config
 func parseOffFrequency(value string, cfg *Config) {
-	if strings.Contains(value, "ACTION") {
-		if strings.Contains(value, "'suppress'") || strings.Contains(value, "\"suppress\"") {
-			cfg.OffFrequency.Action = "suppress"
-		} else if strings.Contains(value, "'warn'") || strings.Contains(value, "\"warn\"") {
-			cfg.OffFrequency.Action = "warn"
-		}
-	}
-	if strings.Contains(value, "TOLERANCE") {
-		re := regexp.MustCompile(`TOLERANCE['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.OffFrequency.Tolerance = v
-			}
-		}
-	}
+    if strings.Contains(value, "ACTION") {
+        if strings.Contains(value, "'suppress'") || strings.Contains(value, "\"suppress\"") {
+            cfg.OffFrequency.Action = "suppress"
+        } else if strings.Contains(value, "'warn'") || strings.Contains(value, "\"warn\"") {
+            cfg.OffFrequency.Action = "warn"
+        }
+    }
+    if strings.Contains(value, "TOLERANCE") {
+        re := regexp.MustCompile(`TOLERANCE['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.OffFrequency.Tolerance = v
+            }
+        }
+    }
 }
 
 // parseNotification parses NOTIFICATION dict from config
 func parseNotification(value string, cfg *Config) {
-	if strings.Contains(value, "ENABLED") {
-		cfg.Notification.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
-	}
-	if strings.Contains(value, "CONDITION") {
-		// Extract list: ['goals', 'targets']
-		re := regexp.MustCompile(`CONDITION['"]?\s*:\s*\[([^\]]+)\]`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			conditions := strings.Split(matches[1], ",")
-			cfg.Notification.Condition = []string{}
-			for _, c := range conditions {
-				c = strings.Trim(strings.TrimSpace(c), "'\"")
-				if c != "" {
-					cfg.Notification.Condition = append(cfg.Notification.Condition, c)
-				}
-			}
-		}
-	}
-	if strings.Contains(value, "RENOTIFICATION_DELAY_SECONDS") {
-		re := regexp.MustCompile(`RENOTIFICATION_DELAY_SECONDS['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.Notification.RenotificationDelaySeconds = v
-			}
-		}
-	}
+    if strings.Contains(value, "ENABLED") {
+        cfg.Notification.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
+    if strings.Contains(value, "CONDITION") {
+        // Extract list: ['goals', 'targets']
+        re := regexp.MustCompile(`CONDITION['"]?\s*:\s*\[([^\]]+)\]`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            conditions := strings.Split(matches[1], ",")
+            cfg.Notification.Condition = []string{}
+            for _, c := range conditions {
+                c = strings.Trim(strings.TrimSpace(c), "'\"")
+                if c != "" {
+                    cfg.Notification.Condition = append(cfg.Notification.Condition, c)
+                }
+            }
+        }
+    }
+    if strings.Contains(value, "RENOTIFICATION_DELAY_SECONDS") {
+        re := regexp.MustCompile(`RENOTIFICATION_DELAY_SECONDS['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.Notification.RenotificationDelaySeconds = v
+            }
+        }
+    }
 }
 
 // parseSked parses SKED dict from config
 func parseSked(value string, cfg *Config) {
-	if strings.Contains(value, "ENABLED") {
-		cfg.Sked.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
-	}
-	if strings.Contains(value, "CHECK_SECONDS") {
-		re := regexp.MustCompile(`CHECK_SECONDS['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.Sked.CheckSeconds = v
-			}
-		}
-	}
+    if strings.Contains(value, "ENABLED") {
+        cfg.Sked.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
+    if strings.Contains(value, "CHECK_SECONDS") {
+        re := regexp.MustCompile(`CHECK_SECONDS['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.Sked.CheckSeconds = v
+            }
+        }
+    }
 }
 
 // parseLogFile parses LOG_FILE dict from config
 func parseLogFile(value string, cfg *Config) {
-	if strings.Contains(value, "ENABLED") {
-		cfg.LogFile.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
-	}
-	if strings.Contains(value, "FILE_NAME") {
-		re := regexp.MustCompile(`FILE_NAME['"]?\s*:\s*['"]([^'"]+)['"]`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			cfg.LogFile.FileName = matches[1]
-		}
-	}
-	if strings.Contains(value, "DELETE_ON_STARTUP") {
-		cfg.LogFile.DeleteOnStartup = strings.Contains(value, "True") || strings.Contains(value, "true")
-	}
+    if strings.Contains(value, "ENABLED") {
+        cfg.LogFile.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
+    if strings.Contains(value, "FILE_NAME") {
+        re := regexp.MustCompile(`FILE_NAME['"]?\s*:\s*['"]([^'"]+)['"]`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            cfg.LogFile.FileName = matches[1]
+        }
+    }
+    if strings.Contains(value, "DELETE_ON_STARTUP") {
+        cfg.LogFile.DeleteOnStartup = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
 }
 
 // parseProgressDots parses PROGRESS_DOTS dict from config
 func parseProgressDots(value string, cfg *Config) {
-	if strings.Contains(value, "ENABLED") {
-		cfg.ProgressDots.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
-	}
-	if strings.Contains(value, "DISPLAY_SECONDS") {
-		re := regexp.MustCompile(`DISPLAY_SECONDS['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.ProgressDots.DisplaySeconds = v
-			}
-		}
-	}
-	if strings.Contains(value, "DOTS_PER_LINE") {
-		re := regexp.MustCompile(`DOTS_PER_LINE['"]?\s*:\s*(\d+)`)
-		if matches := re.FindStringSubmatch(value); len(matches) > 1 {
-			if v, err := strconv.Atoi(matches[1]); err == nil {
-				cfg.ProgressDots.DotsPerLine = v
-			}
-		}
-	}
+    if strings.Contains(value, "ENABLED") {
+        cfg.ProgressDots.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
+    if strings.Contains(value, "DISPLAY_SECONDS") {
+        re := regexp.MustCompile(`DISPLAY_SECONDS['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.ProgressDots.DisplaySeconds = v
+            }
+        }
+    }
+    if strings.Contains(value, "DOTS_PER_LINE") {
+        re := regexp.MustCompile(`DOTS_PER_LINE['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.ProgressDots.DotsPerLine = v
+            }
+        }
+    }
 }
 
 func parseBands(value string) []int {
-	parts := strings.Fields(value)
-	var bands []int
-	for _, p := range parts {
-		if b, err := strconv.Atoi(p); err == nil {
-			bands = append(bands, b)
-		}
-	}
-	return bands
+    parts := strings.Fields(value)
+    var bands []int
+    for _, p := range parts {
+        if b, err := strconv.Atoi(p); err == nil {
+            bands = append(bands, b)
+        }
+    }
+    return bands
 }
 
 // ============================================================================
@@ -2943,100 +2725,100 @@ func parseBands(value string) []int {
 // ============================================================================
 
 func downloadSKCCData() error {
-	fmt.Println("Downloading SKCC member data...")
+    fmt.Println("Downloading SKCC member data...")
 
-	resp, err := http.Get(SKCCDataURL)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+    resp, err := http.Get(SKCCDataURL)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
 
-	scanner := bufio.NewScanner(resp.Body)
-	members = make(map[string]*Member)
+    scanner := bufio.NewScanner(resp.Body)
+    members = make(map[string]*Member)
 
-	// Skip header
-	scanner.Scan()
+    // Skip header
+    scanner.Scan()
 
-	count := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.Split(line, "|")
-		if len(parts) < 12 {
-			continue
-		}
+    count := 0
+    for scanner.Scan() {
+        line := scanner.Text()
+        parts := strings.Split(line, "|")
+        if len(parts) < 12 {
+            continue
+        }
 
-		member := &Member{
-			SKCCNumber:  parts[0],
-			PlainNumber: cleanSKCCNumber(parts[0]),
-			Callsign:    strings.ToUpper(parts[1]),
-			Name:        parts[2],
-			SPC:         parts[3],
-			DXCode:      parts[5],
-			JoinDate:    normalizeADIDate(parts[6]),
-			CDate:       normalizeADIDate(parts[7]),
-			TDate:       normalizeADIDate(parts[8]),
-			TX8Date:     normalizeADIDate(parts[9]),
-			SDate:       normalizeADIDate(parts[10]),
-			Status:      parts[11],
-		}
+        member := &Member{
+            SKCCNumber:  parts[0],
+            PlainNumber: cleanSKCCNumber(parts[0]),
+            Callsign:    strings.ToUpper(parts[1]),
+            Name:        parts[2],
+            SPC:         parts[3],
+            DXCode:      parts[5],
+            JoinDate:    normalizeADIDate(parts[6]),
+            CDate:       normalizeADIDate(parts[7]),
+            TDate:       normalizeADIDate(parts[8]),
+            TX8Date:     normalizeADIDate(parts[9]),
+            SDate:       normalizeADIDate(parts[10]),
+            Status:      parts[11],
+        }
 
-		if parts[4] != "" {
-			member.OldCalls = strings.Split(parts[4], ",")
-		}
+        if parts[4] != "" {
+            member.OldCalls = strings.Split(parts[4], ",")
+        }
 
-		// Store callsign AS-IS from database (including /SK, /EX suffixes)
-		// Current callsign takes precedence - always add/overwrite
-		members[member.Callsign] = member
+        // Store callsign AS-IS from database (including /SK, /EX suffixes)
+        // Current callsign takes precedence - always add/overwrite
+        members[member.Callsign] = member
 
-		// Index by old callsigns - DON'T overwrite existing entries
-		// This matches Python logic: old calls don't replace current calls
-		for _, oldCall := range member.OldCalls {
-			if oldCall != "" {
-				oldCallClean := strings.ToUpper(strings.TrimSpace(oldCall))
-				// Only add if not already present (don't overwrite current calls with old calls)
-				if _, exists := members[oldCallClean]; !exists {
-					members[oldCallClean] = member
-				}
-				// Note: Python also has logic for inactive->active upgrades, but we can skip for now
-			}
-		}
+        // Index by old callsigns - DON'T overwrite existing entries
+        // This matches Python logic: old calls don't replace current calls
+        for _, oldCall := range member.OldCalls {
+            if oldCall != "" {
+                oldCallClean := strings.ToUpper(strings.TrimSpace(oldCall))
+                // Only add if not already present (don't overwrite current calls with old calls)
+                if _, exists := members[oldCallClean]; !exists {
+                    members[oldCallClean] = member
+                }
+                // Note: Python also has logic for inactive->active upgrades, but we can skip for now
+            }
+        }
 
-		count++
-	}
+        count++
+    }
 
-	fmt.Printf("Loaded %d SKCC members\n", count)
-	return scanner.Err()
+    fmt.Printf("Loaded %d SKCC members\n", count)
+    return scanner.Err()
 }
 
 func normalizeADIDate(dateStr string) string {
-	// Convert "DD Mon YYYY" to "YYYYMMDD"
-	if dateStr == "" {
-		return ""
-	}
+    // Convert "DD Mon YYYY" to "YYYYMMDD"
+    if dateStr == "" {
+        return ""
+    }
 
-	parts := strings.Fields(dateStr)
-	if len(parts) != 3 {
-		return ""
-	}
+    parts := strings.Fields(dateStr)
+    if len(parts) != 3 {
+        return ""
+    }
 
-	monthMap := map[string]string{
-		"Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
-		"May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
-		"Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
-	}
+    monthMap := map[string]string{
+        "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
+        "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
+        "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
+    }
 
-	day := parts[0]
-	if len(day) == 1 {
-		day = "0" + day
-	}
-	month := monthMap[parts[1]]
-	year := parts[2]
+    day := parts[0]
+    if len(day) == 1 {
+        day = "0" + day
+    }
+    month := monthMap[parts[1]]
+    year := parts[2]
 
-	if month == "" {
-		return ""
-	}
+    if month == "" {
+        return ""
+    }
 
-	return year + month + day
+    return year + month + day
 }
 
 // ============================================================================
@@ -3044,95 +2826,95 @@ func normalizeADIDate(dateStr string) string {
 // ============================================================================
 
 func parseADI(filename string) ([]QSO, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
+    file, err := os.Open(filename)
+    if err != nil {
+        return nil, err
+    }
+    defer file.Close()
 
-	content, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
+    content, err := io.ReadAll(file)
+    if err != nil {
+        return nil, err
+    }
 
-	text := string(content)
+    text := string(content)
 
-	// Find end of header
-	eohIdx := eohPattern.FindStringIndex(text)
-	if eohIdx != nil {
-		text = text[eohIdx[1]:]
-	}
+    // Find end of header
+    eohIdx := eohPattern.FindStringIndex(text)
+    if eohIdx != nil {
+        text = text[eohIdx[1]:]
+    }
 
-	// Split by <eor>
-	records := eorPattern.Split(text, -1)
-	var qsos []QSO
+    // Split by <eor>
+    records := eorPattern.Split(text, -1)
+    var qsos []QSO
 
-	for _, record := range records {
-		if strings.TrimSpace(record) == "" {
-			continue
-		}
+    for _, record := range records {
+        if strings.TrimSpace(record) == "" {
+            continue
+        }
 
-		qso := QSO{}
-		isCW := false
-		matches := fieldPattern.FindAllStringSubmatch(record, -1)
+        qso := QSO{}
+        isCW := false
+        matches := fieldPattern.FindAllStringSubmatch(record, -1)
 
-		for _, match := range matches {
-			if len(match) >= 3 {
-				field := strings.ToUpper(match[1])
-				value := strings.TrimSpace(match[2])  // Trim whitespace from value
+        for _, match := range matches {
+            if len(match) >= 3 {
+                field := strings.ToUpper(match[1])
+                value := strings.TrimSpace(match[2])  // Trim whitespace from value
 
-				switch field {
-				case "QSO_DATE":
-					qso.QSODate = value
-				case "CALL":
-					qso.Call = value
-				case "STATE":
-					qso.State = strings.ToUpper(value)
-				case "SKCC":
-					qso.SKCC = value
-					qso.SKCCPre = cleanSKCCNumber(value)
-				case "TX_PWR":
-					qso.TxPwr = value
-				case "RX_PWR":
-					qso.RxPwr = value
-				case "DXCC":
-					qso.DXCC = value
-				case "BAND":
-					qso.Band = strings.ToUpper(value)
-				case "KEY_TYPE":
-					qso.KeyType = strings.ToUpper(value)
-				case "NAME":
-					qso.Name = value
-				case "TIME_ON":
-					qso.TimeOn = value
-				case "TIME_OFF":
-					qso.TimeOff = value
-				case "COMMENT":
-					qso.Comment = value
-				case "QTH":
-					qso.QTH = value
-				case "RST_RCVD":
-					qso.RSTRcvd = value
-				case "RST_SENT":
-					qso.RSTSent = value
-				case "FREQ":
-					qso.Freq = value
-				case "GRIDSQUARE":
-					qso.Gridsquare = value
-				case "MODE":
-					if strings.ToUpper(value) == "CW" {
-						isCW = true
-					}
-				}
-			}
-		}
+                switch field {
+                case "QSO_DATE":
+                    qso.QSODate = value
+                case "CALL":
+                    qso.Call = value
+                case "STATE":
+                    qso.State = strings.ToUpper(value)
+                case "SKCC":
+                    qso.SKCC = value
+                    qso.SKCCPre = cleanSKCCNumber(value)
+                case "TX_PWR":
+                    qso.TxPwr = value
+                case "RX_PWR":
+                    qso.RxPwr = value
+                case "DXCC":
+                    qso.DXCC = value
+                case "BAND":
+                    qso.Band = strings.ToUpper(value)
+                case "KEY_TYPE":
+                    qso.KeyType = strings.ToUpper(value)
+                case "NAME":
+                    qso.Name = value
+                case "TIME_ON":
+                    qso.TimeOn = value
+                case "TIME_OFF":
+                    qso.TimeOff = value
+                case "COMMENT":
+                    qso.Comment = value
+                case "QTH":
+                    qso.QTH = value
+                case "RST_RCVD":
+                    qso.RSTRcvd = value
+                case "RST_SENT":
+                    qso.RSTSent = value
+                case "FREQ":
+                    qso.Freq = value
+                case "GRIDSQUARE":
+                    qso.Gridsquare = value
+                case "MODE":
+                    if strings.ToUpper(value) == "CW" {
+                        isCW = true
+                    }
+                }
+            }
+        }
 
-		if isCW {
-			qsos = append(qsos, qso)
-		}
-	}
+        if isCW {
+            qsos = append(qsos, qso)
+        }
+    }
 
-	return qsos, nil
+    return qsos, nil
 }
 
 // ============================================================================
@@ -3140,508 +2922,508 @@ func parseADI(filename string) ([]QSO, error) {
 // ============================================================================
 
 func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardProcessor, error) {
-	myMember := memberDB[myCallsign]
-	if myMember == nil {
-		return nil, fmt.Errorf("member %s not found", myCallsign)
-	}
+    myMember := memberDB[myCallsign]
+    if myMember == nil {
+        return nil, fmt.Errorf("member %s not found", myCallsign)
+    }
 
-	ap := &AwardProcessor{
-		memberDB:   make(map[string]*Member),
-		callsignDB: make(map[string][]*Member),
-		myMember:   myMember,
-	}
+    ap := &AwardProcessor{
+        memberDB:   make(map[string]*Member),
+        callsignDB: make(map[string][]*Member),
+        myMember:   myMember,
+    }
 
-	// Build memberDB indexed by SKCC number AND callsignDB for GetSKCCFromCall
-	// We need to iterate by member NUMBER (not by callsign) to ensure ALL members
-	// who have/had a callsign are indexed properly
-	seenNumbers := make(map[string]bool)
+    // Build memberDB indexed by SKCC number AND callsignDB for GetSKCCFromCall
+    // We need to iterate by member NUMBER (not by callsign) to ensure ALL members
+    // who have/had a callsign are indexed properly
+    seenNumbers := make(map[string]bool)
 
-	// Helper function to add callsign to callsignDB
-	addToCallsignDB := func(callsign string, member *Member) {
-		callUpper := strings.ToUpper(strings.TrimSpace(callsign))
-		if callUpper == "" {
-			return
-		}
+    // Helper function to add callsign to callsignDB
+    addToCallsignDB := func(callsign string, member *Member) {
+        callUpper := strings.ToUpper(strings.TrimSpace(callsign))
+        if callUpper == "" {
+            return
+        }
 
-		// Check if this member already indexed under this callsign
-		found := false
-		for _, m := range ap.callsignDB[callUpper] {
-			if m.PlainNumber == member.PlainNumber {
-				found = true
-				break
-			}
-		}
-		if !found {
-			ap.callsignDB[callUpper] = append(ap.callsignDB[callUpper], member)
-		}
+        // Check if this member already indexed under this callsign
+        found := false
+        for _, m := range ap.callsignDB[callUpper] {
+            if m.PlainNumber == member.PlainNumber {
+                found = true
+                break
+            }
+        }
+        if !found {
+            ap.callsignDB[callUpper] = append(ap.callsignDB[callUpper], member)
+        }
 
-		// Also index by base callsign if it has /SK or /EX suffix
-		if strings.Contains(callUpper, "/") {
-			parts := strings.SplitN(callUpper, "/", 2)
-			if len(parts) == 2 && (parts[1] == "SK" || parts[1] == "EX") {
-				baseCall := parts[0]
-				found := false
-				for _, m := range ap.callsignDB[baseCall] {
-					if m.PlainNumber == member.PlainNumber {
-						found = true
-						break
-					}
-				}
-				if !found {
-					ap.callsignDB[baseCall] = append(ap.callsignDB[baseCall], member)
-				}
-			}
-		}
-	}
+        // Also index by base callsign if it has /SK or /EX suffix
+        if strings.Contains(callUpper, "/") {
+            parts := strings.SplitN(callUpper, "/", 2)
+            if len(parts) == 2 && (parts[1] == "SK" || parts[1] == "EX") {
+                baseCall := parts[0]
+                found := false
+                for _, m := range ap.callsignDB[baseCall] {
+                    if m.PlainNumber == member.PlainNumber {
+                        found = true
+                        break
+                    }
+                }
+                if !found {
+                    ap.callsignDB[baseCall] = append(ap.callsignDB[baseCall], member)
+                }
+            }
+        }
+    }
 
-	// Build list of unique members (by SKCC number)
-	// This is necessary because memberDB map keys are callsigns, and multiple
-	// members can share the same callsign (current for one, old for another)
-	uniqueMembers := make([]*Member, 0, len(memberDB))
-	for _, member := range memberDB {
-		if !seenNumbers[member.PlainNumber] {
-			uniqueMembers = append(uniqueMembers, member)
-			ap.memberDB[member.PlainNumber] = member
-			seenNumbers[member.PlainNumber] = true
-		}
-	}
+    // Build list of unique members (by SKCC number)
+    // This is necessary because memberDB map keys are callsigns, and multiple
+    // members can share the same callsign (current for one, old for another)
+    uniqueMembers := make([]*Member, 0, len(memberDB))
+    for _, member := range memberDB {
+        if !seenNumbers[member.PlainNumber] {
+            uniqueMembers = append(uniqueMembers, member)
+            ap.memberDB[member.PlainNumber] = member
+            seenNumbers[member.PlainNumber] = true
+        }
+    }
 
-	// Now index all callsigns for each unique member
-	for _, member := range uniqueMembers {
-		// Index current callsign
-		addToCallsignDB(member.Callsign, member)
+    // Now index all callsigns for each unique member
+    for _, member := range uniqueMembers {
+        // Index current callsign
+        addToCallsignDB(member.Callsign, member)
 
-		// Index all old callsigns
-		for _, oldCall := range member.OldCalls {
-			addToCallsignDB(oldCall, member)
-		}
-	}
+        // Index all old callsigns
+        for _, oldCall := range member.OldCalls {
+            addToCallsignDB(oldCall, member)
+        }
+    }
 
-	// Set user's award dates
-	ap.myMemberNr = myMember.PlainNumber
-	ap.myJoinDate = myMember.JoinDate
-	ap.myCDate = myMember.CDate
-	ap.myTDate = myMember.TDate
-	ap.myTX8Date = myMember.TX8Date
-	ap.mySDate = myMember.SDate
-	ap.myDXCode = myMember.DXCode
+    // Set user's award dates
+    ap.myMemberNr = myMember.PlainNumber
+    ap.myJoinDate = myMember.JoinDate
+    ap.myCDate = myMember.CDate
+    ap.myTDate = myMember.TDate
+    ap.myTX8Date = myMember.TX8Date
+    ap.mySDate = myMember.SDate
+    ap.myDXCode = myMember.DXCode
 
-	return ap, nil
+    return ap, nil
 }
 
 // GetSKCCFromCall - Direct translation of Xojo logic
 func (ap *AwardProcessor) GetSKCCFromCall(logCall, logSKCC string) (string, bool) {
-	// Handle SKCC="NONE" special case
-	if logSKCC == "NONE" {
-		return logSKCC, false
-	}
+    // Handle SKCC="NONE" special case
+    if logSKCC == "NONE" {
+        return logSKCC, false
+    }
 
-	skccList := make(map[string]bool)
-	var returnSKCC string
-	autoMatched := false
+    skccList := make(map[string]bool)
+    var returnSKCC string
+    autoMatched := false
 
-	logCallUpper := strings.ToUpper(logCall)
+    logCallUpper := strings.ToUpper(logCall)
 
-	if strings.Contains(logCall, "/") {
-		// Try full call with slashes first
-		matchingMembers := ap.callsignDB[logCallUpper]
+    if strings.Contains(logCall, "/") {
+        // Try full call with slashes first
+        matchingMembers := ap.callsignDB[logCallUpper]
 
-		if len(matchingMembers) > 0 {
-			for _, mbr := range matchingMembers {
-				skccList[mbr.PlainNumber] = true
-			}
-		} else {
-			// Split and try segments
-			segments := strings.Split(logCallUpper, "/")
-			for _, segment := range segments {
-				segmentMembers := ap.callsignDB[segment]
-				for _, mbr := range segmentMembers {
-					skccList[mbr.PlainNumber] = true
-				}
-			}
-		}
-	} else {
-		// No slashes - straightforward lookup
-		matchingMembers := ap.callsignDB[logCallUpper]
-		for _, mbr := range matchingMembers {
-			skccList[mbr.PlainNumber] = true
-		}
-	}
+        if len(matchingMembers) > 0 {
+            for _, mbr := range matchingMembers {
+                skccList[mbr.PlainNumber] = true
+            }
+        } else {
+            // Split and try segments
+            segments := strings.Split(logCallUpper, "/")
+            for _, segment := range segments {
+                segmentMembers := ap.callsignDB[segment]
+                for _, mbr := range segmentMembers {
+                    skccList[mbr.PlainNumber] = true
+                }
+            }
+        }
+    } else {
+        // No slashes - straightforward lookup
+        matchingMembers := ap.callsignDB[logCallUpper]
+        for _, mbr := range matchingMembers {
+            skccList[mbr.PlainNumber] = true
+        }
+    }
 
-	// Now we have all SKCC numbers that match the callsign
-	if logSKCC == "" {
-		// No SKCC in log - auto-match if exactly one member
-		if len(skccList) == 1 {
-			for num := range skccList {
-				returnSKCC = num
-				autoMatched = true
-				break
-			}
-		}
-	} else {
-		// SKCC in log - verify it matches
-		if skccList[logSKCC] {
-			returnSKCC = logSKCC
-		}
-	}
+    // Now we have all SKCC numbers that match the callsign
+    if logSKCC == "" {
+        // No SKCC in log - auto-match if exactly one member
+        if len(skccList) == 1 {
+            for num := range skccList {
+                returnSKCC = num
+                autoMatched = true
+                break
+            }
+        }
+    } else {
+        // SKCC in log - verify it matches
+        if skccList[logSKCC] {
+            returnSKCC = logSKCC
+        }
+    }
 
-	return returnSKCC, autoMatched
+    return returnSKCC, autoMatched
 }
 
 // ProcessQSOs - Main processing loop (direct translation from Python)
 func (ap *AwardProcessor) ProcessQSOs(qsos []QSO) []ProcessedQSO {
-	ap.processedQSOs = []ProcessedQSO{}
-	ap.qsosSkipped = []string{}
-	ap.qsosNeedSKCC = []NeedSKCCEntry{}
-	ap.qsosAutoMatched = []AutoMatchEntry{}
-	ap.qsosProcessed = 0
-	ap.qsosAdded = 0
-	ap.qsosMissingSKCC = 0
-	ap.dxcHomeUsed = false
+    ap.processedQSOs = []ProcessedQSO{}
+    ap.qsosSkipped = []string{}
+    ap.qsosNeedSKCC = []NeedSKCCEntry{}
+    ap.qsosAutoMatched = []AutoMatchEntry{}
+    ap.qsosProcessed = 0
+    ap.qsosAdded = 0
+    ap.qsosMissingSKCC = 0
+    ap.dxcHomeUsed = false
 
-	// Filter QSOs: date >= user join date AND mode = CW (already done in parsing)
-	for _, qso := range qsos {
-		if qso.QSODate < ap.myJoinDate {
-			reason := fmt.Sprintf("QSO before you joined SKCC (%s)", ap.myJoinDate)
-			skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, qso.Call, qso.Band, reason)
-			ap.qsosSkipped = append(ap.qsosSkipped, skipped)
-			continue
-		}
+    // Filter QSOs: date >= user join date AND mode = CW (already done in parsing)
+    for _, qso := range qsos {
+        if qso.QSODate < ap.myJoinDate {
+            reason := fmt.Sprintf("QSO before you joined SKCC (%s)", ap.myJoinDate)
+            skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, qso.Call, qso.Band, reason)
+            ap.qsosSkipped = append(ap.qsosSkipped, skipped)
+            continue
+        }
 
-		logCall := qso.Call
-		logSKCC := qso.SKCC
-		logSKCCPre := qso.SKCCPre
+        logCall := qso.Call
+        logSKCC := qso.SKCC
+        logSKCCPre := qso.SKCCPre
 
-		var skipReason string
-		var mbrSKCCNr string
-		wasAutoMatched := false
+        var skipReason string
+        var mbrSKCCNr string
+        wasAutoMatched := false
 
-		if logSKCC == "NONE" {
-			mbrSKCCNr = "NONE"
-			skipReason = "SKCC field marked as NONE"
-		} else {
-			mbrSKCCNr, wasAutoMatched = ap.GetSKCCFromCall(logCall, logSKCCPre)
+        if logSKCC == "NONE" {
+            mbrSKCCNr = "NONE"
+            skipReason = "SKCC field marked as NONE"
+        } else {
+            mbrSKCCNr, wasAutoMatched = ap.GetSKCCFromCall(logCall, logSKCCPre)
 
-			if mbrSKCCNr == "" {
-				// Determine why it failed
-				logCallUpper := strings.ToUpper(logCall)
-				matchingMembers := ap.callsignDB[logCallUpper]
+            if mbrSKCCNr == "" {
+                // Determine why it failed
+                logCallUpper := strings.ToUpper(logCall)
+                matchingMembers := ap.callsignDB[logCallUpper]
 
-				if len(matchingMembers) == 0 {
-					// Check slashed calls
-					if strings.Contains(logCall, "/") {
-						segments := strings.Split(logCallUpper, "/")
-						hasSegmentMatch := false
-						for _, seg := range segments {
-							if len(ap.callsignDB[seg]) > 0 {
-								hasSegmentMatch = true
-								break
-							}
-						}
-						if !hasSegmentMatch {
-							skipReason = "Not an SKCC member"
-						} else {
-							skipReason = "Multiple members have had this callsign (segments), SKCC # required"
-							ap.qsosMissingSKCC++
-							ap.qsosNeedSKCC = append(ap.qsosNeedSKCC, NeedSKCCEntry{
-								Date:  qso.QSODate,
-								Time:  qso.TimeOn,
-								Entry: fmt.Sprintf("Date: %s     Time: %s     Call: %s", formatDate(qso.QSODate), formatTime(qso.TimeOn), logCall),
-							})
-						}
-					} else {
-						skipReason = "Not an SKCC member"
-					}
-				} else if len(matchingMembers) > 1 {
-					skipReason = "Multiple members have had this callsign, SKCC # required"
-					ap.qsosMissingSKCC++
-					ap.qsosNeedSKCC = append(ap.qsosNeedSKCC, NeedSKCCEntry{
-						Date:  qso.QSODate,
-						Time:  qso.TimeOn,
-						Entry: fmt.Sprintf("Date: %s     Time: %s     Call: %s", formatDate(qso.QSODate), formatTime(qso.TimeOn), logCall),
-					})
-				} else {
-					skipReason = "No valid SKCC match"
-				}
-			}
-		}
+                if len(matchingMembers) == 0 {
+                    // Check slashed calls
+                    if strings.Contains(logCall, "/") {
+                        segments := strings.Split(logCallUpper, "/")
+                        hasSegmentMatch := false
+                        for _, seg := range segments {
+                            if len(ap.callsignDB[seg]) > 0 {
+                                hasSegmentMatch = true
+                                break
+                            }
+                        }
+                        if !hasSegmentMatch {
+                            skipReason = "Not an SKCC member"
+                        } else {
+                            skipReason = "Multiple members have had this callsign (segments), SKCC # required"
+                            ap.qsosMissingSKCC++
+                            ap.qsosNeedSKCC = append(ap.qsosNeedSKCC, NeedSKCCEntry{
+                                Date:  qso.QSODate,
+                                Time:  qso.TimeOn,
+                                Entry: fmt.Sprintf("Date: %s     Time: %s     Call: %s", formatDate(qso.QSODate), formatTime(qso.TimeOn), logCall),
+                            })
+                        }
+                    } else {
+                        skipReason = "Not an SKCC member"
+                    }
+                } else if len(matchingMembers) > 1 {
+                    skipReason = "Multiple members have had this callsign, SKCC # required"
+                    ap.qsosMissingSKCC++
+                    ap.qsosNeedSKCC = append(ap.qsosNeedSKCC, NeedSKCCEntry{
+                        Date:  qso.QSODate,
+                        Time:  qso.TimeOn,
+                        Entry: fmt.Sprintf("Date: %s     Time: %s     Call: %s", formatDate(qso.QSODate), formatTime(qso.TimeOn), logCall),
+                    })
+                } else {
+                    skipReason = "No valid SKCC match"
+                }
+            }
+        }
 
-		// Skip if no valid member match
-		if mbrSKCCNr == "" || mbrSKCCNr == "NONE" {
-			skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, skipReason)
-			ap.qsosSkipped = append(ap.qsosSkipped, skipped)
-			continue
-		}
+        // Skip if no valid member match
+        if mbrSKCCNr == "" || mbrSKCCNr == "NONE" {
+            skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, skipReason)
+            ap.qsosSkipped = append(ap.qsosSkipped, skipped)
+            continue
+        }
 
-		// Look up member
-		mbr := ap.memberDB[mbrSKCCNr]
-		if mbr == nil {
-			reason := fmt.Sprintf("Member %s not found in database", mbrSKCCNr)
-			skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, reason)
-			ap.qsosSkipped = append(ap.qsosSkipped, skipped)
-			continue
-		}
+        // Look up member
+        mbr := ap.memberDB[mbrSKCCNr]
+        if mbr == nil {
+            reason := fmt.Sprintf("Member %s not found in database", mbrSKCCNr)
+            skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, reason)
+            ap.qsosSkipped = append(ap.qsosSkipped, skipped)
+            continue
+        }
 
-		// Date validation and self-QSO check
-		qsoDate := normalizeDate(qso.QSODate)
-		mbrJoinDate := normalizeDate(mbr.JoinDate)
+        // Date validation and self-QSO check
+        qsoDate := normalizeDate(qso.QSODate)
+        mbrJoinDate := normalizeDate(mbr.JoinDate)
 
-		if qsoDate >= mbrJoinDate && mbr.PlainNumber != ap.myMemberNr {
-			// Valid QSO - create processed record
-			processed := ap.createProcessedQSO(qso, mbr)
-			ap.processedQSOs = append(ap.processedQSOs, processed)
-			ap.qsosAdded++
+        if qsoDate >= mbrJoinDate && mbr.PlainNumber != ap.myMemberNr {
+            // Valid QSO - create processed record
+            processed := ap.createProcessedQSO(qso, mbr)
+            ap.processedQSOs = append(ap.processedQSOs, processed)
+            ap.qsosAdded++
 
-			// Track auto-matched
-			if wasAutoMatched {
-				ap.qsosAutoMatched = append(ap.qsosAutoMatched, AutoMatchEntry{
-					QSO:    qso,
-					SKCCNr: mbrSKCCNr,
-					Member: mbr,
-				})
-			}
-		} else {
-			// Invalid - determine reason
-			if mbr.PlainNumber == ap.myMemberNr {
-				skipReason = "Self QSO"
-			} else if qsoDate < mbrJoinDate {
-				skipReason = fmt.Sprintf("QSO before member joined (%s)", mbrJoinDate)
-			} else {
-				skipReason = "Invalid QSO date"
-			}
-			skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, skipReason)
-			ap.qsosSkipped = append(ap.qsosSkipped, skipped)
-		}
+            // Track auto-matched
+            if wasAutoMatched {
+                ap.qsosAutoMatched = append(ap.qsosAutoMatched, AutoMatchEntry{
+                    QSO:    qso,
+                    SKCCNr: mbrSKCCNr,
+                    Member: mbr,
+                })
+            }
+        } else {
+            // Invalid - determine reason
+            if mbr.PlainNumber == ap.myMemberNr {
+                skipReason = "Self QSO"
+            } else if qsoDate < mbrJoinDate {
+                skipReason = fmt.Sprintf("QSO before member joined (%s)", mbrJoinDate)
+            } else {
+                skipReason = "Invalid QSO date"
+            }
+            skipped := formatSkippedQSO(qso.QSODate, qso.TimeOn, logCall, qso.Band, skipReason)
+            ap.qsosSkipped = append(ap.qsosSkipped, skipped)
+        }
 
-		ap.qsosProcessed++
-	}
+        ap.qsosProcessed++
+    }
 
-	return ap.processedQSOs
+    return ap.processedQSOs
 }
 
 // createProcessedQSO creates a ProcessedQSO with all award qualifications
 func (ap *AwardProcessor) createProcessedQSO(qso QSO, mbr *Member) ProcessedQSO {
-	// Extract band number
-	bandNr := 0
-	if strings.HasSuffix(strings.ToUpper(qso.Band), "M") {
-		bandStr := qso.Band[:len(qso.Band)-1]
-		bandNr, _ = strconv.Atoi(bandStr)
-	}
+    // Extract band number
+    bandNr := 0
+    if strings.HasSuffix(strings.ToUpper(qso.Band), "M") {
+        bandStr := qso.Band[:len(qso.Band)-1]
+        bandNr, _ = strconv.Atoi(bandStr)
+    }
 
-	// Determine state
-	state := qso.State
-	if state == "" {
-		state = mbr.SPC
-	}
-	state = strings.ToUpper(state)
+    // Determine state
+    state := qso.State
+    if state == "" {
+        state = mbr.SPC
+    }
+    state = strings.ToUpper(state)
 
-	// DC -> MD for WAS
-	if state == "DC" {
-		state = "MD"
-	}
+    // DC -> MD for WAS
+    if state == "DC" {
+        state = "MD"
+    }
 
-	// Determine DXCC
-	dxcc := qso.DXCC
-	if dxcc == "" || dxcc == "000" {
-		dxcc = mbr.DXCode
-	}
-	// Normalize to 3 digits
-	if len(dxcc) > 0 && len(dxcc) < 3 {
-		for len(dxcc) < 3 {
-			dxcc = "0" + dxcc
-		}
-	}
+    // Determine DXCC
+    dxcc := qso.DXCC
+    if dxcc == "" || dxcc == "000" {
+        dxcc = mbr.DXCode
+    }
+    // Normalize to 3 digits
+    if len(dxcc) > 0 && len(dxcc) < 3 {
+        for len(dxcc) < 3 {
+            dxcc = "0" + dxcc
+        }
+    }
 
-	// Use member name if log name empty
-	name := qso.Name
-	if name == "" {
-		name = mbr.Name
-	}
+    // Use member name if log name empty
+    name := qso.Name
+    if name == "" {
+        name = mbr.Name
+    }
 
-	processed := ProcessedQSO{
-		Call:       qso.Call,
-		CallPri:    mbr.Callsign,
-		QSODate:    qso.QSODate,
-		TimeOn:     qso.TimeOn,
-		TimeOff:    qso.TimeOff,
-		Band:       qso.Band,
-		BandNr:     bandNr,
-		Mode:       qso.Mode,
-		State:      state,
-		DXCC:       dxcc,
-		SKCCNr:     mbr.PlainNumber,
-		SKCC:       mbr.SKCCNumber,
-		TxPwr:      qso.TxPwr,
-		RxPwr:      qso.RxPwr,
-		KeyType:    qso.KeyType,
-		Name:       name,
-		QTH:        qso.QTH,
-		Comment:    qso.Comment,
-		RSTRcvd:    qso.RSTRcvd,
-		RSTSent:    qso.RSTSent,
-		Freq:       qso.Freq,
-		Gridsquare: qso.Gridsquare,
-	}
+    processed := ProcessedQSO{
+        Call:       qso.Call,
+        CallPri:    mbr.Callsign,
+        QSODate:    qso.QSODate,
+        TimeOn:     qso.TimeOn,
+        TimeOff:    qso.TimeOff,
+        Band:       qso.Band,
+        BandNr:     bandNr,
+        Mode:       qso.Mode,
+        State:      state,
+        DXCC:       dxcc,
+        SKCCNr:     mbr.PlainNumber,
+        SKCC:       mbr.SKCCNumber,
+        TxPwr:      qso.TxPwr,
+        RxPwr:      qso.RxPwr,
+        KeyType:    qso.KeyType,
+        Name:       name,
+        QTH:        qso.QTH,
+        Comment:    qso.Comment,
+        RSTRcvd:    qso.RSTRcvd,
+        RSTSent:    qso.RSTSent,
+        Freq:       qso.Freq,
+        Gridsquare: qso.Gridsquare,
+    }
 
-	// Set country
-	if contains(allStates, state) {
-		processed.Country = "USA"
-	} else if contains(provinces, state) {
-		processed.Country = "Canada"
-	}
+    // Set country
+    if contains(allStates, state) {
+        processed.Country = "USA"
+    } else if contains(provinces, state) {
+        processed.Country = "Canada"
+    }
 
-	// Apply award qualifications
-	ap.applyAwardQualifications(&processed, qso, mbr)
+    // Apply award qualifications
+    ap.applyAwardQualifications(&processed, qso, mbr)
 
-	return processed
+    return processed
 }
 
 // applyAwardQualifications sets all award-specific flags
 func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso QSO, mbr *Member) {
-	qsoDate := normalizeDate(qso.QSODate)
+    qsoDate := normalizeDate(qso.QSODate)
 
-	// WAS Awards
-	if contains(usStates, processed.State) {
-		processed.WasQSO = true
+    // WAS Awards
+    if contains(usStates, processed.State) {
+        processed.WasQSO = true
 
-		// WAS-C (started 2011-06-12)
-		if mbr.CDate != "" && qsoDate >= "20110612" {
-			mbrCDate := normalizeDate(mbr.CDate)
-			if qsoDate >= mbrCDate {
-				processed.WasCQSO = true
-			}
-		}
+        // WAS-C (started 2011-06-12)
+        if mbr.CDate != "" && qsoDate >= "20110612" {
+            mbrCDate := normalizeDate(mbr.CDate)
+            if qsoDate >= mbrCDate {
+                processed.WasCQSO = true
+            }
+        }
 
-		// WAS-T (started 2016-02-01)
-		if mbr.TDate != "" && qsoDate >= "20160201" {
-			mbrTDate := normalizeDate(mbr.TDate)
-			if qsoDate >= mbrTDate {
-				processed.WasTQSO = true
-			}
-		}
+        // WAS-T (started 2016-02-01)
+        if mbr.TDate != "" && qsoDate >= "20160201" {
+            mbrTDate := normalizeDate(mbr.TDate)
+            if qsoDate >= mbrTDate {
+                processed.WasTQSO = true
+            }
+        }
 
-		// WAS-S (started 2016-02-01)
-		if mbr.SDate != "" && qsoDate >= "20160201" {
-			mbrSDate := normalizeDate(mbr.SDate)
-			if qsoDate >= mbrSDate {
-				processed.WasSQSO = true
-			}
-		}
-	}
+        // WAS-S (started 2016-02-01)
+        if mbr.SDate != "" && qsoDate >= "20160201" {
+            mbrSDate := normalizeDate(mbr.SDate)
+            if qsoDate >= mbrSDate {
+                processed.WasSQSO = true
+            }
+        }
+    }
 
-	// Tribune Award (both Centurion, started 2007-03-01)
-	myCDate := normalizeDate(ap.myCDate)
-	mbrCDate := normalizeDate(mbr.CDate)
-	if myCDate != "" && mbrCDate != "" &&
-		qsoDate >= myCDate && qsoDate >= mbrCDate && qsoDate >= "20070301" {
-		processed.TribAwardQSO = true
-	}
+    // Tribune Award (both Centurion, started 2007-03-01)
+    myCDate := normalizeDate(ap.myCDate)
+    mbrCDate := normalizeDate(mbr.CDate)
+    if myCDate != "" && mbrCDate != "" &&
+        qsoDate >= myCDate && qsoDate >= mbrCDate && qsoDate >= "20070301" {
+        processed.TribAwardQSO = true
+    }
 
-	// Senator Award (I have Tx8, they have Tribune, started 2013-08-01)
-	myTX8Date := normalizeDate(ap.myTX8Date)
-	mbrTDate := normalizeDate(mbr.TDate)
-	if qsoDate >= "20130801" && myTX8Date != "" && mbrTDate != "" &&
-		qsoDate >= myTX8Date && qsoDate >= mbrTDate {
-		processed.SenAwardQSO = true
-	}
+    // Senator Award (I have Tx8, they have Tribune, started 2013-08-01)
+    myTX8Date := normalizeDate(ap.myTX8Date)
+    mbrTDate := normalizeDate(mbr.TDate)
+    if qsoDate >= "20130801" && myTX8Date != "" && mbrTDate != "" &&
+        qsoDate >= myTX8Date && qsoDate >= mbrTDate {
+        processed.SenAwardQSO = true
+    }
 
-	// DX Awards
-	if processed.DXCC != "" && processed.DXCC != "000" {
-		// DXC - unique countries (allow one home country QSO)
-		if processed.DXCC != ap.myDXCode {
-			processed.DXCQSO = true
-			processed.DXCode = processed.DXCC
-		} else if !ap.dxcHomeUsed {
-			processed.DXCQSO = true
-			processed.DXCode = processed.DXCC
-			ap.dxcHomeUsed = true
-		}
+    // DX Awards
+    if processed.DXCC != "" && processed.DXCC != "000" {
+        // DXC - unique countries (allow one home country QSO)
+        if processed.DXCC != ap.myDXCode {
+            processed.DXCQSO = true
+            processed.DXCode = processed.DXCC
+        } else if !ap.dxcHomeUsed {
+            processed.DXCQSO = true
+            processed.DXCode = processed.DXCC
+            ap.dxcHomeUsed = true
+        }
 
-		// DXQ - foreign member QSOs
-		if processed.DXCC != ap.myDXCode {
-			processed.DXQQSO = true
-		}
-	}
+        // DXQ - foreign member QSOs
+        if processed.DXCC != ap.myDXCode {
+            processed.DXQQSO = true
+        }
+    }
 
-	// Prefix Award - started on 20130101
-	// Python logic (line 3816-3826): Split by /, try each segment, use the one that has valid SKCC
-	if qsoDate >= "20130101" {
-		callSegments := strings.Split(processed.Call, "/")
-		for _, pfxCall := range callSegments {
-			// Check if this segment has a valid SKCC member (matches Python line 3819)
-			pfxSKCCNr, _ := ap.GetSKCCFromCall(pfxCall, mbr.PlainNumber)
-			if pfxSKCCNr != "" {
-				processed.PfxCall = pfxCall
-				// Extract prefix from the segment that matched (Python line 3823-3826)
-				if len(pfxCall) >= 3 && pfxCall[2] >= '0' && pfxCall[2] <= '9' {
-					processed.Pfx = pfxCall[:3]
-				} else if len(pfxCall) >= 2 {
-					processed.Pfx = pfxCall[:2]
-				}
-				processed.PfxPts = pfxSKCCNr
-				break  // Use first matching segment
-			}
-		}
-	}
+    // Prefix Award - started on 20130101
+    // Python logic (line 3816-3826): Split by /, try each segment, use the one that has valid SKCC
+    if qsoDate >= "20130101" {
+        callSegments := strings.Split(processed.Call, "/")
+        for _, pfxCall := range callSegments {
+            // Check if this segment has a valid SKCC member (matches Python line 3819)
+            pfxSKCCNr, _ := ap.GetSKCCFromCall(pfxCall, mbr.PlainNumber)
+            if pfxSKCCNr != "" {
+                processed.PfxCall = pfxCall
+                // Extract prefix from the segment that matched (Python line 3823-3826)
+                if len(pfxCall) >= 3 && pfxCall[2] >= '0' && pfxCall[2] <= '9' {
+                    processed.Pfx = pfxCall[:3]
+                } else if len(pfxCall) >= 2 {
+                    processed.Pfx = pfxCall[:2]
+                }
+                processed.PfxPts = pfxSKCCNr
+                break  // Use first matching segment
+            }
+        }
+    }
 
-	// QRP Awards
-	if qso.TxPwr != "" {
-		txPwr, _ := strconv.ParseFloat(qso.TxPwr, 64)
-		if txPwr > 0 && txPwr <= 5.0 {
-			processed.QRPx1QSO = true
+    // QRP Awards
+    if qso.TxPwr != "" {
+        txPwr, _ := strconv.ParseFloat(qso.TxPwr, 64)
+        if txPwr > 0 && txPwr <= 5.0 {
+            processed.QRPx1QSO = true
 
-			if qso.RxPwr != "" {
-				rxPwr, _ := strconv.ParseFloat(qso.RxPwr, 64)
-				if rxPwr > 0 && rxPwr <= 5.0 {
-					processed.QRPx2QSO = true
-				}
-			}
-		}
-	}
+            if qso.RxPwr != "" {
+                rxPwr, _ := strconv.ParseFloat(qso.RxPwr, 64)
+                if rxPwr > 0 && rxPwr <= 5.0 {
+                    processed.QRPx2QSO = true
+                }
+            }
+        }
+    }
 
-	// Rag Chew Award (30+ minutes)
-	if qso.TimeOn != "" && qso.TimeOff != "" {
-		duration := calculateDuration(qso.TimeOn, qso.TimeOff)
-		if duration >= 30 {
-			processed.RagChewQSO = true
-			processed.RagChewMins = duration
-		}
-	}
+    // Rag Chew Award (30+ minutes)
+    if qso.TimeOn != "" && qso.TimeOff != "" {
+        duration := calculateDuration(qso.TimeOn, qso.TimeOff)
+        if duration >= 30 {
+            processed.RagChewQSO = true
+            processed.RagChewMins = duration
+        }
+    }
 
-	// TKA
-	if qso.KeyType != "" {
-		kt := strings.ToUpper(qso.KeyType)
-		if kt == "SK" || kt == "S" || kt == "BUG" || kt == "B" || kt == "SS" {
-			processed.TKAQSO = true
-		}
-	}
+    // TKA
+    if qso.KeyType != "" {
+        kt := strings.ToUpper(qso.KeyType)
+        if kt == "SK" || kt == "S" || kt == "BUG" || kt == "B" || kt == "SS" {
+            processed.TKAQSO = true
+        }
+    }
 }
 
 func calculateDuration(timeOn, timeOff string) int {
-	// Parse HHMMSS to seconds, then convert to minutes (matching Python logic)
-	getSeconds := func(t string) int {
-		if len(t) < 4 {
-			return 0
-		}
-		hh, _ := strconv.Atoi(t[0:2])
-		mm, _ := strconv.Atoi(t[2:4])
-		ss := 0
-		if len(t) >= 6 {
-			ss, _ = strconv.Atoi(t[4:6])
-		}
-		return hh*3600 + mm*60 + ss
-	}
+    // Parse HHMMSS to seconds, then convert to minutes (matching Python logic)
+    getSeconds := func(t string) int {
+        if len(t) < 4 {
+            return 0
+        }
+        hh, _ := strconv.Atoi(t[0:2])
+        mm, _ := strconv.Atoi(t[2:4])
+        ss := 0
+        if len(t) >= 6 {
+            ss, _ = strconv.Atoi(t[4:6])
+        }
+        return hh*3600 + mm*60 + ss
+    }
 
-	onSecs := getSeconds(timeOn)
-	offSecs := getSeconds(timeOff)
+    onSecs := getSeconds(timeOn)
+    offSecs := getSeconds(timeOff)
 
-	durationSecs := offSecs - onSecs
-	if durationSecs < 0 {
-		durationSecs += 24 * 3600 // Handle midnight rollover
-	}
+    durationSecs := offSecs - onSecs
+    if durationSecs < 0 {
+        durationSecs += 24 * 3600 // Handle midnight rollover
+    }
 
-	// Return duration in minutes (floor division, matching Python's // 60)
-	return durationSecs / 60
+    // Return duration in minutes (floor division, matching Python's // 60)
+    return durationSecs / 60
 }
 
 // ============================================================================
@@ -3650,266 +3432,266 @@ func calculateDuration(timeOn, timeOff string) int {
 
 // ExtractAwards extracts award-specific contacts from processed QSOs
 func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
-	awards := make(map[string]interface{})
+    awards := make(map[string]interface{})
 
-	// C, T, S awards
-	contactsC := make(map[string]ProcessedQSO)
-	contactsT := make(map[string]ProcessedQSO)
-	contactsS := make(map[string]ProcessedQSO)
+    // C, T, S awards
+    contactsC := make(map[string]ProcessedQSO)
+    contactsT := make(map[string]ProcessedQSO)
+    contactsS := make(map[string]ProcessedQSO)
 
-	for _, qso := range processed {
-		key := qso.SKCCNr
+    for _, qso := range processed {
+        key := qso.SKCCNr
 
-		// Centurion - all members
-		if _, exists := contactsC[key]; !exists {
-			contactsC[key] = qso
-		}
+        // Centurion - all members
+        if _, exists := contactsC[key]; !exists {
+            contactsC[key] = qso
+        }
 
-		// Tribune - both Centurion
-		if qso.TribAwardQSO {
-			if _, exists := contactsT[key]; !exists {
-				contactsT[key] = qso
-			}
-		}
+        // Tribune - both Centurion
+        if qso.TribAwardQSO {
+            if _, exists := contactsT[key]; !exists {
+                contactsT[key] = qso
+            }
+        }
 
-		// Senator - I have Tx8, they have T/S
-		if qso.SenAwardQSO {
-			if _, exists := contactsS[key]; !exists {
-				contactsS[key] = qso
-			}
-		}
-	}
+        // Senator - I have Tx8, they have T/S
+        if qso.SenAwardQSO {
+            if _, exists := contactsS[key]; !exists {
+                contactsS[key] = qso
+            }
+        }
+    }
 
-	awards["C"] = contactsC
-	awards["T"] = contactsT
-	awards["S"] = contactsS
+    awards["C"] = contactsC
+    awards["T"] = contactsT
+    awards["S"] = contactsS
 
-	// WAS variants
-	contactsWAS := make(map[string]ProcessedQSO)
-	contactsWASC := make(map[string]ProcessedQSO)
-	contactsWAST := make(map[string]ProcessedQSO)
-	contactsWASS := make(map[string]ProcessedQSO)
+    // WAS variants
+    contactsWAS := make(map[string]ProcessedQSO)
+    contactsWASC := make(map[string]ProcessedQSO)
+    contactsWAST := make(map[string]ProcessedQSO)
+    contactsWASS := make(map[string]ProcessedQSO)
 
-	for _, qso := range processed {
-		if qso.WasQSO {
-			if _, exists := contactsWAS[qso.State]; !exists {
-				contactsWAS[qso.State] = qso
-			}
-		}
-		if qso.WasCQSO {
-			if _, exists := contactsWASC[qso.State]; !exists {
-				contactsWASC[qso.State] = qso
-			}
-		}
-		if qso.WasTQSO {
-			if _, exists := contactsWAST[qso.State]; !exists {
-				contactsWAST[qso.State] = qso
-			}
-		}
-		if qso.WasSQSO {
-			if _, exists := contactsWASS[qso.State]; !exists {
-				contactsWASS[qso.State] = qso
-			}
-		}
-	}
+    for _, qso := range processed {
+        if qso.WasQSO {
+            if _, exists := contactsWAS[qso.State]; !exists {
+                contactsWAS[qso.State] = qso
+            }
+        }
+        if qso.WasCQSO {
+            if _, exists := contactsWASC[qso.State]; !exists {
+                contactsWASC[qso.State] = qso
+            }
+        }
+        if qso.WasTQSO {
+            if _, exists := contactsWAST[qso.State]; !exists {
+                contactsWAST[qso.State] = qso
+            }
+        }
+        if qso.WasSQSO {
+            if _, exists := contactsWASS[qso.State]; !exists {
+                contactsWASS[qso.State] = qso
+            }
+        }
+    }
 
-	awards["WAS"] = contactsWAS
-	awards["WAS-C"] = contactsWASC
-	awards["WAS-T"] = contactsWAST
-	awards["WAS-S"] = contactsWASS
+    awards["WAS"] = contactsWAS
+    awards["WAS-C"] = contactsWASC
+    awards["WAS-T"] = contactsWAST
+    awards["WAS-S"] = contactsWASS
 
-	// Prefix - ONE entry per prefix (NOT per prefix+band combination)
-	// Keep QSO with HIGHEST member number for each prefix (Python line 4149)
-	contactsP := make(map[string]ProcessedQSO)
-	for _, qso := range processed {
-		if qso.Pfx != "" && qso.PfxPts != "" {
-			existing, exists := contactsP[qso.Pfx]
-			if !exists {
-				contactsP[qso.Pfx] = qso
-			} else {
-				// Compare member numbers - keep higher
-				existingNum, _ := strconv.Atoi(existing.PfxPts)
-				newNum, _ := strconv.Atoi(qso.PfxPts)
-				if newNum > existingNum {
-					contactsP[qso.Pfx] = qso
-				}
-			}
-		}
-	}
-	awards["P"] = contactsP
+    // Prefix - ONE entry per prefix (NOT per prefix+band combination)
+    // Keep QSO with HIGHEST member number for each prefix (Python line 4149)
+    contactsP := make(map[string]ProcessedQSO)
+    for _, qso := range processed {
+        if qso.Pfx != "" && qso.PfxPts != "" {
+            existing, exists := contactsP[qso.Pfx]
+            if !exists {
+                contactsP[qso.Pfx] = qso
+            } else {
+                // Compare member numbers - keep higher
+                existingNum, _ := strconv.Atoi(existing.PfxPts)
+                newNum, _ := strconv.Atoi(qso.PfxPts)
+                if newNum > existingNum {
+                    contactsP[qso.Pfx] = qso
+                }
+            }
+        }
+    }
+    awards["P"] = contactsP
 
-	// QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found
-	// Python logic (line 4157-4162): Keep first QSO, upgrade 1x to 2x if 2x found later
-	contactsQRP := make(map[string]ProcessedQSO)
-	for _, qso := range processed {
-		if qso.QRPx1QSO {
-			key := qso.SKCCNr + "_" + qso.Band
-			existing, exists := contactsQRP[key]
-			if !exists {
-				// First QSO for this member/band combination
-				contactsQRP[key] = qso
-			} else if qso.QRPx2QSO && !existing.QRPx2QSO {
-				// Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
-				contactsQRP[key] = qso
-			}
-			// Otherwise keep the first QSO (don't overwrite)
-		}
-	}
-	awards["QRP"] = contactsQRP
+    // QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found
+    // Python logic (line 4157-4162): Keep first QSO, upgrade 1x to 2x if 2x found later
+    contactsQRP := make(map[string]ProcessedQSO)
+    for _, qso := range processed {
+        if qso.QRPx1QSO {
+            key := qso.SKCCNr + "_" + qso.Band
+            existing, exists := contactsQRP[key]
+            if !exists {
+                // First QSO for this member/band combination
+                contactsQRP[key] = qso
+            } else if qso.QRPx2QSO && !existing.QRPx2QSO {
+                // Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
+                contactsQRP[key] = qso
+            }
+            // Otherwise keep the first QSO (don't overwrite)
+        }
+    }
+    awards["QRP"] = contactsQRP
 
-	// DX
-	contactsDXC := make(map[string]ProcessedQSO)
-	contactsDXQ := make(map[string]ProcessedQSO)
-	for _, qso := range processed {
-		if qso.DXCQSO {
-			if _, exists := contactsDXC[qso.DXCode]; !exists {
-				contactsDXC[qso.DXCode] = qso
-			}
-		}
-		if qso.DXQQSO {
-			if _, exists := contactsDXQ[qso.SKCCNr]; !exists {
-				contactsDXQ[qso.SKCCNr] = qso
-			}
-		}
-	}
-	awards["DXC"] = contactsDXC
-	awards["DXQ"] = contactsDXQ
+    // DX
+    contactsDXC := make(map[string]ProcessedQSO)
+    contactsDXQ := make(map[string]ProcessedQSO)
+    for _, qso := range processed {
+        if qso.DXCQSO {
+            if _, exists := contactsDXC[qso.DXCode]; !exists {
+                contactsDXC[qso.DXCode] = qso
+            }
+        }
+        if qso.DXQQSO {
+            if _, exists := contactsDXQ[qso.SKCCNr]; !exists {
+                contactsDXQ[qso.SKCCNr] = qso
+            }
+        }
+    }
+    awards["DXC"] = contactsDXC
+    awards["DXQ"] = contactsDXQ
 
-	// RC - Process in ADI file order with back-to-back duplicate handling
-	// Python logic (line 4084-4118): Allow multiple QSOs with same member
-	// BUT if same member appears consecutively in ADI file, keep only longest
-	contactsRC := make(map[string]ProcessedQSO)
-	var lastRCMember string
-	var lastRCKey string
-	var lastRCMins int
+    // RC - Process in ADI file order with back-to-back duplicate handling
+    // Python logic (line 4084-4118): Allow multiple QSOs with same member
+    // BUT if same member appears consecutively in ADI file, keep only longest
+    contactsRC := make(map[string]ProcessedQSO)
+    var lastRCMember string
+    var lastRCKey string
+    var lastRCMins int
 
-	for _, qso := range processed {
-		if qso.RagChewQSO {
-			// Use unique key: member_date_time (matches Python line 4088)
-			rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
+    for _, qso := range processed {
+        if qso.RagChewQSO {
+            // Use unique key: member_date_time (matches Python line 4088)
+            rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
 
-			if qso.SKCCNr != lastRCMember {
-				// Different member - always add
-				contactsRC[rcKey] = qso
-				lastRCMember = qso.SKCCNr
-				lastRCKey = rcKey
-				lastRCMins = qso.RagChewMins
-			} else {
-				// Same member as previous - only keep if longer
-				if qso.RagChewMins > lastRCMins {
-					// Remove previous and add this one (Python line 4107-4109)
-					delete(contactsRC, lastRCKey)
-					contactsRC[rcKey] = qso
-					lastRCKey = rcKey
-					lastRCMins = qso.RagChewMins
-				}
-				// If not longer, skip this QSO (keep the previous one)
-			}
-		}
-	}
-	awards["RC"] = contactsRC
+            if qso.SKCCNr != lastRCMember {
+                // Different member - always add
+                contactsRC[rcKey] = qso
+                lastRCMember = qso.SKCCNr
+                lastRCKey = rcKey
+                lastRCMins = qso.RagChewMins
+            } else {
+                // Same member as previous - only keep if longer
+                if qso.RagChewMins > lastRCMins {
+                    // Remove previous and add this one (Python line 4107-4109)
+                    delete(contactsRC, lastRCKey)
+                    contactsRC[rcKey] = qso
+                    lastRCKey = rcKey
+                    lastRCMins = qso.RagChewMins
+                }
+                // If not longer, skip this QSO (keep the previous one)
+            }
+        }
+    }
+    awards["RC"] = contactsRC
 
-	// TKA
-	contactsTKASK := make(map[string]ProcessedQSO)
-	contactsTKABUG := make(map[string]ProcessedQSO)
-	contactsTKASS := make(map[string]ProcessedQSO)
+    // TKA
+    contactsTKASK := make(map[string]ProcessedQSO)
+    contactsTKABUG := make(map[string]ProcessedQSO)
+    contactsTKASS := make(map[string]ProcessedQSO)
 
-	for _, qso := range processed {
-		if qso.TKAQSO {
-			kt := strings.ToUpper(qso.KeyType)
-			switch kt {
-			case "SK", "S":
-				if _, exists := contactsTKASK[qso.SKCCNr]; !exists {
-					contactsTKASK[qso.SKCCNr] = qso
-				}
-			case "BUG", "B":
-				if _, exists := contactsTKABUG[qso.SKCCNr]; !exists {
-					contactsTKABUG[qso.SKCCNr] = qso
-				}
-			case "SS":
-				if _, exists := contactsTKASS[qso.SKCCNr]; !exists {
-					contactsTKASS[qso.SKCCNr] = qso
-				}
-			}
-		}
-	}
+    for _, qso := range processed {
+        if qso.TKAQSO {
+            kt := strings.ToUpper(qso.KeyType)
+            switch kt {
+            case "SK", "S":
+                if _, exists := contactsTKASK[qso.SKCCNr]; !exists {
+                    contactsTKASK[qso.SKCCNr] = qso
+                }
+            case "BUG", "B":
+                if _, exists := contactsTKABUG[qso.SKCCNr]; !exists {
+                    contactsTKABUG[qso.SKCCNr] = qso
+                }
+            case "SS":
+                if _, exists := contactsTKASS[qso.SKCCNr]; !exists {
+                    contactsTKASS[qso.SKCCNr] = qso
+                }
+            }
+        }
+    }
 
-	// TKA duplicate removal (Xojo logic)
-	removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS)
+    // TKA duplicate removal (Xojo logic)
+    removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS)
 
-	awards["TKA_SK"] = contactsTKASK
-	awards["TKA_BUG"] = contactsTKABUG
-	awards["TKA_SS"] = contactsTKASS
+    awards["TKA_SK"] = contactsTKASK
+    awards["TKA_BUG"] = contactsTKABUG
+    awards["TKA_SS"] = contactsTKASS
 
-	return awards
+    return awards
 }
 
 func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
-	// Find members in multiple dictionaries
-	allMembers := make(map[string]int)
-	for k := range sk {
-		allMembers[k]++
-	}
-	for k := range bug {
-		allMembers[k]++
-	}
-	for k := range ss {
-		allMembers[k]++
-	}
+    // Find members in multiple dictionaries
+    allMembers := make(map[string]int)
+    for k := range sk {
+        allMembers[k]++
+    }
+    for k := range bug {
+        allMembers[k]++
+    }
+    for k := range ss {
+        allMembers[k]++
+    }
 
-	// Remove duplicates
-	for member, count := range allMembers {
-		if count <= 1 {
-			continue
-		}
+    // Remove duplicates
+    for member, count := range allMembers {
+        if count <= 1 {
+            continue
+        }
 
-		// Member in multiple dicts - remove from largest
-		for count > 1 {
-			_, inSK := sk[member]
-			_, inBUG := bug[member]
-			_, inSS := ss[member]
+        // Member in multiple dicts - remove from largest
+        for count > 1 {
+            _, inSK := sk[member]
+            _, inBUG := bug[member]
+            _, inSS := ss[member]
 
-			// Determine which to remove from
-			var removeFrom string
-			if inSK && inBUG && inSS {
-				if len(bug) >= len(sk) && len(bug) >= len(ss) {
-					removeFrom = "BUG"
-				} else if len(sk) >= len(ss) {
-					removeFrom = "SK"
-				} else {
-					removeFrom = "SS"
-				}
-			} else if inSK && inBUG {
-				if len(bug) >= len(sk) {
-					removeFrom = "BUG"
-				} else {
-					removeFrom = "SK"
-				}
-			} else if inSK && inSS {
-				if len(sk) > len(ss) {
-					removeFrom = "SK"
-				} else {
-					removeFrom = "SS"
-				}
-			} else if inBUG && inSS {
-				if len(bug) >= len(ss) {
-					removeFrom = "BUG"
-				} else {
-					removeFrom = "SS"
-				}
-			}
+            // Determine which to remove from
+            var removeFrom string
+            if inSK && inBUG && inSS {
+                if len(bug) >= len(sk) && len(bug) >= len(ss) {
+                    removeFrom = "BUG"
+                } else if len(sk) >= len(ss) {
+                    removeFrom = "SK"
+                } else {
+                    removeFrom = "SS"
+                }
+            } else if inSK && inBUG {
+                if len(bug) >= len(sk) {
+                    removeFrom = "BUG"
+                } else {
+                    removeFrom = "SK"
+                }
+            } else if inSK && inSS {
+                if len(sk) > len(ss) {
+                    removeFrom = "SK"
+                } else {
+                    removeFrom = "SS"
+                }
+            } else if inBUG && inSS {
+                if len(bug) >= len(ss) {
+                    removeFrom = "BUG"
+                } else {
+                    removeFrom = "SS"
+                }
+            }
 
-			switch removeFrom {
-			case "SK":
-				delete(sk, member)
-			case "BUG":
-				delete(bug, member)
-			case "SS":
-				delete(ss, member)
-			}
-			count--
-		}
-	}
+            switch removeFrom {
+            case "SK":
+                delete(sk, member)
+            case "BUG":
+                delete(bug, member)
+            case "SS":
+                delete(ss, member)
+            }
+            count--
+        }
+    }
 }
 
 // ============================================================================
@@ -3917,491 +3699,491 @@ func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
 // ============================================================================
 
 func writeAwardFiles(awards map[string]interface{}, ap *AwardProcessor) {
-	os.MkdirAll("QSOs", 0755)
+    os.MkdirAll("QSOs", 0755)
 
-	// Write skipped QSOs file
-	if len(ap.qsosSkipped) > 0 {
-		writeSkippedQSOs(ap.qsosSkipped)
-	}
+    // Write skipped QSOs file
+    if len(ap.qsosSkipped) > 0 {
+        writeSkippedQSOs(ap.qsosSkipped)
+    }
 
-	// Write Need SKCC Numbers file
-	if len(ap.qsosNeedSKCC) > 0 {
-		writeNeedSKCCFile(ap.qsosNeedSKCC)
-	}
+    // Write Need SKCC Numbers file
+    if len(ap.qsosNeedSKCC) > 0 {
+        writeNeedSKCCFile(ap.qsosNeedSKCC)
+    }
 
-	// Write Inspect file
-	if len(ap.qsosAutoMatched) > 0 {
-		writeInspectFile(ap.qsosAutoMatched, awards)
-	}
+    // Write Inspect file
+    if len(ap.qsosAutoMatched) > 0 {
+        writeInspectFile(ap.qsosAutoMatched, awards)
+    }
 
-	// C, T, S awards
-	writeCTSAward("C", awards["C"].(map[string]ProcessedQSO))
-	writeCTSAward("T", awards["T"].(map[string]ProcessedQSO))
-	writeCTSAward("S", awards["S"].(map[string]ProcessedQSO))
+    // C, T, S awards
+    writeCTSAward("C", awards["C"].(map[string]ProcessedQSO))
+    writeCTSAward("T", awards["T"].(map[string]ProcessedQSO))
+    writeCTSAward("S", awards["S"].(map[string]ProcessedQSO))
 
-	// WAS awards
-	writeWASAward("WAS", awards["WAS"].(map[string]ProcessedQSO))
-	writeWASAward("WAS-C", awards["WAS-C"].(map[string]ProcessedQSO))
-	writeWASAward("WAS-T", awards["WAS-T"].(map[string]ProcessedQSO))
-	writeWASAward("WAS-S", awards["WAS-S"].(map[string]ProcessedQSO))
+    // WAS awards
+    writeWASAward("WAS", awards["WAS"].(map[string]ProcessedQSO))
+    writeWASAward("WAS-C", awards["WAS-C"].(map[string]ProcessedQSO))
+    writeWASAward("WAS-T", awards["WAS-T"].(map[string]ProcessedQSO))
+    writeWASAward("WAS-S", awards["WAS-S"].(map[string]ProcessedQSO))
 
-	// Prefix award
-	writePrefixAward(awards["P"].(map[string]ProcessedQSO))
+    // Prefix award
+    writePrefixAward(awards["P"].(map[string]ProcessedQSO))
 
-	// QRP award
-	writeQRPAward(awards["QRP"].(map[string]ProcessedQSO))
+    // QRP award
+    writeQRPAward(awards["QRP"].(map[string]ProcessedQSO))
 
-	// DX awards
-	writeDXAwards(awards["DXC"].(map[string]ProcessedQSO), awards["DXQ"].(map[string]ProcessedQSO))
+    // DX awards
+    writeDXAwards(awards["DXC"].(map[string]ProcessedQSO), awards["DXQ"].(map[string]ProcessedQSO))
 
-	// RC award
-	writeRCAward(awards["RC"].(map[string]ProcessedQSO))
+    // RC award
+    writeRCAward(awards["RC"].(map[string]ProcessedQSO))
 
-	// TKA award
-	writeTKAAward(
-		awards["TKA_SK"].(map[string]ProcessedQSO),
-		awards["TKA_BUG"].(map[string]ProcessedQSO),
-		awards["TKA_SS"].(map[string]ProcessedQSO),
-	)
+    // TKA award
+    writeTKAAward(
+        awards["TKA_SK"].(map[string]ProcessedQSO),
+        awards["TKA_BUG"].(map[string]ProcessedQSO),
+        awards["TKA_SS"].(map[string]ProcessedQSO),
+    )
 }
 
 func writeSkippedQSOs(skipped []string) {
-	filename := filepath.Join("QSOs", config.MyCallsign+"-Skipped_QSOs.txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-Skipped_QSOs.txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	fmt.Fprintf(file, "Skipped QSO Log Entries for %s\n", config.MyCallsign)
-	fmt.Fprintln(file, strings.Repeat("=", 70))
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "In addition to any non-CW QSOs or QSOs logged before you were a SKCC member,")
-	fmt.Fprintln(file, "the following QSOs were not valid:")
-	fmt.Fprintln(file)
+    fmt.Fprintf(file, "Skipped QSO Log Entries for %s\n", config.MyCallsign)
+    fmt.Fprintln(file, strings.Repeat("=", 70))
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "In addition to any non-CW QSOs or QSOs logged before you were a SKCC member,")
+    fmt.Fprintln(file, "the following QSOs were not valid:")
+    fmt.Fprintln(file)
 
-	for _, s := range skipped {
-		fmt.Fprintln(file, s)
-	}
+    for _, s := range skipped {
+        fmt.Fprintln(file, s)
+    }
 
-	fmt.Fprintf(file, "\nTotal skipped: %d\n", len(skipped))
-	fmt.Fprintln(file, "\nEnd of List")
+    fmt.Fprintf(file, "\nTotal skipped: %d\n", len(skipped))
+    fmt.Fprintln(file, "\nEnd of List")
 }
 
 func writeNeedSKCCFile(entries []NeedSKCCEntry) {
-	filename := filepath.Join("QSOs", config.MyCallsign+"-Need_SKCC_Numbers.txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-Need_SKCC_Numbers.txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	fmt.Fprintf(file, "QSOs Requiring SKCC Numbers for %s\n", config.MyCallsign)
-	fmt.Fprintln(file, strings.Repeat("=", 70))
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "These QSOs are with SKCC members but require SKCC numbers in your log")
-	fmt.Fprintln(file, "to count for awards (multiple members have held these callsigns).")
-	fmt.Fprintln(file)
+    fmt.Fprintf(file, "QSOs Requiring SKCC Numbers for %s\n", config.MyCallsign)
+    fmt.Fprintln(file, strings.Repeat("=", 70))
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "These QSOs are with SKCC members but require SKCC numbers in your log")
+    fmt.Fprintln(file, "to count for awards (multiple members have held these callsigns).")
+    fmt.Fprintln(file)
 
-	// Sort by date descending
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Date != entries[j].Date {
-			return entries[i].Date > entries[j].Date
-		}
-		return entries[i].Time > entries[j].Time
-	})
+    // Sort by date descending
+    sort.Slice(entries, func(i, j int) bool {
+        if entries[i].Date != entries[j].Date {
+            return entries[i].Date > entries[j].Date
+        }
+        return entries[i].Time > entries[j].Time
+    })
 
-	for _, e := range entries {
-		fmt.Fprintln(file, e.Entry)
-	}
+    for _, e := range entries {
+        fmt.Fprintln(file, e.Entry)
+    }
 
-	fmt.Fprintf(file, "\nTotal QSOs needing SKCC numbers: %d\n", len(entries))
-	fmt.Fprintln(file, "\nEnd of List")
+    fmt.Fprintf(file, "\nTotal QSOs needing SKCC numbers: %d\n", len(entries))
+    fmt.Fprintln(file, "\nEnd of List")
 }
 
 func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]interface{}) {
-	filename := filepath.Join("QSOs", config.MyCallsign+"-Inspect_QSOs.txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-Inspect_QSOs.txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	fmt.Fprintln(file, "SKCC Skimmer - QSOs Requiring Inspection")
-	fmt.Fprintf(file, "Generated: %s\n", time.Now().UTC().Format("20060102 150405Z"))
-	fmt.Fprintf(file, "Callsign: %s\n", config.MyCallsign)
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "WARNING: The following QSOs have no SKCC number in your log but were")
-	fmt.Fprintln(file, "automatically matched to SKCC members. Please verify these are valid SKCC QSOs.")
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "If these are POTA, contest, or casual QSOs, they should NOT count for SKCC awards.")
-	fmt.Fprintln(file, "To fix: Add SKCC numbers only to QSOs where numbers were actually exchanged.")
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "QSOs Automatically Matched (No SKCC Field in Log):")
-	fmt.Fprintln(file, strings.Repeat("=", 70))
-	fmt.Fprintln(file)
+    fmt.Fprintln(file, "SKCC Skimmer - QSOs Requiring Inspection")
+    fmt.Fprintf(file, "Generated: %s\n", time.Now().UTC().Format("20060102 150405Z"))
+    fmt.Fprintf(file, "Callsign: %s\n", config.MyCallsign)
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "WARNING: The following QSOs have no SKCC number in your log but were")
+    fmt.Fprintln(file, "automatically matched to SKCC members. Please verify these are valid SKCC QSOs.")
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "If these are POTA, contest, or casual QSOs, they should NOT count for SKCC awards.")
+    fmt.Fprintln(file, "To fix: Add SKCC numbers only to QSOs where numbers were actually exchanged.")
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "QSOs Automatically Matched (No SKCC Field in Log):")
+    fmt.Fprintln(file, strings.Repeat("=", 70))
+    fmt.Fprintln(file)
 
-	contactsC := awards["C"].(map[string]ProcessedQSO)
-	contactsT := awards["T"].(map[string]ProcessedQSO)
-	contactsS := awards["S"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].(map[string]ProcessedQSO)
+    contactsT := awards["T"].(map[string]ProcessedQSO)
+    contactsS := awards["S"].(map[string]ProcessedQSO)
 
-	for _, am := range autoMatched {
-		dateStr := formatDate(am.QSO.QSODate)
-		timeStr := formatTime(am.QSO.TimeOn)
+    for _, am := range autoMatched {
+        dateStr := formatDate(am.QSO.QSODate)
+        timeStr := formatTime(am.QSO.TimeOn)
 
-		fmt.Fprintf(file, "Date: %s     Time: %s     Call: %s\n", dateStr, timeStr, am.QSO.Call)
-		fmt.Fprintf(file, "  Band: %s     Mode: %s", am.QSO.Band, am.QSO.Mode)
-		if am.QSO.Comment != "" {
-			comment := am.QSO.Comment
-			if len(comment) > 50 {
-				comment = comment[:50]
-			}
-			fmt.Fprintf(file, "     Comment: %s", comment)
-		}
-		fmt.Fprintln(file)
-		fmt.Fprintf(file, "  Auto-matched to: SKCC #%s (%s)\n", am.Member.SKCCNumber, am.Member.Name)
+        fmt.Fprintf(file, "Date: %s     Time: %s     Call: %s\n", dateStr, timeStr, am.QSO.Call)
+        fmt.Fprintf(file, "  Band: %s     Mode: %s", am.QSO.Band, am.QSO.Mode)
+        if am.QSO.Comment != "" {
+            comment := am.QSO.Comment
+            if len(comment) > 50 {
+                comment = comment[:50]
+            }
+            fmt.Fprintf(file, "     Comment: %s", comment)
+        }
+        fmt.Fprintln(file)
+        fmt.Fprintf(file, "  Auto-matched to: SKCC #%s (%s)\n", am.Member.SKCCNumber, am.Member.Name)
 
-		// Show which awards
-		var awardsAffected []string
-		if _, exists := contactsC[am.SKCCNr]; exists {
-			awardsAffected = append(awardsAffected, "C")
-		}
-		if _, exists := contactsT[am.SKCCNr]; exists {
-			awardsAffected = append(awardsAffected, "T")
-		}
-		if _, exists := contactsS[am.SKCCNr]; exists {
-			awardsAffected = append(awardsAffected, "S")
-		}
-		if len(awardsAffected) > 0 {
-			fmt.Fprintf(file, "  Counting toward: %s\n", strings.Join(awardsAffected, ", "))
-		}
-		fmt.Fprintln(file)
-	}
+        // Show which awards
+        var awardsAffected []string
+        if _, exists := contactsC[am.SKCCNr]; exists {
+            awardsAffected = append(awardsAffected, "C")
+        }
+        if _, exists := contactsT[am.SKCCNr]; exists {
+            awardsAffected = append(awardsAffected, "T")
+        }
+        if _, exists := contactsS[am.SKCCNr]; exists {
+            awardsAffected = append(awardsAffected, "S")
+        }
+        if len(awardsAffected) > 0 {
+            fmt.Fprintf(file, "  Counting toward: %s\n", strings.Join(awardsAffected, ", "))
+        }
+        fmt.Fprintln(file)
+    }
 
-	fmt.Fprintln(file, "\nNote: Current version counts these for compatibility with SKCCLogger v03.01.04.")
-	fmt.Fprintln(file, "Future versions may require SKCC numbers to be explicitly logged.")
+    fmt.Fprintln(file, "\nNote: Current version counts these for compatibility with SKCCLogger v03.01.04.")
+    fmt.Fprintln(file, "Future versions may require SKCC numbers to be explicitly logged.")
 }
 
 func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		return
-	}
+    if len(contacts) == 0 {
+        return
+    }
 
-	filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	// Sort by date
-	var sorted []ProcessedQSO
-	for _, c := range contacts {
-		sorted = append(sorted, c)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		if sorted[i].QSODate != sorted[j].QSODate {
-			return sorted[i].QSODate < sorted[j].QSODate
-		}
-		return sorted[i].Call < sorted[j].Call
-	})
+    // Sort by date
+    var sorted []ProcessedQSO
+    for _, c := range contacts {
+        sorted = append(sorted, c)
+    }
+    sort.Slice(sorted, func(i, j int) bool {
+        if sorted[i].QSODate != sorted[j].QSODate {
+            return sorted[i].QSODate < sorted[j].QSODate
+        }
+        return sorted[i].Call < sorted[j].Call
+    })
 
-	for i, qso := range sorted {
-		dateStr := formatDate(qso.QSODate)
-		band := strings.TrimSuffix(qso.Band, "M")
-		band = strings.TrimSuffix(band, "m")
-		nameStr := qso.Name
-		if len(nameStr) > 12 {
-			nameStr = nameStr[:12]
-		}
-		fmt.Fprintf(file, "%-6d %11s   %-13s %-8s %-12s %-12s %2s\n",
-			i+1, dateStr, qso.Call, qso.SKCCNr, nameStr, qso.State, band)
-	}
+    for i, qso := range sorted {
+        dateStr := formatDate(qso.QSODate)
+        band := strings.TrimSuffix(qso.Band, "M")
+        band = strings.TrimSuffix(band, "m")
+        nameStr := qso.Name
+        if len(nameStr) > 12 {
+            nameStr = nameStr[:12]
+        }
+        fmt.Fprintf(file, "%-6d %11s   %-13s %-8s %-12s %-12s %2s\n",
+            i+1, dateStr, qso.Call, qso.SKCCNr, nameStr, qso.State, band)
+    }
 }
 
 func writeWASAward(name string, contacts map[string]ProcessedQSO) {
-	filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	for _, state := range usStates {
-		if qso, exists := contacts[state]; exists {
-			dateStr := formatDate(qso.QSODate)
-			nameStr := qso.Name
-			if len(nameStr) > 12 {
-				nameStr = nameStr[:12]
-			}
-			fmt.Fprintf(file, "%-8s %-12s %-9s %-13s %-16s %s\n",
-				qso.State, qso.Call, qso.SKCCNr, nameStr, dateStr, qso.Band)
-		} else {
-			fmt.Fprintln(file, state)
-		}
-	}
+    for _, state := range usStates {
+        if qso, exists := contacts[state]; exists {
+            dateStr := formatDate(qso.QSODate)
+            nameStr := qso.Name
+            if len(nameStr) > 12 {
+                nameStr = nameStr[:12]
+            }
+            fmt.Fprintf(file, "%-8s %-12s %-9s %-13s %-16s %s\n",
+                qso.State, qso.Call, qso.SKCCNr, nameStr, dateStr, qso.Band)
+        } else {
+            fmt.Fprintln(file, state)
+        }
+    }
 }
 
 func writePrefixAward(contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		return
-	}
+    if len(contacts) == 0 {
+        return
+    }
 
-	filename := filepath.Join("QSOs", config.MyCallsign+"-P.txt")
-	file, err := os.Create(filename)
-	if err != nil {
-		return
-	}
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-P.txt")
+    file, err := os.Create(filename)
+    if err != nil {
+        return
+    }
+    defer file.Close()
 
-	// Sort by prefix
-	var sorted []ProcessedQSO
-	for _, c := range contacts {
-		sorted = append(sorted, c)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].Pfx < sorted[j].Pfx
-	})
+    // Sort by prefix
+    var sorted []ProcessedQSO
+    for _, c := range contacts {
+        sorted = append(sorted, c)
+    }
+    sort.Slice(sorted, func(i, j int) bool {
+        return sorted[i].Pfx < sorted[j].Pfx
+    })
 
-	totalPoints := 0
-	for i, qso := range sorted {
-		pts, _ := strconv.Atoi(qso.PfxPts)
-		totalPoints += pts
-		dateStr := formatDate(qso.QSODate)
-		band := strings.TrimSuffix(qso.Band, "M")
-		band = strings.TrimSuffix(band, "m")
-		nameStr := qso.Name
-		if len(nameStr) > 12 {
-			nameStr = nameStr[:12]
-		}
-		fmt.Fprintf(file, "%5d  %s   %-13s %-8d %-12s %-12s %3s  %10d\n",
-			i+1, dateStr, qso.Call, pts, nameStr, qso.Pfx, band, totalPoints)
-	}
+    totalPoints := 0
+    for i, qso := range sorted {
+        pts, _ := strconv.Atoi(qso.PfxPts)
+        totalPoints += pts
+        dateStr := formatDate(qso.QSODate)
+        band := strings.TrimSuffix(qso.Band, "M")
+        band = strings.TrimSuffix(band, "m")
+        nameStr := qso.Name
+        if len(nameStr) > 12 {
+            nameStr = nameStr[:12]
+        }
+        fmt.Fprintf(file, "%5d  %s   %-13s %-8d %-12s %-12s %3s  %10d\n",
+            i+1, dateStr, qso.Call, pts, nameStr, qso.Pfx, band, totalPoints)
+    }
 }
 
 func writeQRPAward(contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		return
-	}
+    if len(contacts) == 0 {
+        return
+    }
 
-	// Separate 1x and 2x
-	var qrp1x, qrp2x []ProcessedQSO
-	for _, qso := range contacts {
-		qrp1x = append(qrp1x, qso)
-		if qso.QRPx2QSO {
-			qrp2x = append(qrp2x, qso)
-		}
-	}
+    // Separate 1x and 2x
+    var qrp1x, qrp2x []ProcessedQSO
+    for _, qso := range contacts {
+        qrp1x = append(qrp1x, qso)
+        if qso.QRPx2QSO {
+            qrp2x = append(qrp2x, qso)
+        }
+    }
 
-	// Sort by date
-	sort.Slice(qrp1x, func(i, j int) bool {
-		return qrp1x[i].QSODate < qrp1x[j].QSODate
-	})
-	sort.Slice(qrp2x, func(i, j int) bool {
-		return qrp2x[i].QSODate < qrp2x[j].QSODate
-	})
+    // Sort by date
+    sort.Slice(qrp1x, func(i, j int) bool {
+        return qrp1x[i].QSODate < qrp1x[j].QSODate
+    })
+    sort.Slice(qrp2x, func(i, j int) bool {
+        return qrp2x[i].QSODate < qrp2x[j].QSODate
+    })
 
-	// Write 1x file
-	if len(qrp1x) > 0 {
-		filename := filepath.Join("QSOs", config.MyCallsign+"-QRP-1x.txt")
-		file, _ := os.Create(filename)
-		defer file.Close()
+    // Write 1x file
+    if len(qrp1x) > 0 {
+        filename := filepath.Join("QSOs", config.MyCallsign+"-QRP-1x.txt")
+        file, _ := os.Create(filename)
+        defer file.Close()
 
-		totalPts := 0.0
-		for i, qso := range qrp1x {
-			pts := qrpBandPoints[qso.Band]
-			totalPts += pts
-			fmt.Fprintf(file, "%4d %8s %-12s %-6s %6.1f %8.1f\n",
-				i+1, qso.SKCCNr, qso.Call, qso.Band, pts, totalPts)
-		}
-		fmt.Fprintf(file, "\nTotal Points: %.1f (Need: 300)\n", totalPts)
-		fmt.Fprintf(file, "Progress: %.1f%%\n", totalPts/3.0)
-	}
+        totalPts := 0.0
+        for i, qso := range qrp1x {
+            pts := qrpBandPoints[qso.Band]
+            totalPts += pts
+            fmt.Fprintf(file, "%4d %8s %-12s %-6s %6.1f %8.1f\n",
+                i+1, qso.SKCCNr, qso.Call, qso.Band, pts, totalPts)
+        }
+        fmt.Fprintf(file, "\nTotal Points: %.1f (Need: 300)\n", totalPts)
+        fmt.Fprintf(file, "Progress: %.1f%%\n", totalPts/3.0)
+    }
 
-	// Write 2x file
-	if len(qrp2x) > 0 {
-		filename := filepath.Join("QSOs", config.MyCallsign+"-QRP-2x.txt")
-		file, _ := os.Create(filename)
-		defer file.Close()
+    // Write 2x file
+    if len(qrp2x) > 0 {
+        filename := filepath.Join("QSOs", config.MyCallsign+"-QRP-2x.txt")
+        file, _ := os.Create(filename)
+        defer file.Close()
 
-		totalPts := 0.0
-		for i, qso := range qrp2x {
-			pts := qrpBandPoints[qso.Band]
-			totalPts += pts
-			fmt.Fprintf(file, "%4d %8s %-12s %-6s %6.1f %8.1f\n",
-				i+1, qso.SKCCNr, qso.Call, qso.Band, pts, totalPts)
-		}
-		fmt.Fprintf(file, "\nTotal Points: %.1f (Need: 150)\n", totalPts)
-		fmt.Fprintf(file, "Progress: %.1f%%\n", totalPts*2.0/3.0)
-	}
+        totalPts := 0.0
+        for i, qso := range qrp2x {
+            pts := qrpBandPoints[qso.Band]
+            totalPts += pts
+            fmt.Fprintf(file, "%4d %8s %-12s %-6s %6.1f %8.1f\n",
+                i+1, qso.SKCCNr, qso.Call, qso.Band, pts, totalPts)
+        }
+        fmt.Fprintf(file, "\nTotal Points: %.1f (Need: 150)\n", totalPts)
+        fmt.Fprintf(file, "Progress: %.1f%%\n", totalPts*2.0/3.0)
+    }
 }
 
 func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
-	// DXC file
-	if len(dxc) > 0 {
-		filename := filepath.Join("QSOs", config.MyCallsign+"-DXC.txt")
-		file, _ := os.Create(filename)
-		defer file.Close()
+    // DXC file
+    if len(dxc) > 0 {
+        filename := filepath.Join("QSOs", config.MyCallsign+"-DXC.txt")
+        file, _ := os.Create(filename)
+        defer file.Close()
 
-		fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
-		fmt.Fprintln(file, strings.Repeat("-", 85))
+        fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
+        fmt.Fprintln(file, strings.Repeat("-", 85))
 
-		var sorted []ProcessedQSO
-		for _, qso := range dxc {
-			sorted = append(sorted, qso)
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].DXCode < sorted[j].DXCode
-		})
+        var sorted []ProcessedQSO
+        for _, qso := range dxc {
+            sorted = append(sorted, qso)
+        }
+        sort.Slice(sorted, func(i, j int) bool {
+            return sorted[i].DXCode < sorted[j].DXCode
+        })
 
-		for i, qso := range sorted {
-			dateStr := formatDate(qso.QSODate)
-			nameStr := qso.Name
-			if len(nameStr) > 10 {
-				nameStr = nameStr[:10]
-			}
-			country := "Unknown"
-			fmt.Fprintf(file, "%3d  %s  %-12s %-11s %-7s %4s  %-20s %s\n",
-				i+1, dateStr, qso.Call, nameStr, qso.SKCCNr, qso.DXCC, country, qso.Band)
-		}
+        for i, qso := range sorted {
+            dateStr := formatDate(qso.QSODate)
+            nameStr := qso.Name
+            if len(nameStr) > 10 {
+                nameStr = nameStr[:10]
+            }
+            country := "Unknown"
+            fmt.Fprintf(file, "%3d  %s  %-12s %-11s %-7s %4s  %-20s %s\n",
+                i+1, dateStr, qso.Call, nameStr, qso.SKCCNr, qso.DXCC, country, qso.Band)
+        }
 
-		fmt.Fprintln(file, strings.Repeat("-", 85))
-		fmt.Fprintf(file, "Total Countries: %d (Need: 100)\n", len(dxc))
-		fmt.Fprintf(file, "Progress: %.1f%%\n", float64(len(dxc)))
-	}
+        fmt.Fprintln(file, strings.Repeat("-", 85))
+        fmt.Fprintf(file, "Total Countries: %d (Need: 100)\n", len(dxc))
+        fmt.Fprintf(file, "Progress: %.1f%%\n", float64(len(dxc)))
+    }
 
-	// DXQ file
-	if len(dxq) > 0 {
-		filename := filepath.Join("QSOs", config.MyCallsign+"-DXQ.txt")
-		file, _ := os.Create(filename)
-		defer file.Close()
+    // DXQ file
+    if len(dxq) > 0 {
+        filename := filepath.Join("QSOs", config.MyCallsign+"-DXQ.txt")
+        file, _ := os.Create(filename)
+        defer file.Close()
 
-		fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
-		fmt.Fprintln(file, strings.Repeat("-", 85))
+        fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
+        fmt.Fprintln(file, strings.Repeat("-", 85))
 
-		var sorted []ProcessedQSO
-		for _, qso := range dxq {
-			sorted = append(sorted, qso)
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].QSODate < sorted[j].QSODate
-		})
+        var sorted []ProcessedQSO
+        for _, qso := range dxq {
+            sorted = append(sorted, qso)
+        }
+        sort.Slice(sorted, func(i, j int) bool {
+            return sorted[i].QSODate < sorted[j].QSODate
+        })
 
-		for i, qso := range sorted {
-			dateStr := formatDate(qso.QSODate)
-			nameStr := qso.Name
-			if len(nameStr) > 10 {
-				nameStr = nameStr[:10]
-			}
-			country := "Unknown"
-			fmt.Fprintf(file, "%3d  %s  %-12s %-11s %-7s %4s  %-20s %s\n",
-				i+1, dateStr, qso.Call, nameStr, qso.SKCCNr, qso.DXCC, country, qso.Band)
-		}
+        for i, qso := range sorted {
+            dateStr := formatDate(qso.QSODate)
+            nameStr := qso.Name
+            if len(nameStr) > 10 {
+                nameStr = nameStr[:10]
+            }
+            country := "Unknown"
+            fmt.Fprintf(file, "%3d  %s  %-12s %-11s %-7s %4s  %-20s %s\n",
+                i+1, dateStr, qso.Call, nameStr, qso.SKCCNr, qso.DXCC, country, qso.Band)
+        }
 
-		fmt.Fprintln(file, strings.Repeat("-", 85))
-		fmt.Fprintf(file, "Total Foreign Member QSOs: %d (Need: 100)\n", len(dxq))
-		fmt.Fprintf(file, "Progress: %.1f%%\n", float64(len(dxq)))
-	}
+        fmt.Fprintln(file, strings.Repeat("-", 85))
+        fmt.Fprintf(file, "Total Foreign Member QSOs: %d (Need: 100)\n", len(dxq))
+        fmt.Fprintf(file, "Progress: %.1f%%\n", float64(len(dxq)))
+    }
 }
 
 func writeRCAward(contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		return
-	}
+    if len(contacts) == 0 {
+        return
+    }
 
-	filename := filepath.Join("QSOs", config.MyCallsign+"-RC.txt")
-	file, _ := os.Create(filename)
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-RC.txt")
+    file, _ := os.Create(filename)
+    defer file.Close()
 
-	totalMins := 0
-	for _, qso := range contacts {
-		totalMins += qso.RagChewMins
-	}
+    totalMins := 0
+    for _, qso := range contacts {
+        totalMins += qso.RagChewMins
+    }
 
-	fmt.Fprintf(file, "Total QSOs: %d\n", len(contacts))
-	fmt.Fprintf(file, "Total Minutes: %d\n", totalMins)
-	fmt.Fprintln(file)
-	fmt.Fprintln(file, "Date        Call         SKCC#     Name         Band  Minutes")
-	fmt.Fprintln(file, strings.Repeat("-", 60))
+    fmt.Fprintf(file, "Total QSOs: %d\n", len(contacts))
+    fmt.Fprintf(file, "Total Minutes: %d\n", totalMins)
+    fmt.Fprintln(file)
+    fmt.Fprintln(file, "Date        Call         SKCC#     Name         Band  Minutes")
+    fmt.Fprintln(file, strings.Repeat("-", 60))
 
-	var sorted []ProcessedQSO
-	for _, qso := range contacts {
-		sorted = append(sorted, qso)
-	}
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].QSODate < sorted[j].QSODate
-	})
+    var sorted []ProcessedQSO
+    for _, qso := range contacts {
+        sorted = append(sorted, qso)
+    }
+    sort.Slice(sorted, func(i, j int) bool {
+        return sorted[i].QSODate < sorted[j].QSODate
+    })
 
-	for _, qso := range sorted {
-		dateStr := formatDate(qso.QSODate)
-		band := strings.TrimSuffix(qso.Band, "M")
-		band = strings.TrimSuffix(band, "m")
-		nameStr := qso.Name
-		if len(nameStr) > 12 {
-			nameStr = nameStr[:12]
-		}
-		fmt.Fprintf(file, "%s  %-12s %-8s %-12s %3s  %4d\n",
-			dateStr, qso.Call, qso.SKCCNr, nameStr, band, qso.RagChewMins)
-	}
+    for _, qso := range sorted {
+        dateStr := formatDate(qso.QSODate)
+        band := strings.TrimSuffix(qso.Band, "M")
+        band = strings.TrimSuffix(band, "m")
+        nameStr := qso.Name
+        if len(nameStr) > 12 {
+            nameStr = nameStr[:12]
+        }
+        fmt.Fprintf(file, "%s  %-12s %-8s %-12s %3s  %4d\n",
+            dateStr, qso.Call, qso.SKCCNr, nameStr, band, qso.RagChewMins)
+    }
 
-	fmt.Fprintln(file, strings.Repeat("-", 60))
-	fmt.Fprintf(file, "TOTAL MINUTES: %d\n", totalMins)
+    fmt.Fprintln(file, strings.Repeat("-", 60))
+    fmt.Fprintf(file, "TOTAL MINUTES: %d\n", totalMins)
 }
 
 func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
-	if len(sk) == 0 && len(bug) == 0 && len(ss) == 0 {
-		return
-	}
+    if len(sk) == 0 && len(bug) == 0 && len(ss) == 0 {
+        return
+    }
 
-	filename := filepath.Join("QSOs", config.MyCallsign+"-TKA.txt")
-	file, _ := os.Create(filename)
-	defer file.Close()
+    filename := filepath.Join("QSOs", config.MyCallsign+"-TKA.txt")
+    file, _ := os.Create(filename)
+    defer file.Close()
 
-	fmt.Fprintln(file, "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members")
-	fmt.Fprintln(file)
+    fmt.Fprintln(file, "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members")
+    fmt.Fprintln(file)
 
-	writeKeyType := func(name string, contacts map[string]ProcessedQSO) {
-		if len(contacts) == 0 {
-			return
-		}
-		fmt.Fprintf(file, "%s Contacts (%d):\n", name, len(contacts))
-		fmt.Fprintln(file, strings.Repeat("-", 60))
+    writeKeyType := func(name string, contacts map[string]ProcessedQSO) {
+        if len(contacts) == 0 {
+            return
+        }
+        fmt.Fprintf(file, "%s Contacts (%d):\n", name, len(contacts))
+        fmt.Fprintln(file, strings.Repeat("-", 60))
 
-		var sorted []ProcessedQSO
-		for _, qso := range contacts {
-			sorted = append(sorted, qso)
-		}
-		sort.Slice(sorted, func(i, j int) bool {
-			return sorted[i].QSODate < sorted[j].QSODate
-		})
+        var sorted []ProcessedQSO
+        for _, qso := range contacts {
+            sorted = append(sorted, qso)
+        }
+        sort.Slice(sorted, func(i, j int) bool {
+            return sorted[i].QSODate < sorted[j].QSODate
+        })
 
-		for i, qso := range sorted {
-			dateStr := formatDate(qso.QSODate)
-			fmt.Fprintf(file, "%3d  %s  %-12s %-8s\n",
-				i+1, dateStr, qso.Call, qso.SKCCNr)
-		}
-		fmt.Fprintln(file)
-	}
+        for i, qso := range sorted {
+            dateStr := formatDate(qso.QSODate)
+            fmt.Fprintf(file, "%3d  %s  %-12s %-8s\n",
+                i+1, dateStr, qso.Call, qso.SKCCNr)
+        }
+        fmt.Fprintln(file)
+    }
 
-	writeKeyType("BUG", bug)
-	writeKeyType("SK", sk)
-	writeKeyType("SS", ss)
+    writeKeyType("BUG", bug)
+    writeKeyType("SK", sk)
+    writeKeyType("SS", ss)
 
-	// Calculate unique
-	allMembers := make(map[string]bool)
-	for k := range sk {
-		allMembers[k] = true
-	}
-	for k := range bug {
-		allMembers[k] = true
-	}
-	for k := range ss {
-		allMembers[k] = true
-	}
+    // Calculate unique
+    allMembers := make(map[string]bool)
+    for k := range sk {
+        allMembers[k] = true
+    }
+    for k := range bug {
+        allMembers[k] = true
+    }
+    for k := range ss {
+        allMembers[k] = true
+    }
 
-	fmt.Fprintln(file, strings.Repeat("=", 70))
-	fmt.Fprintf(file, "SUMMARY: SK:%d BUG:%d SS:%d Total unique:%d/300\n",
-		len(sk), len(bug), len(ss), len(allMembers))
+    fmt.Fprintln(file, strings.Repeat("=", 70))
+    fmt.Fprintf(file, "SUMMARY: SK:%d BUG:%d SS:%d Total unique:%d/300\n",
+        len(sk), len(bug), len(ss), len(allMembers))
 }
 
 // ============================================================================
@@ -4409,893 +4191,875 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
 // ============================================================================
 
 func printConfigSummary(config *Config) {
-	fmt.Println()
-	// Goals
-	if len(config.Goals) > 0 {
-		fmt.Printf("GOALS: %s\n", strings.Join(config.Goals, ", "))
-	}
-	// Targets
-	if len(config.Targets) > 0 {
-		fmt.Printf("TARGETS: %s\n", strings.Join(config.Targets, ", "))
-	}
-	// Bands
-	if len(config.Bands) > 0 {
-		bandStrs := make([]string, len(config.Bands))
-		for i, b := range config.Bands {
-			bandStrs[i] = strconv.Itoa(b)
-		}
-		fmt.Printf("BANDS: %s\n", strings.Join(bandStrs, ", "))
-	}
+    fmt.Println()
+    // Goals
+    if len(config.Goals) > 0 {
+        fmt.Printf("GOALS: %s\n", strings.Join(config.Goals, ", "))
+    }
+    // Targets
+    if len(config.Targets) > 0 {
+        fmt.Printf("TARGETS: %s\n", strings.Join(config.Targets, ", "))
+    }
+    // Bands
+    if len(config.Bands) > 0 {
+        bandStrs := make([]string, len(config.Bands))
+        for i, b := range config.Bands {
+            bandStrs[i] = strconv.Itoa(b)
+        }
+        fmt.Printf("BANDS: %s\n", strings.Join(bandStrs, ", "))
+    }
 }
 
 func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *Config, members map[string]*Member) {
-	myMember := members[config.MyCallsign]
-	if myMember == nil {
-		return
-	}
+    myMember := members[config.MyCallsign]
+    if myMember == nil {
+        return
+    }
 
-	myNumber := myMember.PlainNumber
+    myNumber := myMember.PlainNumber
 
-	contactsC := awards["C"].(map[string]ProcessedQSO)
-	contactsT := awards["T"].(map[string]ProcessedQSO)
-	contactsS := awards["S"].(map[string]ProcessedQSO)
-	contactsP := awards["P"].(map[string]ProcessedQSO)
-	contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
-	contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
-	contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
-	contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
-	contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
-	contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
-	contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
-	contactsRC := awards["RC"].(map[string]ProcessedQSO)
-	contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
-	contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
-	contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].(map[string]ProcessedQSO)
+    contactsT := awards["T"].(map[string]ProcessedQSO)
+    contactsS := awards["S"].(map[string]ProcessedQSO)
+    contactsP := awards["P"].(map[string]ProcessedQSO)
+    contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
+    contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
+    contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
+    contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
+    contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
+    contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
+    contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
+    contactsRC := awards["RC"].(map[string]ProcessedQSO)
+    contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
+    contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
+    contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
 
-	fmt.Println()
+    fmt.Println()
 
-	// C award FYI
-	if contains(config.Goals, "C") {
-		cCount := len(contactsC)
-		if cCount >= 100 {
-			cLevel := cCount / 100
-			if myMember.CDate != "" {
-				if awardLevel, exists := rosters.Centurion[myNumber]; exists {
-					if cLevel > awardLevel {
-						cOrCx := "C"
-						if awardLevel > 1 {
-							cOrCx = fmt.Sprintf("Cx%d", awardLevel)
-						}
-						nextLevelName := "C"
-						if cLevel > 1 {
-							nextLevelName = fmt.Sprintf("Cx%d", cLevel)
-						}
-						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, cOrCx)
-					}
-				}
-			} else {
-				if _, exists := rosters.Centurion[myNumber]; !exists && cLevel >= 1 {
-					fmt.Println("FYI: You qualify for C but have not yet applied for it.")
-				}
-			}
-		}
-	}
+    // C award FYI
+    if contains(config.Goals, "C") {
+        cCount := len(contactsC)
+        if cCount >= 100 {
+            cLevel := cCount / 100
+            if myMember.CDate != "" {
+                if awardLevel, exists := rosters.Centurion[myNumber]; exists {
+                    if cLevel > awardLevel {
+                        cOrCx := "C"
+                        if awardLevel > 1 {
+                            cOrCx = fmt.Sprintf("Cx%d", awardLevel)
+                        }
+                        nextLevelName := "C"
+                        if cLevel > 1 {
+                            nextLevelName = fmt.Sprintf("Cx%d", cLevel)
+                        }
+                        fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, cOrCx)
+                    }
+                }
+            } else {
+                if _, exists := rosters.Centurion[myNumber]; !exists && cLevel >= 1 {
+                    fmt.Println("FYI: You qualify for C but have not yet applied for it.")
+                }
+            }
+        }
+    }
 
-	// T award FYI
-	if contains(config.Goals, "T") {
-		tCount := len(contactsT)
-		if tCount >= 50 {
-			tLevel := tCount / 50
-			if myMember.CDate == "" {
-				if tLevel > 0 {
-					fmt.Println("NOTE: Tribune award requires Centurion first. Apply for C before T.")
-				}
-			} else if myMember.TDate != "" {
-				if awardLevel, exists := rosters.Tribune[myNumber]; exists {
-					if tLevel > awardLevel {
-						tOrTx := "T"
-						if awardLevel > 1 {
-							tOrTx = fmt.Sprintf("Tx%d", awardLevel)
-						}
-						nextLevelName := "T"
-						if tLevel > 1 {
-							nextLevelName = fmt.Sprintf("Tx%d", tLevel)
-						}
-						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, tOrTx)
-					}
-				}
-			} else {
-				if _, exists := rosters.Tribune[myNumber]; !exists && tLevel >= 1 {
-					fmt.Println("FYI: You qualify for T but have not yet applied for it.")
-				}
-			}
-		}
-	}
+    // T award FYI
+    if contains(config.Goals, "T") {
+        tCount := len(contactsT)
+        if tCount >= 50 {
+            tLevel := tCount / 50
+            if myMember.CDate == "" {
+                if tLevel > 0 {
+                    fmt.Println("NOTE: Tribune award requires Centurion first. Apply for C before T.")
+                }
+            } else if myMember.TDate != "" {
+                if awardLevel, exists := rosters.Tribune[myNumber]; exists {
+                    if tLevel > awardLevel {
+                        tOrTx := "T"
+                        if awardLevel > 1 {
+                            tOrTx = fmt.Sprintf("Tx%d", awardLevel)
+                        }
+                        nextLevelName := "T"
+                        if tLevel > 1 {
+                            nextLevelName = fmt.Sprintf("Tx%d", tLevel)
+                        }
+                        fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, tOrTx)
+                    }
+                }
+            } else {
+                if _, exists := rosters.Tribune[myNumber]; !exists && tLevel >= 1 {
+                    fmt.Println("FYI: You qualify for T but have not yet applied for it.")
+                }
+            }
+        }
+    }
 
-	// S award FYI
-	if contains(config.Goals, "S") {
-		sCount := len(contactsS)
-		tribuneContacts := len(contactsT)
-		if tribuneContacts < 400 {
-			if sCount >= 200 {
-				fmt.Printf("NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", tribuneContacts)
-			}
-		} else if sCount >= 200 {
-			sLevel := sCount / 200
-			if myMember.SDate != "" {
-				if awardLevel, exists := rosters.Senator[myNumber]; exists {
-					if sLevel > awardLevel {
-						sOrSx := "S"
-						if awardLevel > 1 {
-							sOrSx = fmt.Sprintf("Sx%d", awardLevel)
-						}
-						nextLevelName := "S"
-						if sLevel > 1 {
-							nextLevelName = fmt.Sprintf("Sx%d", sLevel)
-						}
-						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, sOrSx)
-					}
-				}
-			} else {
-				if _, exists := rosters.Senator[myNumber]; !exists && sLevel >= 1 {
-					fmt.Println("FYI: You qualify for S but have not yet applied for it.")
-				}
-			}
-		}
-	}
+    // S award FYI
+    if contains(config.Goals, "S") {
+        sCount := len(contactsS)
+        tribuneContacts := len(contactsT)
+        if tribuneContacts < 400 {
+            if sCount >= 200 {
+                fmt.Printf("NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", tribuneContacts)
+            }
+        } else if sCount >= 200 {
+            sLevel := sCount / 200
+            if myMember.SDate != "" {
+                if awardLevel, exists := rosters.Senator[myNumber]; exists {
+                    if sLevel > awardLevel {
+                        sOrSx := "S"
+                        if awardLevel > 1 {
+                            sOrSx = fmt.Sprintf("Sx%d", awardLevel)
+                        }
+                        nextLevelName := "S"
+                        if sLevel > 1 {
+                            nextLevelName = fmt.Sprintf("Sx%d", sLevel)
+                        }
+                        fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, sOrSx)
+                    }
+                }
+            } else {
+                if _, exists := rosters.Senator[myNumber]; !exists && sLevel >= 1 {
+                    fmt.Println("FYI: You qualify for S but have not yet applied for it.")
+                }
+            }
+        }
+    }
 
-	// WAS variants FYI
-	if contains(config.Goals, "WAS") {
-		if len(contactsWAS) == len(usStates) {
-			if _, exists := rosters.WAS[config.MyCallsign]; !exists {
-				fmt.Println("FYI: You qualify for WAS but have not yet applied for it.")
-			}
-		}
-	}
-	if contains(config.Goals, "WAS-C") {
-		if len(contactsWASC) == len(usStates) {
-			if _, exists := rosters.WASC[config.MyCallsign]; !exists {
-				fmt.Println("FYI: You qualify for WAS-C but have not yet applied for it.")
-			}
-		}
-	}
-	if contains(config.Goals, "WAS-T") {
-		if len(contactsWAST) == len(usStates) {
-			if _, exists := rosters.WAST[config.MyCallsign]; !exists {
-				fmt.Println("FYI: You qualify for WAS-T but have not yet applied for it.")
-			}
-		}
-	}
-	if contains(config.Goals, "WAS-S") {
-		if len(contactsWASS) == len(usStates) {
-			if _, exists := rosters.WASS[config.MyCallsign]; !exists {
-				fmt.Println("FYI: You qualify for WAS-S but have not yet applied for it.")
-			}
-		}
-	}
+    // WAS variants FYI
+    if contains(config.Goals, "WAS") {
+        if len(contactsWAS) == len(usStates) {
+            if _, exists := rosters.WAS[config.MyCallsign]; !exists {
+                fmt.Println("FYI: You qualify for WAS but have not yet applied for it.")
+            }
+        }
+    }
+    if contains(config.Goals, "WAS-C") {
+        if len(contactsWASC) == len(usStates) {
+            if _, exists := rosters.WASC[config.MyCallsign]; !exists {
+                fmt.Println("FYI: You qualify for WAS-C but have not yet applied for it.")
+            }
+        }
+    }
+    if contains(config.Goals, "WAS-T") {
+        if len(contactsWAST) == len(usStates) {
+            if _, exists := rosters.WAST[config.MyCallsign]; !exists {
+                fmt.Println("FYI: You qualify for WAS-T but have not yet applied for it.")
+            }
+        }
+    }
+    if contains(config.Goals, "WAS-S") {
+        if len(contactsWASS) == len(usStates) {
+            if _, exists := rosters.WASS[config.MyCallsign]; !exists {
+                fmt.Println("FYI: You qualify for WAS-S but have not yet applied for it.")
+            }
+        }
+    }
 
-	// Prefix FYI
-	if contains(config.Goals, "P") {
-		pTotal := 0
-		for _, qso := range contactsP {
-			pts, _ := strconv.Atoi(qso.PfxPts)
-			pTotal += pts
-		}
-		if pTotal > 500000 {
-			pLevel := pTotal / 500000
-			if awardLevel, exists := rosters.Prefix[config.MyCallsign]; exists {
-				if pLevel > awardLevel {
-					fmt.Printf("FYI: You qualify for Px%d but have only applied for Px%d.\n", pLevel, awardLevel)
-				}
-			} else if pLevel >= 1 {
-				fmt.Printf("FYI: You qualify for Px%d but have not yet applied for it.\n", pLevel)
-			}
-		}
-	}
+    // Prefix FYI
+    if contains(config.Goals, "P") {
+        pTotal := 0
+        for _, qso := range contactsP {
+            pts, _ := strconv.Atoi(qso.PfxPts)
+            pTotal += pts
+        }
+        if pTotal > 500000 {
+            pLevel := pTotal / 500000
+            if awardLevel, exists := rosters.Prefix[config.MyCallsign]; exists {
+                if pLevel > awardLevel {
+                    fmt.Printf("FYI: You qualify for Px%d but have only applied for Px%d.\n", pLevel, awardLevel)
+                }
+            } else if pLevel >= 1 {
+                fmt.Printf("FYI: You qualify for Px%d but have not yet applied for it.\n", pLevel)
+            }
+        }
+    }
 
-	// DX FYI
-	if contains(config.Goals, "DX") {
-		// DXC
-		dxcCount := len(contactsDXC)
-		if dxcCount >= 10 {
-			dxcLevel, _, _ := getDXLevel(dxcCount)
-			if awardLevel, exists := rosters.DXC[myNumber]; exists {
-				if dxcLevel > awardLevel {
-					fmt.Printf("FYI: You qualify for DXCx%d but have only applied for DXCx%d.\n", dxcLevel, awardLevel)
-				}
-			} else {
-				fmt.Printf("FYI: You qualify for DXCx%d but have not yet applied for it.\n", dxcLevel)
-			}
-		}
+    // DX FYI
+    if contains(config.Goals, "DX") {
+        // DXC
+        dxcCount := len(contactsDXC)
+        if dxcCount >= 10 {
+            dxcLevel, _, _ := getDXLevel(dxcCount)
+            if awardLevel, exists := rosters.DXC[myNumber]; exists {
+                if dxcLevel > awardLevel {
+                    fmt.Printf("FYI: You qualify for DXCx%d but have only applied for DXCx%d.\n", dxcLevel, awardLevel)
+                }
+            } else {
+                fmt.Printf("FYI: You qualify for DXCx%d but have not yet applied for it.\n", dxcLevel)
+            }
+        }
 
-		// DXQ
-		dxqCount := len(contactsDXQ)
-		if dxqCount >= 10 {
-			dxqLevel, _, _ := getDXLevel(dxqCount)
-			if awardLevel, exists := rosters.DXQ[myNumber]; exists {
-				if dxqLevel > awardLevel {
-					fmt.Printf("FYI: You qualify for DXQx%d but have only applied for DXQx%d.\n", dxqLevel, awardLevel)
-				}
-			} else {
-				fmt.Printf("FYI: You qualify for DXQx%d but have not yet applied for it.\n", dxqLevel)
-			}
-		}
-	}
+        // DXQ
+        dxqCount := len(contactsDXQ)
+        if dxqCount >= 10 {
+            dxqLevel, _, _ := getDXLevel(dxqCount)
+            if awardLevel, exists := rosters.DXQ[myNumber]; exists {
+                if dxqLevel > awardLevel {
+                    fmt.Printf("FYI: You qualify for DXQx%d but have only applied for DXQx%d.\n", dxqLevel, awardLevel)
+                }
+            } else {
+                fmt.Printf("FYI: You qualify for DXQx%d but have not yet applied for it.\n", dxqLevel)
+            }
+        }
+    }
 
-	// QRP FYI
-	if contains(config.Goals, "QRP") {
-		pts1x := 0.0
-		pts2x := 0.0
-		for _, qso := range contactsQRP {
-			pts := qrpBandPoints[qso.Band]
-			pts1x += pts
-			if qso.QRPx2QSO {
-				pts2x += pts
-			}
-		}
+    // QRP FYI
+    if contains(config.Goals, "QRP") {
+        pts1x := 0.0
+        pts2x := 0.0
+        for _, qso := range contactsQRP {
+            pts := qrpBandPoints[qso.Band]
+            pts1x += pts
+            if qso.QRPx2QSO {
+                pts2x += pts
+            }
+        }
 
-		// 1xQRP
-		if pts1x >= 300 {
-			qrp1xLevel := int(pts1x / 300)
-			if awardLevel, exists := rosters.QRP1x[myNumber]; exists {
-				if qrp1xLevel > awardLevel {
-					fmt.Printf("FYI: You qualify for 1xQRP x%d but have only applied for 1xQRP x%d.\n", qrp1xLevel, awardLevel)
-				}
-			} else {
-				fmt.Printf("FYI: You qualify for 1xQRP x%d but have not yet applied for it.\n", qrp1xLevel)
-			}
-		}
+        // 1xQRP
+        if pts1x >= 300 {
+            qrp1xLevel := int(pts1x / 300)
+            if awardLevel, exists := rosters.QRP1x[myNumber]; exists {
+                if qrp1xLevel > awardLevel {
+                    fmt.Printf("FYI: You qualify for 1xQRP x%d but have only applied for 1xQRP x%d.\n", qrp1xLevel, awardLevel)
+                }
+            } else {
+                fmt.Printf("FYI: You qualify for 1xQRP x%d but have not yet applied for it.\n", qrp1xLevel)
+            }
+        }
 
-		// 2xQRP
-		if pts2x >= 150 {
-			qrp2xLevel := int(pts2x / 150)
-			if awardLevel, exists := rosters.QRP2x[myNumber]; exists {
-				if qrp2xLevel > awardLevel {
-					fmt.Printf("FYI: You qualify for 2xQRP x%d but have only applied for 2xQRP x%d.\n", qrp2xLevel, awardLevel)
-				}
-			} else {
-				fmt.Printf("FYI: You qualify for 2xQRP x%d but have not yet applied for it.\n", qrp2xLevel)
-			}
-		}
-	}
+        // 2xQRP
+        if pts2x >= 150 {
+            qrp2xLevel := int(pts2x / 150)
+            if awardLevel, exists := rosters.QRP2x[myNumber]; exists {
+                if qrp2xLevel > awardLevel {
+                    fmt.Printf("FYI: You qualify for 2xQRP x%d but have only applied for 2xQRP x%d.\n", qrp2xLevel, awardLevel)
+                }
+            } else {
+                fmt.Printf("FYI: You qualify for 2xQRP x%d but have not yet applied for it.\n", qrp2xLevel)
+            }
+        }
+    }
 
-	// TKA FYI
-	if contains(config.Goals, "TKA") {
-		skCount := len(contactsTKASK)
-		bugCount := len(contactsTKABUG)
-		ssCount := len(contactsTKASS)
+    // TKA FYI
+    if contains(config.Goals, "TKA") {
+        skCount := len(contactsTKASK)
+        bugCount := len(contactsTKABUG)
+        ssCount := len(contactsTKASS)
 
-		allMembers := make(map[string]bool)
-		for k := range contactsTKASK {
-			allMembers[k] = true
-		}
-		for k := range contactsTKABUG {
-			allMembers[k] = true
-		}
-		for k := range contactsTKASS {
-			allMembers[k] = true
-		}
-		uniqueTotal := len(allMembers)
+        allMembers := make(map[string]bool)
+        for k := range contactsTKASK {
+            allMembers[k] = true
+        }
+        for k := range contactsTKABUG {
+            allMembers[k] = true
+        }
+        for k := range contactsTKASS {
+            allMembers[k] = true
+        }
+        uniqueTotal := len(allMembers)
 
-		if skCount >= 100 && bugCount >= 100 && ssCount >= 100 && uniqueTotal >= 300 {
-			if _, exists := rosters.TKA[myNumber]; !exists {
-				fmt.Println("FYI: You qualify for TKA but have not yet applied for it.")
-			}
-		}
-	}
+        if skCount >= 100 && bugCount >= 100 && ssCount >= 100 && uniqueTotal >= 300 {
+            if _, exists := rosters.TKA[myNumber]; !exists {
+                fmt.Println("FYI: You qualify for TKA but have not yet applied for it.")
+            }
+        }
+    }
 
-	// RC FYI
-	if contains(config.Goals, "RC") {
-		totalMins := 0
-		for _, qso := range contactsRC {
-			totalMins += qso.RagChewMins
-		}
+    // RC FYI
+    if contains(config.Goals, "RC") {
+        totalMins := 0
+        for _, qso := range contactsRC {
+            totalMins += qso.RagChewMins
+        }
 
-		if totalMins >= 300 {
-			rcLevel := getRCLevel(totalMins)
-			if awardLevel, exists := rosters.RC[myNumber]; exists {
-				if rcLevel > awardLevel {
-					levelName := "RC"
-					if rcLevel > 1 {
-						levelName = fmt.Sprintf("RCx%d", rcLevel)
-					}
-					appliedName := "RC"
-					if awardLevel > 1 {
-						appliedName = fmt.Sprintf("RCx%d", awardLevel)
-					}
-					fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", levelName, appliedName)
-				}
-			} else {
-				levelName := "RC"
-				if rcLevel > 1 {
-					levelName = fmt.Sprintf("RCx%d", rcLevel)
-				}
-				fmt.Printf("FYI: You qualify for %s but have not yet applied for it.\n", levelName)
-			}
-		}
-	}
+        if totalMins >= 300 {
+            rcLevel := getRCLevel(totalMins)
+            if awardLevel, exists := rosters.RC[myNumber]; exists {
+                if rcLevel > awardLevel {
+                    levelName := "RC"
+                    if rcLevel > 1 {
+                        levelName = fmt.Sprintf("RCx%d", rcLevel)
+                    }
+                    appliedName := "RC"
+                    if awardLevel > 1 {
+                        appliedName = fmt.Sprintf("RCx%d", awardLevel)
+                    }
+                    fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", levelName, appliedName)
+                }
+            } else {
+                levelName := "RC"
+                if rcLevel > 1 {
+                    levelName = fmt.Sprintf("RCx%d", rcLevel)
+                }
+                fmt.Printf("FYI: You qualify for %s but have not yet applied for it.\n", levelName)
+            }
+        }
+    }
 }
 
 func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
-	fmt.Println()
-	fmt.Println("*** Awards Progress ***")
+    fmt.Println()
+    fmt.Println("*** Awards Progress ***")
 
-	contactsC := awards["C"].(map[string]ProcessedQSO)
-	contactsT := awards["T"].(map[string]ProcessedQSO)
-	contactsS := awards["S"].(map[string]ProcessedQSO)
-	contactsP := awards["P"].(map[string]ProcessedQSO)
-	contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
-	contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
-	contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
-	contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
-	contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
-	contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
-	contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
-	contactsRC := awards["RC"].(map[string]ProcessedQSO)
-	contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
-	contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
-	contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].(map[string]ProcessedQSO)
+    contactsT := awards["T"].(map[string]ProcessedQSO)
+    contactsS := awards["S"].(map[string]ProcessedQSO)
+    contactsP := awards["P"].(map[string]ProcessedQSO)
+    contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
+    contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
+    contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
+    contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
+    contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
+    contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
+    contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
+    contactsRC := awards["RC"].(map[string]ProcessedQSO)
+    contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
+    contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
+    contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
 
-	// C award
-	cCount := len(contactsC)
-	if cCount >= 100 {
-		level := cCount / 100
-		remaining := (level+1)*100 - cCount
-		fmt.Printf("C: Have %s which qualifies for Cx%d. Cx%d requires %d (%d more)\n",
-			formatComma(cCount), level, level+1, (level+1)*100, remaining)
-	} else {
-		fmt.Printf("C: Have %d. C requires 100 (%d more)\n", cCount, 100-cCount)
-	}
+    // C award
+    cCount := len(contactsC)
+    if cCount >= 100 {
+        level := cCount / 100
+        remaining := (level+1)*100 - cCount
+        fmt.Printf("C: Have %s which qualifies for Cx%d. Cx%d requires %d (%d more)\n",
+            formatComma(cCount), level, level+1, (level+1)*100, remaining)
+    } else {
+        fmt.Printf("C: Have %d. C requires 100 (%d more)\n", cCount, 100-cCount)
+    }
 
-	// T award
-	tCount := len(contactsT)
-	if tCount >= 50 {
-		level := tCount / 50
-		remaining := (level+1)*50 - tCount
-		fmt.Printf("T: Have %s which qualifies for Tx%d. Tx%d requires %d (%d more)\n",
-			formatComma(tCount), level, level+1, (level+1)*50, remaining)
-	} else if members[config.MyCallsign].CDate != "" {
-		fmt.Printf("T: Have %d. T requires 50 (%d more)\n", tCount, 50-tCount)
-	} else {
-		fmt.Println("T: Tribune award requires Centurion first. Apply for C before working toward T.")
-	}
+    // T award
+    tCount := len(contactsT)
+    if tCount >= 50 {
+        level := tCount / 50
+        remaining := (level+1)*50 - tCount
+        fmt.Printf("T: Have %s which qualifies for Tx%d. Tx%d requires %d (%d more)\n",
+            formatComma(tCount), level, level+1, (level+1)*50, remaining)
+    } else if members[config.MyCallsign].CDate != "" {
+        fmt.Printf("T: Have %d. T requires 50 (%d more)\n", tCount, 50-tCount)
+    } else {
+        fmt.Println("T: Tribune award requires Centurion first. Apply for C before working toward T.")
+    }
 
-	// S award
-	sCount := len(contactsS)
-	if len(contactsT) >= 400 {
-		if sCount >= 200 {
-			level := sCount / 200
-			remaining := (level+1)*200 - sCount
-			fmt.Printf("S: Have %s which qualifies for Sx%d. Sx%d requires %d (%d more)\n",
-				formatComma(sCount), level, level+1, (level+1)*200, remaining)
-		} else {
-			fmt.Printf("S: Have %d. S requires 200 (%d more)\n", sCount, 200-sCount)
-		}
-	} else {
-		fmt.Printf("S: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", len(contactsT))
-	}
+    // S award
+    sCount := len(contactsS)
+    if len(contactsT) >= 400 {
+        if sCount >= 200 {
+            level := sCount / 200
+            remaining := (level+1)*200 - sCount
+            fmt.Printf("S: Have %s which qualifies for Sx%d. Sx%d requires %d (%d more)\n",
+                formatComma(sCount), level, level+1, (level+1)*200, remaining)
+        } else {
+            fmt.Printf("S: Have %d. S requires 200 (%d more)\n", sCount, 200-sCount)
+        }
+    } else {
+        fmt.Printf("S: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", len(contactsT))
+    }
 
-	// Prefix
-	pTotal := 0
-	for _, qso := range contactsP {
-		pts, _ := strconv.Atoi(qso.PfxPts)
-		pTotal += pts
-	}
-	if pTotal > 500000 {
-		level := pTotal / 500000
-		remaining := (level+1)*500000 - pTotal
-		fmt.Printf("P: Have %s which qualifies for Px%d. Next level requires more than %s (%s more)\n",
-			formatComma(pTotal), level, formatComma((level+1)*500000), formatComma(remaining))
-	} else {
-		fmt.Printf("P: Have %s. Px1 requires more than 500000 (%s more)\n",
-			formatComma(pTotal), formatComma(500000-pTotal))
-	}
+    // Prefix
+    pTotal := 0
+    for _, qso := range contactsP {
+        pts, _ := strconv.Atoi(qso.PfxPts)
+        pTotal += pts
+    }
+    if pTotal > 500000 {
+        level := pTotal / 500000
+        remaining := (level+1)*500000 - pTotal
+        fmt.Printf("P: Have %s which qualifies for Px%d. Next level requires more than %s (%s more)\n",
+            formatComma(pTotal), level, formatComma((level+1)*500000), formatComma(remaining))
+    } else {
+        fmt.Printf("P: Have %s. Px1 requires more than 500000 (%s more)\n",
+            formatComma(pTotal), formatComma(500000-pTotal))
+    }
 
-	// WAS
-	if contains(config.Goals, "WAS") {
-		printWASProgress("WAS", contactsWAS)
-	}
-	if contains(config.Goals, "WAS-C") {
-		printWASProgress("WAS-C", contactsWASC)
-	}
-	if contains(config.Goals, "WAS-T") {
-		printWASProgress("WAS-T", contactsWAST)
-	}
-	if contains(config.Goals, "WAS-S") {
-		printWASProgress("WAS-S", contactsWASS)
-	}
+    // WAS
+    if contains(config.Goals, "WAS") {
+        printWASProgress("WAS", contactsWAS)
+    }
+    if contains(config.Goals, "WAS-C") {
+        printWASProgress("WAS-C", contactsWASC)
+    }
+    if contains(config.Goals, "WAS-T") {
+        printWASProgress("WAS-T", contactsWAST)
+    }
+    if contains(config.Goals, "WAS-S") {
+        printWASProgress("WAS-S", contactsWASS)
+    }
 
-	// QRP
-	if contains(config.Goals, "QRP") {
-		printQRPProgress(contactsQRP)
-	}
+    // QRP
+    if contains(config.Goals, "QRP") {
+        printQRPProgress(contactsQRP)
+    }
 
-	// DX
-	if contains(config.Goals, "DX") {
-		printDXProgress(contactsDXC, contactsDXQ)
-	}
+    // DX
+    if contains(config.Goals, "DX") {
+        printDXProgress(contactsDXC, contactsDXQ)
+    }
 
-	// RC
-	if contains(config.Goals, "RC") {
-		printRCProgress(contactsRC)
-	}
+    // RC
+    if contains(config.Goals, "RC") {
+        printRCProgress(contactsRC)
+    }
 
-	// TKA
-	if contains(config.Goals, "TKA") {
-		printTKAProgress(contactsTKASK, contactsTKABUG, contactsTKASS)
-	}
+    // TKA
+    if contains(config.Goals, "TKA") {
+        printTKAProgress(contactsTKASK, contactsTKABUG, contactsTKASS)
+    }
 
-	// BRAG
-	if contains(config.Goals, "BRAG") {
-		printBRAGProgress(ap)
-	}
+    // BRAG
+    if contains(config.Goals, "BRAG") {
+        printBRAGProgress(ap)
+    }
 
-	fmt.Println()
-}
-
-// getCountryName returns the country name for a DXCC code
-func getCountryName(dxccCode string) string {
-	// Normalize DXCC code (remove leading zeros)
-	code := strings.TrimLeft(dxccCode, "0")
-	if code == "" {
-		code = "0"
-	}
-	// Pad to 3 digits for lookup
-	for len(code) < 3 {
-		code = "0" + code
-	}
-
-	if country, exists := dxccCountries[code]; exists {
-		return country
-	}
-	return "Unknown"
+    fmt.Println()
 }
 
 // downloadRoster fetches a roster from the SKCC website
 // Returns map of key->level (key is either SKCC# or callsign depending on roster type)
 func downloadRoster(name, url string, useSKCCKey bool) (map[string]int, error) {
-	fmt.Printf("Retrieving SKCC %s roster...\n", name)
+    fmt.Printf("Retrieving SKCC %s roster...\n", name)
 
-	fullURL := SKCCBaseURL + url
-	resp, err := http.Get(fullURL)
-	if err != nil {
-		return nil, fmt.Errorf("HTTP request failed: %w", err)
-	}
-	defer resp.Body.Close()
+    fullURL := SKCCBaseURL + url
+    resp, err := http.Get(fullURL)
+    if err != nil {
+        return nil, fmt.Errorf("HTTP request failed: %w", err)
+    }
+    defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
+    if resp.StatusCode != 200 {
+        return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+    }
 
-	roster := make(map[string]int)
-	scanner := bufio.NewScanner(resp.Body)
-	firstLine := true
+    roster := make(map[string]int)
+    scanner := bufio.NewScanner(resp.Body)
+    firstLine := true
 
-	for scanner.Scan() {
-		line := scanner.Text()
+    for scanner.Scan() {
+        line := scanner.Text()
 
-		// Skip header line
-		if firstLine {
-			firstLine = false
-			continue
-		}
+        // Skip header line
+        if firstLine {
+            firstLine = false
+            continue
+        }
 
-		// Parse pipe-delimited format
-		fields := strings.Split(line, "|")
-		if len(fields) < 2 || fields[0] == "" {
-			continue
-		}
+        // Parse pipe-delimited format
+        fields := strings.Split(line, "|")
+        if len(fields) < 2 || fields[0] == "" {
+            continue
+        }
 
-		// Extract level from cert (e.g., "RC x35" -> 35)
-		cert := fields[0]
-		level := 1
-		if idx := strings.Index(cert, " x"); idx != -1 {
-			levelStr := cert[idx+2:]
-			if l, err := strconv.Atoi(levelStr); err == nil {
-				level = l
-			}
-		}
+        // Extract level from cert (e.g., "RC x35" -> 35)
+        cert := fields[0]
+        level := 1
+        if idx := strings.Index(cert, " x"); idx != -1 {
+            levelStr := cert[idx+2:]
+            if l, err := strconv.Atoi(levelStr); err == nil {
+                level = l
+            }
+        }
 
-		// Determine key: SKCC# (column 3) or Callsign (column 2)
-		var key string
-		if useSKCCKey {
-			// C/T/S, DXC, DXQ, QRP, RC, TKA use SKCC number (column 3, index 2)
-			if len(fields) > 2 && fields[2] != "" {
-				key = fields[2]
-			}
-		} else {
-			// WAS variants, Prefix use callsign (column 2, index 1)
-			if len(fields) > 1 && fields[1] != "" {
-				key = fields[1]
-			}
-		}
+        // Determine key: SKCC# (column 3) or Callsign (column 2)
+        var key string
+        if useSKCCKey {
+            // C/T/S, DXC, DXQ, QRP, RC, TKA use SKCC number (column 3, index 2)
+            if len(fields) > 2 && fields[2] != "" {
+                key = fields[2]
+            }
+        } else {
+            // WAS variants, Prefix use callsign (column 2, index 1)
+            if len(fields) > 1 && fields[1] != "" {
+                key = fields[1]
+            }
+        }
 
-		if key != "" {
-			roster[key] = level
-		}
-	}
+        if key != "" {
+            roster[key] = level
+        }
+    }
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan error: %w", err)
-	}
+    if err := scanner.Err(); err != nil {
+        return nil, fmt.Errorf("scan error: %w", err)
+    }
 
-	return roster, nil
+    return roster, nil
 }
 
 // downloadRosters downloads all rosters based on goals
 func downloadRosters(config *Config) *Rosters {
-	rosters := &Rosters{
-		Centurion: make(map[string]int),
-		Tribune:   make(map[string]int),
-		Senator:   make(map[string]int),
-		WAS:       make(map[string]int),
-		WASC:      make(map[string]int),
-		WAST:      make(map[string]int),
-		WASS:      make(map[string]int),
-		Prefix:    make(map[string]int),
-		DXC:       make(map[string]int),
-		DXQ:       make(map[string]int),
-		QRP1x:     make(map[string]int),
-		QRP2x:     make(map[string]int),
-		TKA:       make(map[string]int),
-		RC:        make(map[string]int),
-	}
+    rosters := &Rosters{
+        Centurion: make(map[string]int),
+        Tribune:   make(map[string]int),
+        Senator:   make(map[string]int),
+        WAS:       make(map[string]int),
+        WASC:      make(map[string]int),
+        WAST:      make(map[string]int),
+        WASS:      make(map[string]int),
+        Prefix:    make(map[string]int),
+        DXC:       make(map[string]int),
+        DXQ:       make(map[string]int),
+        QRP1x:     make(map[string]int),
+        QRP2x:     make(map[string]int),
+        TKA:       make(map[string]int),
+        RC:        make(map[string]int),
+    }
 
-	// Download rosters based on goals
-	for _, goal := range config.Goals {
-		switch goal {
-		case "C":
-			if r, err := downloadRoster("Centurion", "operating_awards/centurion/centurion_list.php", true); err == nil {
-				rosters.Centurion = r
-			}
-		case "T":
-			if r, err := downloadRoster("Tribune", "operating_awards/tribune/tribune_list.php", true); err == nil {
-				rosters.Tribune = r
-			}
-		case "S":
-			if r, err := downloadRoster("Senator", "operating_awards/senator/senator_list.php", true); err == nil {
-				rosters.Senator = r
-			}
-		case "WAS":
-			if r, err := downloadRoster("WAS", "operating_awards/was/was_list.php", false); err == nil {
-				rosters.WAS = r
-			}
-		case "WAS-C":
-			if r, err := downloadRoster("WAS-C", "operating_awards/was-c/was-c_list.php", false); err == nil {
-				rosters.WASC = r
-			}
-		case "WAS-T":
-			if r, err := downloadRoster("WAS-T", "operating_awards/was-t/was-t_list.php", false); err == nil {
-				rosters.WAST = r
-			}
-		case "WAS-S":
-			if r, err := downloadRoster("WAS-S", "operating_awards/was-s/was-s_list.php", false); err == nil {
-				rosters.WASS = r
-			}
-		case "P":
-			if r, err := downloadRoster("PFX", "operating_awards/pfx/prefix_list.php", false); err == nil {
-				rosters.Prefix = r
-			}
-		case "DX":
-			if r, err := downloadRoster("DXQ", "operating_awards/dx/dxq_list.php", true); err == nil {
-				rosters.DXQ = r
-			}
-			if r, err := downloadRoster("DXC", "operating_awards/dx/dxc_list.php", true); err == nil {
-				rosters.DXC = r
-			}
-		case "QRP":
-			if r, err := downloadRoster("QRP 1x", "operating_awards/qrp_awards/qrp_x1_list.php", true); err == nil {
-				rosters.QRP1x = r
-			}
-			if r, err := downloadRoster("QRP 2x", "operating_awards/qrp_awards/qrp_x2_list.php", true); err == nil {
-				rosters.QRP2x = r
-			}
-		case "TKA":
-			if r, err := downloadRoster("TKA", "operating_awards/triplekey/triplekey_list.php", true); err == nil {
-				rosters.TKA = r
-			}
-		case "RC":
-			if r, err := downloadRoster("RC", "operating_awards/rag_chew/ragchew_list.php", true); err == nil {
-				rosters.RC = r
-			}
-		}
-	}
+    // Download rosters based on goals
+    for _, goal := range config.Goals {
+        switch goal {
+        case "C":
+            if r, err := downloadRoster("Centurion", "operating_awards/centurion/centurion_list.php", true); err == nil {
+                rosters.Centurion = r
+            }
+        case "T":
+            if r, err := downloadRoster("Tribune", "operating_awards/tribune/tribune_list.php", true); err == nil {
+                rosters.Tribune = r
+            }
+        case "S":
+            if r, err := downloadRoster("Senator", "operating_awards/senator/senator_list.php", true); err == nil {
+                rosters.Senator = r
+            }
+        case "WAS":
+            if r, err := downloadRoster("WAS", "operating_awards/was/was_list.php", false); err == nil {
+                rosters.WAS = r
+            }
+        case "WAS-C":
+            if r, err := downloadRoster("WAS-C", "operating_awards/was-c/was-c_list.php", false); err == nil {
+                rosters.WASC = r
+            }
+        case "WAS-T":
+            if r, err := downloadRoster("WAS-T", "operating_awards/was-t/was-t_list.php", false); err == nil {
+                rosters.WAST = r
+            }
+        case "WAS-S":
+            if r, err := downloadRoster("WAS-S", "operating_awards/was-s/was-s_list.php", false); err == nil {
+                rosters.WASS = r
+            }
+        case "P":
+            if r, err := downloadRoster("PFX", "operating_awards/pfx/prefix_list.php", false); err == nil {
+                rosters.Prefix = r
+            }
+        case "DX":
+            if r, err := downloadRoster("DXQ", "operating_awards/dx/dxq_list.php", true); err == nil {
+                rosters.DXQ = r
+            }
+            if r, err := downloadRoster("DXC", "operating_awards/dx/dxc_list.php", true); err == nil {
+                rosters.DXC = r
+            }
+        case "QRP":
+            if r, err := downloadRoster("QRP 1x", "operating_awards/qrp_awards/qrp_x1_list.php", true); err == nil {
+                rosters.QRP1x = r
+            }
+            if r, err := downloadRoster("QRP 2x", "operating_awards/qrp_awards/qrp_x2_list.php", true); err == nil {
+                rosters.QRP2x = r
+            }
+        case "TKA":
+            if r, err := downloadRoster("TKA", "operating_awards/triplekey/triplekey_list.php", true); err == nil {
+                rosters.TKA = r
+            }
+        case "RC":
+            if r, err := downloadRoster("RC", "operating_awards/rag_chew/ragchew_list.php", true); err == nil {
+                rosters.RC = r
+            }
+        }
+    }
 
-	return rosters
+    return rosters
 }
 
 func formatComma(n int) string {
-	s := strconv.Itoa(n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result.WriteRune(',')
-		}
-		result.WriteRune(c)
-	}
-	return result.String()
+    s := strconv.Itoa(n)
+    if len(s) <= 3 {
+        return s
+    }
+    var result strings.Builder
+    for i, c := range s {
+        if i > 0 && (len(s)-i)%3 == 0 {
+            result.WriteRune(',')
+        }
+        result.WriteRune(c)
+    }
+    return result.String()
 }
 
 func printWASProgress(name string, contacts map[string]ProcessedQSO) {
-	count := len(contacts)
-	if count == len(usStates) {
-		fmt.Printf("%s: Have %d, none needed\n", name, count)
-	} else {
-		var missing []string
-		for _, state := range usStates {
-			if _, exists := contacts[state]; !exists {
-				missing = append(missing, state)
-			}
-		}
-		if len(missing) > 14 {
-			fmt.Printf("%s: Have %d, only need %d more\n", name, count, len(missing))
-		} else {
-			fmt.Printf("%s: Have %d, only need %s\n", name, count, strings.Join(missing, ","))
-		}
-	}
+    count := len(contacts)
+    if count == len(usStates) {
+        fmt.Printf("%s: Have %d, none needed\n", name, count)
+    } else {
+        var missing []string
+        for _, state := range usStates {
+            if _, exists := contacts[state]; !exists {
+                missing = append(missing, state)
+            }
+        }
+        if len(missing) > 14 {
+            fmt.Printf("%s: Have %d, only need %d more\n", name, count, len(missing))
+        } else {
+            fmt.Printf("%s: Have %d, only need %s\n", name, count, strings.Join(missing, ","))
+        }
+    }
 }
 
 func printQRPProgress(contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		fmt.Println("QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.")
-		return
-	}
+    if len(contacts) == 0 {
+        fmt.Println("QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.")
+        return
+    }
 
-	pts1x := 0.0
-	pts2x := 0.0
-	count1x := 0
-	count2x := 0
+    pts1x := 0.0
+    pts2x := 0.0
+    count1x := 0
+    count2x := 0
 
-	for _, qso := range contacts {
-		pts := qrpBandPoints[qso.Band]
-		pts1x += pts
-		count1x++
-		if qso.QRPx2QSO {
-			pts2x += pts
-			count2x++
-		}
-	}
+    for _, qso := range contacts {
+        pts := qrpBandPoints[qso.Band]
+        pts1x += pts
+        count1x++
+        if qso.QRPx2QSO {
+            pts2x += pts
+            count2x++
+        }
+    }
 
-	// 1x
-	if count1x > 0 {
-		level := int(pts1x / 300)
-		if level > 0 {
-			next := level + 1
-			nextTarget := float64(next * 300)
-			remaining := nextTarget - pts1x
-			plural := "contact"
-			if count1x > 1 {
-				plural = "contacts"
-			}
-			fmt.Printf("QRP 1x: Have %d %s, %.1f points which qualifies for 1xQRP x%d. 1xQRP x%d requires %.1f points (%.1f more)\n",
-				count1x, plural, pts1x, level, next, nextTarget, remaining)
-		} else {
-			plural := "contact"
-			if count1x > 1 {
-				plural = "contacts"
-			}
-			fmt.Printf("QRP 1x: Have %d %s, %.1f points. 1xQRP x1 requires 300.0 points (%.1f more)\n",
-				count1x, plural, pts1x, 300.0-pts1x)
-		}
-	}
+    // 1x
+    if count1x > 0 {
+        level := int(pts1x / 300)
+        if level > 0 {
+            next := level + 1
+            nextTarget := float64(next * 300)
+            remaining := nextTarget - pts1x
+            plural := "contact"
+            if count1x > 1 {
+                plural = "contacts"
+            }
+            fmt.Printf("QRP 1x: Have %d %s, %.1f points which qualifies for 1xQRP x%d. 1xQRP x%d requires %.1f points (%.1f more)\n",
+                count1x, plural, pts1x, level, next, nextTarget, remaining)
+        } else {
+            plural := "contact"
+            if count1x > 1 {
+                plural = "contacts"
+            }
+            fmt.Printf("QRP 1x: Have %d %s, %.1f points. 1xQRP x1 requires 300.0 points (%.1f more)\n",
+                count1x, plural, pts1x, 300.0-pts1x)
+        }
+    }
 
-	// 2x
-	if count2x > 0 {
-		level := int(pts2x / 150)
-		if level > 0 {
-			next := level + 1
-			nextTarget := float64(next * 150)
-			remaining := nextTarget - pts2x
-			plural := "contact"
-			if count2x > 1 {
-				plural = "contacts"
-			}
-			fmt.Printf("QRP 2x: Have %d %s, %.1f points which qualifies for 2xQRP x%d. 2xQRP x%d requires %.1f points (%.1f more)\n",
-				count2x, plural, pts2x, level, next, nextTarget, remaining)
-		} else {
-			plural := "contact"
-			if count2x > 1 {
-				plural = "contacts"
-			}
-			fmt.Printf("QRP 2x: Have %d %s, %.1f points. 2xQRP x1 requires 150.0 points (%.1f more)\n",
-				count2x, plural, pts2x, 150.0-pts2x)
-		}
-	}
+    // 2x
+    if count2x > 0 {
+        level := int(pts2x / 150)
+        if level > 0 {
+            next := level + 1
+            nextTarget := float64(next * 150)
+            remaining := nextTarget - pts2x
+            plural := "contact"
+            if count2x > 1 {
+                plural = "contacts"
+            }
+            fmt.Printf("QRP 2x: Have %d %s, %.1f points which qualifies for 2xQRP x%d. 2xQRP x%d requires %.1f points (%.1f more)\n",
+                count2x, plural, pts2x, level, next, nextTarget, remaining)
+        } else {
+            plural := "contact"
+            if count2x > 1 {
+                plural = "contacts"
+            }
+            fmt.Printf("QRP 2x: Have %d %s, %.1f points. 2xQRP x1 requires 150.0 points (%.1f more)\n",
+                count2x, plural, pts2x, 150.0-pts2x)
+        }
+    }
 }
 
 func printDXProgress(dxc, dxq map[string]ProcessedQSO) {
-	// DXC
-	count := len(dxc)
-	if count == 0 {
-		fmt.Println("DXC: Have 0 countries. Need DXCC codes in ADI file or member data.")
-	} else {
-		level, next, target := getDXLevel(count)
-		if level == 0 {
-			fmt.Printf("DXC: Have %d countries. DXCx%d requires %d (%d more)\n",
-				count, next, target, target-count)
-		} else {
-			fmt.Printf("DXC: Have %d countries which qualifies for DXCx%d. DXCx%d requires %d (%d more)\n",
-				count, level, next, target, target-count)
-		}
-	}
+    // DXC
+    count := len(dxc)
+    if count == 0 {
+        fmt.Println("DXC: Have 0 countries. Need DXCC codes in ADI file or member data.")
+    } else {
+        level, next, target := getDXLevel(count)
+        if level == 0 {
+            fmt.Printf("DXC: Have %d countries. DXCx%d requires %d (%d more)\n",
+                count, next, target, target-count)
+        } else {
+            fmt.Printf("DXC: Have %d countries which qualifies for DXCx%d. DXCx%d requires %d (%d more)\n",
+                count, level, next, target, target-count)
+        }
+    }
 
-	// DXQ
-	count = len(dxq)
-	if count == 0 {
-		fmt.Println("DXQ: Have 0 foreign member QSOs.")
-	} else {
-		level, next, target := getDXLevel(count)
-		if level == 0 {
-			fmt.Printf("DXQ: Have %d foreign member QSOs. DXQx%d requires %d (%d more)\n",
-				count, next, target, target-count)
-		} else {
-			fmt.Printf("DXQ: Have %d foreign member QSOs which qualifies for DXQx%d. DXQx%d requires %d (%d more)\n",
-				count, level, next, target, target-count)
-		}
-	}
+    // DXQ
+    count = len(dxq)
+    if count == 0 {
+        fmt.Println("DXQ: Have 0 foreign member QSOs.")
+    } else {
+        level, next, target := getDXLevel(count)
+        if level == 0 {
+            fmt.Printf("DXQ: Have %d foreign member QSOs. DXQx%d requires %d (%d more)\n",
+                count, next, target, target-count)
+        } else {
+            fmt.Printf("DXQ: Have %d foreign member QSOs which qualifies for DXQx%d. DXQx%d requires %d (%d more)\n",
+                count, level, next, target, target-count)
+        }
+    }
 }
 
 func getDXLevel(count int) (current, next, target int) {
-	if count < 10 {
-		return 0, 10, 10
-	} else if count < 25 {
-		return 10, 25, 25
-	} else if count < 50 {
-		return 25, 50, 50
-	}
-	current = 50 + ((count-50)/25)*25
-	next = current + 25
-	return current, next, next
+    if count < 10 {
+        return 0, 10, 10
+    } else if count < 25 {
+        return 10, 25, 25
+    } else if count < 50 {
+        return 25, 50, 50
+    }
+    current = 50 + ((count-50)/25)*25
+    next = current + 25
+    return current, next, next
 }
 
 func printRCProgress(contacts map[string]ProcessedQSO) {
-	if len(contacts) == 0 {
-		fmt.Println("RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged")
-		return
-	}
+    if len(contacts) == 0 {
+        fmt.Println("RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged")
+        return
+    }
 
-	totalMins := 0
-	for _, qso := range contacts {
-		totalMins += qso.RagChewMins
-	}
-	count := len(contacts)
+    totalMins := 0
+    for _, qso := range contacts {
+        totalMins += qso.RagChewMins
+    }
+    count := len(contacts)
 
-	if totalMins >= 300 {
-		level := getRCLevel(totalMins)
-		next := level + 1
-		required := getRCRequired(next)
-		remaining := required - totalMins
-		plural := "QSO"
-		if count > 1 {
-			plural = "QSOs"
-		}
-		fmt.Printf("RC: Have %d %s (%s mins) which qualifies for RCx%d. RCx%d requires %s mins (%s more)\n",
-			count, plural, formatComma(totalMins), level, next, formatComma(required), formatComma(remaining))
-	} else {
-		plural := "QSO"
-		if count > 1 {
-			plural = "QSOs"
-		}
-		fmt.Printf("RC: Have %d %s (%s mins). RC requires 300 mins (%s more)\n",
-			count, plural, formatComma(totalMins), formatComma(300-totalMins))
-	}
+    if totalMins >= 300 {
+        level := getRCLevel(totalMins)
+        next := level + 1
+        required := getRCRequired(next)
+        remaining := required - totalMins
+        plural := "QSO"
+        if count > 1 {
+            plural = "QSOs"
+        }
+        fmt.Printf("RC: Have %d %s (%s mins) which qualifies for RCx%d. RCx%d requires %s mins (%s more)\n",
+            count, plural, formatComma(totalMins), level, next, formatComma(required), formatComma(remaining))
+    } else {
+        plural := "QSO"
+        if count > 1 {
+            plural = "QSOs"
+        }
+        fmt.Printf("RC: Have %d %s (%s mins). RC requires 300 mins (%s more)\n",
+            count, plural, formatComma(totalMins), formatComma(300-totalMins))
+    }
 }
 
 func getRCLevel(mins int) int {
-	if mins < 300 {
-		return 0
-	}
-	if mins < 450 {
-		return 1 + (mins-300)/15
-	}
-	return 10 + (mins-450)/25
+    if mins < 300 {
+        return 0
+    }
+    if mins < 450 {
+        return 1 + (mins-300)/15
+    }
+    return 10 + (mins-450)/25
 }
 
 func getRCRequired(level int) int {
-	if level == 0 {
-		return 300
-	}
-	if level <= 10 {
-		return 300 + level*15
-	}
-	return 450 + (level-10)*25
+    if level == 0 {
+        return 300
+    }
+    if level <= 10 {
+        return 300 + level*15
+    }
+    return 450 + (level-10)*25
 }
 
 func getBragContactsForMonth(ap *AwardProcessor, year, month int) map[string]bool {
-	bragContacts := make(map[string]bool)
+    bragContacts := make(map[string]bool)
 
-	// Get month boundaries
-	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-	monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
+    // Get month boundaries
+    monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+    monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
 
-	for _, qso := range ap.processedQSOs {
-		// Skip K9SKC
-		if qso.Call == "K9SKC" {
-			continue
-		}
+    for _, qso := range ap.processedQSOs {
+        // Skip K9SKC
+        if qso.Call == "K9SKC" {
+            continue
+        }
 
-		// Skip if no SKCC number
-		if qso.SKCCNr == "" || qso.SKCCNr == "NONE" {
-			continue
-		}
+        // Skip if no SKCC number
+        if qso.SKCCNr == "" || qso.SKCCNr == "NONE" {
+            continue
+        }
 
-		// Parse QSO date
-		qsoTime, err := time.Parse("20060102", qso.QSODate)
-		if err != nil {
-			continue
-		}
+        // Parse QSO date
+        qsoTime, err := time.Parse("20060102", qso.QSODate)
+        if err != nil {
+            continue
+        }
 
-		// Check if QSO is within the specified month
-		if qsoTime.Before(monthStart) || qsoTime.After(monthEnd) {
-			continue
-		}
+        // Check if QSO is within the specified month
+        if qsoTime.Before(monthStart) || qsoTime.After(monthEnd) {
+            continue
+        }
 
-		// Get member info
-		member := ap.memberDB[qso.SKCCNr]
-		if member == nil {
-			continue
-		}
+        // Get member info
+        member := ap.memberDB[qso.SKCCNr]
+        if member == nil {
+            continue
+        }
 
-		// Check join date
-		joinDate := effectiveDate(member.JoinDate)
-		if joinDate == "" || qso.QSODate <= joinDate {
-			continue
-		}
+        // Check join date
+        joinDate := effectiveDate(member.JoinDate)
+        if joinDate == "" || qso.QSODate <= joinDate {
+            continue
+        }
 
-		// TODO: Implement sprint and WARC checking
-		// For now, just count all contacts (matches AC2C test case with 0 contacts in Sept/Oct)
-		bragContacts[qso.SKCCNr] = true
-	}
+        // TODO: Implement sprint and WARC checking
+        // For now, just count all contacts (matches AC2C test case with 0 contacts in Sept/Oct)
+        bragContacts[qso.SKCCNr] = true
+    }
 
-	return bragContacts
+    return bragContacts
 }
 
 func printBRAGProgress(ap *AwardProcessor) {
-	// Get current month
-	now := time.Now().UTC()
-	currentYear := now.Year()
-	currentMonth := int(now.Month())
+    // Get current month
+    now := time.Now().UTC()
+    currentYear := now.Year()
+    currentMonth := int(now.Month())
 
-	// Get previous month
-	var prevYear, prevMonth int
-	if currentMonth == 1 {
-		prevYear = currentYear - 1
-		prevMonth = 12
-	} else {
-		prevYear = currentYear
-		prevMonth = currentMonth - 1
-	}
+    // Get previous month
+    var prevYear, prevMonth int
+    if currentMonth == 1 {
+        prevYear = currentYear - 1
+        prevMonth = 12
+    } else {
+        prevYear = currentYear
+        prevMonth = currentMonth - 1
+    }
 
-	// Calculate contacts for both months
-	prevMonthContacts := getBragContactsForMonth(ap, prevYear, prevMonth)
-	currentMonthContacts := getBragContactsForMonth(ap, currentYear, currentMonth)
+    // Calculate contacts for both months
+    prevMonthContacts := getBragContactsForMonth(ap, prevYear, prevMonth)
+    currentMonthContacts := getBragContactsForMonth(ap, currentYear, currentMonth)
 
-	// Month names
-	monthNames := []string{"", "January", "February", "March", "April", "May", "June",
-		"July", "August", "September", "October", "November", "December"}
+    // Month names
+    monthNames := []string{"", "January", "February", "March", "April", "May", "June",
+        "July", "August", "September", "October", "November", "December"}
 
-	fmt.Printf("BRAG: For %s: %d, For %s: %d\n",
-		monthNames[prevMonth], len(prevMonthContacts),
-		monthNames[currentMonth], len(currentMonthContacts))
+    fmt.Printf("BRAG: For %s: %d, For %s: %d\n",
+        monthNames[prevMonth], len(prevMonthContacts),
+        monthNames[currentMonth], len(currentMonthContacts))
 }
 
 func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
-	allMembers := make(map[string]bool)
-	for k := range sk {
-		allMembers[k] = true
-	}
-	for k := range bug {
-		allMembers[k] = true
-	}
-	for k := range ss {
-		allMembers[k] = true
-	}
+    allMembers := make(map[string]bool)
+    for k := range sk {
+        allMembers[k] = true
+    }
+    for k := range bug {
+        allMembers[k] = true
+    }
+    for k := range ss {
+        allMembers[k] = true
+    }
 
-	fmt.Printf("TKA: SK:%d/100 BUG:%d/100 SS:%d/100. Unique:%d/300\n",
-		len(sk), len(bug), len(ss), len(allMembers))
+    fmt.Printf("TKA: SK:%d/100 BUG:%d/100 SS:%d/100. Unique:%d/300\n",
+        len(sk), len(bug), len(ss), len(allMembers))
 }
 
 // ============================================================================
@@ -5307,369 +5071,369 @@ func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
 // the main loop. Current functionality focuses on award calculation from ADI files.
 
 func showUsage() {
-	fmt.Println("Usage:")
-	fmt.Println()
-	fmt.Println("   skcc_skimmer")
-	fmt.Println("                   [--adi <adi-file>]")
-	fmt.Println("                   [--awards-only]")
-	fmt.Println("                   [--bands <comma-separated-bands>]")
-	fmt.Println("                   [--brag-months <number-of-months-back>]")
-	fmt.Println("                   [--callsign <your-callsign>]")
-	fmt.Println("                   [--goals <goals>]")
-	fmt.Println("                   [--help]")
-	fmt.Println("                   [--interactive]")
-	fmt.Println("                   [--logfile <logfile-name>]")
-	fmt.Println("                   [--maidenhead <grid-square>]")
-	fmt.Println("                   [--notification <on|off>]")
-	fmt.Println("                   [--radius <distance-in-miles>]")
-	fmt.Println("                   [--targets <targets>]")
-	fmt.Println("                   [--verbose]")
-	fmt.Println(" or...")
-	fmt.Println()
-	fmt.Println("   skcc_skimmer")
-	fmt.Println("                   [-a <adi-file>]")
-	fmt.Println("                   [-b <comma-separated-bands>]")
-	fmt.Println("                   [-c <your-callsign>]")
-	fmt.Println("                   [-g <goals>]")
-	fmt.Println("                   [-h]")
-	fmt.Println("                   [-i]")
-	fmt.Println("                   [-l <logfile-name>]")
-	fmt.Println("                   [-m <grid-square>]")
-	fmt.Println("                   [-n <on|off>]")
-	fmt.Println("                   [-r <distance-in-miles>]")
-	fmt.Println("                   [-t <targets>]")
-	fmt.Println("                   [-v]")
-	fmt.Println()
-	os.Exit(0)
+    fmt.Println("Usage:")
+    fmt.Println()
+    fmt.Println("   skcc_skimmer")
+    fmt.Println("                   [--adi <adi-file>]")
+    fmt.Println("                   [--awards-only]")
+    fmt.Println("                   [--bands <comma-separated-bands>]")
+    fmt.Println("                   [--brag-months <number-of-months-back>]")
+    fmt.Println("                   [--callsign <your-callsign>]")
+    fmt.Println("                   [--goals <goals>]")
+    fmt.Println("                   [--help]")
+    fmt.Println("                   [--interactive]")
+    fmt.Println("                   [--logfile <logfile-name>]")
+    fmt.Println("                   [--maidenhead <grid-square>]")
+    fmt.Println("                   [--notification <on|off>]")
+    fmt.Println("                   [--radius <distance-in-miles>]")
+    fmt.Println("                   [--targets <targets>]")
+    fmt.Println("                   [--verbose]")
+    fmt.Println(" or...")
+    fmt.Println()
+    fmt.Println("   skcc_skimmer")
+    fmt.Println("                   [-a <adi-file>]")
+    fmt.Println("                   [-b <comma-separated-bands>]")
+    fmt.Println("                   [-c <your-callsign>]")
+    fmt.Println("                   [-g <goals>]")
+    fmt.Println("                   [-h]")
+    fmt.Println("                   [-i]")
+    fmt.Println("                   [-l <logfile-name>]")
+    fmt.Println("                   [-m <grid-square>]")
+    fmt.Println("                   [-n <on|off>]")
+    fmt.Println("                   [-r <distance-in-miles>]")
+    fmt.Println("                   [-t <targets>]")
+    fmt.Println("                   [-v]")
+    fmt.Println()
+    os.Exit(0)
 }
 
 func main() {
-	// Parse command-line flags
-	callsign := flag.String("c", "", "Your callsign")
-	flag.StringVar(callsign, "callsign", "", "Your callsign")
-	adiFile := flag.String("a", "", "ADI file path")
-	flag.StringVar(adiFile, "adi", "", "ADI file path")
-	goals := flag.String("g", "", "Goals (comma-separated)")
-	flag.StringVar(goals, "goals", "", "Goals (comma-separated)")
-	targets := flag.String("t", "", "Targets (comma-separated)")
-	flag.StringVar(targets, "targets", "", "Targets (comma-separated)")
-	maidenhead := flag.String("m", "", "Your grid square")
-	flag.StringVar(maidenhead, "maidenhead", "", "Your grid square")
-	bands := flag.String("b", "", "Comma-separated bands")
-	flag.StringVar(bands, "bands", "", "Comma-separated bands")
-	radius := flag.Int("r", 0, "Distance in miles")
-	flag.IntVar(radius, "radius", 0, "Distance in miles")
-	verbose := flag.Bool("v", false, "Verbose output")
-	flag.BoolVar(verbose, "verbose", false, "Verbose output")
-	logfile := flag.String("l", "", "Logfile name")
-	flag.StringVar(logfile, "logfile", "", "Logfile name")
-	notification := flag.String("n", "", "Notification (on|off)")
-	flag.StringVar(notification, "notification", "", "Notification (on|off)")
-	bragMonths := flag.Int("brag-months", 0, "Number of months back for BRAG")
-	awardsOnly := flag.Bool("awards-only", false, "Calculate awards only and exit")
-	interactive := flag.Bool("i", false, "Interactive mode")
-	flag.BoolVar(interactive, "interactive", false, "Interactive mode")
-	showHelp := flag.Bool("h", false, "Show help")
-	flag.BoolVar(showHelp, "help", false, "Show help")
-	flag.Parse()
+    // Parse command-line flags
+    callsign := flag.String("c", "", "Your callsign")
+    flag.StringVar(callsign, "callsign", "", "Your callsign")
+    adiFile := flag.String("a", "", "ADI file path")
+    flag.StringVar(adiFile, "adi", "", "ADI file path")
+    goals := flag.String("g", "", "Goals (comma-separated)")
+    flag.StringVar(goals, "goals", "", "Goals (comma-separated)")
+    targets := flag.String("t", "", "Targets (comma-separated)")
+    flag.StringVar(targets, "targets", "", "Targets (comma-separated)")
+    maidenhead := flag.String("m", "", "Your grid square")
+    flag.StringVar(maidenhead, "maidenhead", "", "Your grid square")
+    bands := flag.String("b", "", "Comma-separated bands")
+    flag.StringVar(bands, "bands", "", "Comma-separated bands")
+    radius := flag.Int("r", 0, "Distance in miles")
+    flag.IntVar(radius, "radius", 0, "Distance in miles")
+    verbose := flag.Bool("v", false, "Verbose output")
+    flag.BoolVar(verbose, "verbose", false, "Verbose output")
+    logfile := flag.String("l", "", "Logfile name")
+    flag.StringVar(logfile, "logfile", "", "Logfile name")
+    notification := flag.String("n", "", "Notification (on|off)")
+    flag.StringVar(notification, "notification", "", "Notification (on|off)")
+    bragMonths := flag.Int("brag-months", 0, "Number of months back for BRAG")
+    awardsOnly := flag.Bool("awards-only", false, "Calculate awards only and exit")
+    interactive := flag.Bool("i", false, "Interactive mode")
+    flag.BoolVar(interactive, "interactive", false, "Interactive mode")
+    showHelp := flag.Bool("h", false, "Show help")
+    flag.BoolVar(showHelp, "help", false, "Show help")
+    flag.Parse()
 
-	// Show help if requested
-	if *showHelp {
-		showUsage()
-	}
+    // Show help if requested
+    if *showHelp {
+        showUsage()
+    }
 
-	fmt.Printf("SKCC Skimmer version %s\n\n", Version)
+    fmt.Printf("SKCC Skimmer version %s\n\n", Version)
 
-	// Load configuration
-	var err error
-	config, err = parseConfig("skcc_skimmer.cfg")
-	if err != nil {
-		config = &Config{SpottersNearby: make(map[string]bool)}
-	}
+    // Load configuration
+    var err error
+    config, err = parseConfig("skcc_skimmer.cfg")
+    if err != nil {
+        config = &Config{SpottersNearby: make(map[string]bool)}
+    }
 
-	// Override with command-line flags
-	if *callsign != "" {
-		config.MyCallsign = strings.ToUpper(*callsign)
-	}
-	if *adiFile != "" {
-		config.ADIFile = *adiFile
-	}
-	if *goals != "" {
-		config.Goals = parseGoalsTargets(*goals)
-	}
-	if *targets != "" {
-		config.Targets = parseGoalsTargets(*targets)
-	}
-	if *maidenhead != "" {
-		config.MyGridsquare = strings.ToUpper(*maidenhead)
-	}
-	if *bands != "" {
-		config.Bands = parseBands(*bands)
-	}
-	if *radius > 0 {
-		config.SpotterRadius = *radius
-	}
-	if *verbose {
-		config.Verbose = *verbose
-	}
-	if *logfile != "" {
-		config.LogFile.Enabled = true
-		config.LogFile.FileName = *logfile
-	}
-	if *notification != "" {
-		if strings.ToLower(*notification) == "on" {
-			config.Notification.Enabled = true
-		} else {
-			config.Notification.Enabled = false
-		}
-	}
-	// Note: bragMonths not yet implemented in Go version
-	_ = bragMonths
-	config.AwardsOnly = *awardsOnly
-	config.Interactive = *interactive
+    // Override with command-line flags
+    if *callsign != "" {
+        config.MyCallsign = strings.ToUpper(*callsign)
+    }
+    if *adiFile != "" {
+        config.ADIFile = *adiFile
+    }
+    if *goals != "" {
+        config.Goals = parseGoalsTargets(*goals)
+    }
+    if *targets != "" {
+        config.Targets = parseGoalsTargets(*targets)
+    }
+    if *maidenhead != "" {
+        config.MyGridsquare = strings.ToUpper(*maidenhead)
+    }
+    if *bands != "" {
+        config.Bands = parseBands(*bands)
+    }
+    if *radius > 0 {
+        config.SpotterRadius = *radius
+    }
+    if *verbose {
+        config.Verbose = *verbose
+    }
+    if *logfile != "" {
+        config.LogFile.Enabled = true
+        config.LogFile.FileName = *logfile
+    }
+    if *notification != "" {
+        if strings.ToLower(*notification) == "on" {
+            config.Notification.Enabled = true
+        } else {
+            config.Notification.Enabled = false
+        }
+    }
+    // Note: bragMonths not yet implemented in Go version
+    _ = bragMonths
+    config.AwardsOnly = *awardsOnly
+    config.Interactive = *interactive
 
-	// Validate required fields - show usage if missing
-	if config.MyCallsign == "" || config.ADIFile == "" {
-		showUsage()
-	}
+    // Validate required fields - show usage if missing
+    if config.MyCallsign == "" || config.ADIFile == "" {
+        showUsage()
+    }
 
-	// Download SKCC data
-	if err := downloadSKCCData(); err != nil {
-		fmt.Printf("Error downloading SKCC data: %v\n", err)
-		os.Exit(1)
-	}
+    // Download SKCC data
+    if err := downloadSKCCData(); err != nil {
+        fmt.Printf("Error downloading SKCC data: %v\n", err)
+        os.Exit(1)
+    }
 
-	// Check if user is SKCC member
-	if members[config.MyCallsign] == nil {
-		fmt.Printf("'%s' is not a member of SKCC.\n", config.MyCallsign)
-		os.Exit(1)
-	}
+    // Check if user is SKCC member
+    if members[config.MyCallsign] == nil {
+        fmt.Printf("'%s' is not a member of SKCC.\n", config.MyCallsign)
+        os.Exit(1)
+    }
 
-	// Parse ADI file
-	// Download rosters before processing (needed for FYI messages)
-	fmt.Println("\nDownloading award rosters...")
-	rosters := downloadRosters(config)
+    // Parse ADI file
+    // Download rosters before processing (needed for FYI messages)
+    fmt.Println("\nDownloading award rosters...")
+    rosters := downloadRosters(config)
 
-	fmt.Printf("\nReading QSOs for %s from '%s'...\n", config.MyCallsign, config.ADIFile)
-	qsos, err := parseADI(config.ADIFile)
-	if err != nil {
-		fmt.Printf("Error reading ADI file: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Loaded %d QSOs\n", len(qsos))
+    fmt.Printf("\nReading QSOs for %s from '%s'...\n", config.MyCallsign, config.ADIFile)
+    qsos, err := parseADI(config.ADIFile)
+    if err != nil {
+        fmt.Printf("Error reading ADI file: %v\n", err)
+        os.Exit(1)
+    }
+    fmt.Printf("Loaded %d QSOs\n", len(qsos))
 
-	// Process QSOs through award processor
-	ap, err := NewAwardProcessor(members, config.MyCallsign)
-	if err != nil {
-		fmt.Printf("Error creating award processor: %v\n", err)
-		os.Exit(1)
-	}
+    // Process QSOs through award processor
+    ap, err := NewAwardProcessor(members, config.MyCallsign)
+    if err != nil {
+        fmt.Printf("Error creating award processor: %v\n", err)
+        os.Exit(1)
+    }
 
-	processedQSOs := ap.ProcessQSOs(qsos)
+    processedQSOs := ap.ProcessQSOs(qsos)
 
-	// Display processing summary
-	if len(ap.qsosSkipped) > 0 {
-		qsoWord := "QSO was"
-		if len(ap.qsosSkipped) > 1 {
-			qsoWord = "QSOs were"
-		}
-		skippedFile := filepath.Join("QSOs", config.MyCallsign+"-Skipped_QSOs.txt")
-		fmt.Printf("\nWARNING: %s %s skipped (non-CW, pre-membership, non-SKCC, etc.)\n",
-			formatComma(len(ap.qsosSkipped)), qsoWord)
-		fmt.Printf("         See %s for details\n", skippedFile)
-	}
+    // Display processing summary
+    if len(ap.qsosSkipped) > 0 {
+        qsoWord := "QSO was"
+        if len(ap.qsosSkipped) > 1 {
+            qsoWord = "QSOs were"
+        }
+        skippedFile := filepath.Join("QSOs", config.MyCallsign+"-Skipped_QSOs.txt")
+        fmt.Printf("\nWARNING: %s %s skipped (non-CW, pre-membership, non-SKCC, etc.)\n",
+            formatComma(len(ap.qsosSkipped)), qsoWord)
+        fmt.Printf("         See %s for details\n", skippedFile)
+    }
 
-	if ap.qsosMissingSKCC > 0 {
-		qsoWord := "QSO"
-		if ap.qsosMissingSKCC > 1 {
-			qsoWord = "QSOs"
-		}
-		needFile := filepath.Join("QSOs", config.MyCallsign+"-Need_SKCC_Numbers.txt")
-		fmt.Printf("\nWARNING: %s %s with SKCC members require SKCC numbers in log to count for awards\n",
-			formatComma(ap.qsosMissingSKCC), qsoWord)
-		fmt.Printf("         See %s for details\n", needFile)
-	}
+    if ap.qsosMissingSKCC > 0 {
+        qsoWord := "QSO"
+        if ap.qsosMissingSKCC > 1 {
+            qsoWord = "QSOs"
+        }
+        needFile := filepath.Join("QSOs", config.MyCallsign+"-Need_SKCC_Numbers.txt")
+        fmt.Printf("\nWARNING: %s %s with SKCC members require SKCC numbers in log to count for awards\n",
+            formatComma(ap.qsosMissingSKCC), qsoWord)
+        fmt.Printf("         See %s for details\n", needFile)
+    }
 
-	if len(ap.qsosAutoMatched) > 0 {
-		qsoWord := "QSO is"
-		if len(ap.qsosAutoMatched) > 1 {
-			qsoWord = "QSOs are"
-		}
-		inspectFile := filepath.Join("QSOs", config.MyCallsign+"-Inspect_QSOs.txt")
-		fmt.Println()
-		fmt.Printf("WARNING: %s %s being counted that have no SKCC number in your log.\n",
-			formatComma(len(ap.qsosAutoMatched)), qsoWord)
-		fmt.Println("         These QSOs were automatically matched to SKCC members in the database.")
-		fmt.Println("         If these are POTA, contest, or other non-SKCC QSOs, your award totals may be inflated.")
-		fmt.Printf("           (See %s for details.)\n", inspectFile)
-		fmt.Println()
-		fmt.Println("         Award totals shown include these QSOs (for compatibility with SKCCLogger).")
-		fmt.Println()
-		fmt.Println("         Please review your log and reconcile these QSOs by either adding the operator's valid ")
-		fmt.Println("         SKCC number or specifying NONE in the SKCC field for non-SKCC QSOs.")
-	}
+    if len(ap.qsosAutoMatched) > 0 {
+        qsoWord := "QSO is"
+        if len(ap.qsosAutoMatched) > 1 {
+            qsoWord = "QSOs are"
+        }
+        inspectFile := filepath.Join("QSOs", config.MyCallsign+"-Inspect_QSOs.txt")
+        fmt.Println()
+        fmt.Printf("WARNING: %s %s being counted that have no SKCC number in your log.\n",
+            formatComma(len(ap.qsosAutoMatched)), qsoWord)
+        fmt.Println("         These QSOs were automatically matched to SKCC members in the database.")
+        fmt.Println("         If these are POTA, contest, or other non-SKCC QSOs, your award totals may be inflated.")
+        fmt.Printf("           (See %s for details.)\n", inspectFile)
+        fmt.Println()
+        fmt.Println("         Award totals shown include these QSOs (for compatibility with SKCCLogger).")
+        fmt.Println()
+        fmt.Println("         Please review your log and reconcile these QSOs by either adding the operator's valid ")
+        fmt.Println("         SKCC number or specifying NONE in the SKCC field for non-SKCC QSOs.")
+    }
 
-	qsoPlural := "QSO"
-	if ap.qsosProcessed > 1 {
-		qsoPlural = "QSOs"
-	}
-	qualifyWord := "qualifies"
-	if ap.qsosAdded > 1 {
-		qualifyWord = "qualify"
-	}
-	fmt.Printf("\nProcessed %s %s: %s %s for awards\n",
-		formatComma(ap.qsosProcessed), qsoPlural, formatComma(ap.qsosAdded), qualifyWord)
+    qsoPlural := "QSO"
+    if ap.qsosProcessed > 1 {
+        qsoPlural = "QSOs"
+    }
+    qualifyWord := "qualifies"
+    if ap.qsosAdded > 1 {
+        qualifyWord = "qualify"
+    }
+    fmt.Printf("\nProcessed %s %s: %s %s for awards\n",
+        formatComma(ap.qsosProcessed), qsoPlural, formatComma(ap.qsosAdded), qualifyWord)
 
-	// Extract awards
-	awards := ExtractAwards(processedQSOs)
+    // Extract awards
+    awards := ExtractAwards(processedQSOs)
 
-	// Display configuration summary
-	printConfigSummary(config)
+    // Display configuration summary
+    printConfigSummary(config)
 
-	// Print progress
-	printProgress(awards, ap)
+    // Print progress
+    printProgress(awards, ap)
 
-	// Print FYI messages
-	printFYIMessages(awards, rosters, config, members)
+    // Print FYI messages
+    printFYIMessages(awards, rosters, config, members)
 
-	// Write award files
-	writeAwardFiles(awards, ap)
+    // Write award files
+    writeAwardFiles(awards, ap)
 
-	if config.AwardsOnly {
-		fmt.Println("\nQSO files generated, terminating skcc_skimmer...")
-		return
-	}
+    if config.AwardsOnly {
+        fmt.Println("\nQSO files generated, terminating skcc_skimmer...")
+        return
+    }
 
-	// Handle interactive mode if requested
-	if *interactive {
-		im := NewInteractiveMode(config, members, rosters)
-		im.Run()
-		return
-	}
+    // Handle interactive mode if requested
+    if *interactive {
+        im := NewInteractiveMode(config, members, rosters)
+        im.Run()
+        return
+    }
 
-	// Real-time monitoring mode
+    // Real-time monitoring mode
 
-	// Discover RBN spotters
-	spotterMgr := NewSpotterManager()
-	if err := spotterMgr.DiscoverSpotters(config.MyGridsquare); err != nil {
-		fmt.Printf("*** Error discovering RBN spotters: %v\n", err)
-		fmt.Println("Continuing without spotter filtering...")
-		config.SpottersNearby = make(map[string]bool)
-	} else {
-		// Display spotters
-		DisplaySpotters(spotterMgr, config.SpotterRadius, config.MyGridsquare, config.DistanceUnits)
+    // Discover RBN spotters
+    spotterMgr := NewSpotterManager()
+    if err := spotterMgr.DiscoverSpotters(config.MyGridsquare); err != nil {
+        fmt.Printf("*** Error discovering RBN spotters: %v\n", err)
+        fmt.Println("Continuing without spotter filtering...")
+        config.SpottersNearby = make(map[string]bool)
+    } else {
+        // Display spotters
+        DisplaySpotters(spotterMgr, config.SpotterRadius, config.MyGridsquare, config.DistanceUnits)
 
-		// Populate nearby spotters map
-		config.SpottersNearby = make(map[string]bool)
-		nearby := spotterMgr.GetNearbySpotters(config.SpotterRadius)
-		for _, spotter := range nearby {
-			config.SpottersNearby[spotter.Callsign] = true
-		}
-	}
+        // Populate nearby spotters map
+        config.SpottersNearby = make(map[string]bool)
+        nearby := spotterMgr.GetNearbySpotters(config.SpotterRadius)
+        for _, spotter := range nearby {
+            config.SpottersNearby[spotter.Callsign] = true
+        }
+    }
 
-	// Create context for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+    // Create context for graceful shutdown
+    ctx, cancel := context.WithCancel(context.Background())
+    defer cancel()
 
-	// Set up signal handling for Ctrl+C
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+    // Set up signal handling for Ctrl+C
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
-	// Create WaitGroup for all goroutines
-	var wg sync.WaitGroup
+    // Create WaitGroup for all goroutines
+    var wg sync.WaitGroup
 
-	// Create spot processor for RBN spots
-	spotProcessor := NewSpotProcessor(config, members, rosters)
+    // Create spot processor for RBN spots
+    spotProcessor := NewSpotProcessor(config, members, rosters)
 
-	// Launch RBN connection
-	rbn := NewRBNConnection(config.MyCallsign)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		// Run RBN connection and process spots
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				if err := rbn.Connect(); err != nil {
-					fmt.Printf("RBN connection error: %v\n", err)
-					// Retry after delay
-					time.Sleep(30 * time.Second)
-					continue
-				}
+    // Launch RBN connection
+    rbn := NewRBNConnection(config.MyCallsign)
+    wg.Add(1)
+    go func() {
+        defer wg.Done()
+        // Run RBN connection and process spots
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            default:
+                if err := rbn.Connect(); err != nil {
+                    fmt.Printf("RBN connection error: %v\n", err)
+                    // Retry after delay
+                    time.Sleep(30 * time.Second)
+                    continue
+                }
 
-				// Connected successfully, now process spots from the channel
-				for spotLine := range rbn.spotChan {
-					// Verbose mode: print every RBN line
-					if config.Verbose {
-						fmt.Printf("   %s\n", spotLine)
-					}
+                // Connected successfully, now process spots from the channel
+                for spotLine := range rbn.spotChan {
+                    // Verbose mode: print every RBN line
+                    if config.Verbose {
+                        fmt.Printf("   %s\n", spotLine)
+                    }
 
-					if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
-						if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
-							printWithDotClear(output)
-						}
-					}
-				}
+                    if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
+                        if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
+                            printWithDotClear(output)
+                        }
+                    }
+                }
 
-				// Connection closed, retry after delay
-				fmt.Println("RBN connection closed, reconnecting in 30 seconds...")
-				time.Sleep(30 * time.Second)
-			}
-		}
-	}()
+                // Connection closed, retry after delay
+                fmt.Println("RBN connection closed, reconnecting in 30 seconds...")
+                time.Sleep(30 * time.Second)
+            }
+        }
+    }()
 
-	// Launch Sked monitoring if enabled
-	if config.Sked.Enabled {
-		sked := NewSkedMonitor(config, spotProcessor, members, rosters)
-		wg.Add(1)
-		go sked.MonitorTask(ctx, &wg)
-	}
+    // Launch Sked monitoring if enabled
+    if config.Sked.Enabled {
+        sked := NewSkedMonitor(config, spotProcessor, members, rosters)
+        wg.Add(1)
+        go sked.MonitorTask(ctx, &wg)
+    }
 
-	// Launch file watching if ADI file provided
-	if config.ADIFile != "" {
-		fw := NewFileWatcher(config, config.ADIFile)
-		wg.Add(1)
-		go fw.WatchTask(ctx, &wg)
-	}
+    // Launch file watching if ADI file provided
+    if config.ADIFile != "" {
+        fw := NewFileWatcher(config, config.ADIFile)
+        wg.Add(1)
+        go fw.WatchTask(ctx, &wg)
+    }
 
-	// Launch progress dots if enabled (but not in verbose mode)
-if config.ProgressDots.Enabled && !config.Verbose {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-ctx.Done():
-					dotsMutex.Lock()
-					if dotsOnLine > 0 {
-						fmt.Println()
-					}
-					dotsMutex.Unlock()
-					return
-				case <-ticker.C:
-					dotsMutex.Lock()
-					fmt.Print(".")
-					dotsOnLine++
-					if dotsOnLine >= config.ProgressDots.DotsPerLine {
-						fmt.Println()
-						dotsOnLine = 0
-					}
-					dotsMutex.Unlock()
-				}
-			}
-		}()
-	}
+    // Launch progress dots if enabled (but not in verbose mode)
+    if config.ProgressDots.Enabled && !config.Verbose {
+        wg.Add(1)
+        go func() {
+            defer wg.Done()
+            ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
+            defer ticker.Stop()
+            for {
+                select {
+                case <-ctx.Done():
+                    dotsMutex.Lock()
+                    if dotsOnLine > 0 {
+                        fmt.Println()
+                    }
+                    dotsMutex.Unlock()
+                    return
+                case <-ticker.C:
+                    dotsMutex.Lock()
+                    fmt.Print(".")
+                    dotsOnLine++
+                    if dotsOnLine >= config.ProgressDots.DotsPerLine {
+                        fmt.Println()
+                        dotsOnLine = 0
+                    }
+                    dotsMutex.Unlock()
+                }
+            }
+        }()
+    }
 
-	// Wait for shutdown signal
-	<-sigChan
-	fmt.Println("\n\nShutting down...")
-	cancel()
+    // Wait for shutdown signal
+    <-sigChan
+    fmt.Println("\n\nShutting down...")
+    cancel()
 
-	// Wait for all goroutines to finish
-	wg.Wait()
-	fmt.Println("Shutdown complete")
+    // Wait for all goroutines to finish
+    wg.Wait()
+    fmt.Println("Shutdown complete")
 }
