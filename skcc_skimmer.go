@@ -5548,7 +5548,6 @@ func main() {
 	}
 
 	// Real-time monitoring mode
-	fmt.Println("\nStarting real-time monitoring...")
 
 	// Discover RBN spotters
 	spotterMgr := NewSpotterManager()
@@ -5623,7 +5622,6 @@ func main() {
 
 	// Launch Sked monitoring if enabled
 	if config.Sked.Enabled {
-		fmt.Println("Starting SKCC Sked page monitoring...")
 		sked := NewSkedMonitor(config, spotProcessor, members, rosters)
 		wg.Add(1)
 		go sked.MonitorTask(ctx, &wg)
