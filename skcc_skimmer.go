@@ -2693,6 +2693,13 @@ func parseConfig(filename string) (*Config, error) {
 			key := strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
 
+			// If value starts with {, it's a multi-line dictionary - accumulate until }
+			if strings.HasPrefix(value, "{") {
+				for !strings.Contains(value, "}") && scanner.Scan() {
+					value += " " + strings.TrimSpace(scanner.Text())
+				}
+			}
+
 			// Strip inline comments (must be done before quote removal)
 			if idx := strings.Index(value, "#"); idx != -1 {
 				// Only strip if # is outside quotes
