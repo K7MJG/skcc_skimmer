@@ -4707,64 +4707,61 @@ func downloadRosters(config *Config) *Rosters {
         RC:        make(map[string]int),
     }
 
-    // Download rosters based on goals
+    // Define roster download tasks
+    type rosterTask struct {
+        name       string
+        url        string
+        useSKCCKey bool
+        target     *map[string]int
+    }
+
+    var tasks []rosterTask
+
+    // Build list of rosters to download based on goals
     for _, goal := range config.Goals {
         switch goal {
         case "C":
-            if r, err := downloadRoster("Centurion", "operating_awards/centurion/centurion_list.php", true); err == nil {
-                rosters.Centurion = r
-            }
+            tasks = append(tasks, rosterTask{"Centurion", "operating_awards/centurion/centurion_list.php", true, &rosters.Centurion})
         case "T":
-            if r, err := downloadRoster("Tribune", "operating_awards/tribune/tribune_list.php", true); err == nil {
-                rosters.Tribune = r
-            }
+            tasks = append(tasks, rosterTask{"Tribune", "operating_awards/tribune/tribune_list.php", true, &rosters.Tribune})
         case "S":
-            if r, err := downloadRoster("Senator", "operating_awards/senator/senator_list.php", true); err == nil {
-                rosters.Senator = r
-            }
+            tasks = append(tasks, rosterTask{"Senator", "operating_awards/senator/senator_list.php", true, &rosters.Senator})
         case "WAS":
-            if r, err := downloadRoster("WAS", "operating_awards/was/was_list.php", false); err == nil {
-                rosters.WAS = r
-            }
+            tasks = append(tasks, rosterTask{"WAS", "operating_awards/was/was_list.php", false, &rosters.WAS})
         case "WAS-C":
-            if r, err := downloadRoster("WAS-C", "operating_awards/was-c/was-c_list.php", false); err == nil {
-                rosters.WASC = r
-            }
+            tasks = append(tasks, rosterTask{"WAS-C", "operating_awards/was-c/was-c_list.php", false, &rosters.WASC})
         case "WAS-T":
-            if r, err := downloadRoster("WAS-T", "operating_awards/was-t/was-t_list.php", false); err == nil {
-                rosters.WAST = r
-            }
+            tasks = append(tasks, rosterTask{"WAS-T", "operating_awards/was-t/was-t_list.php", false, &rosters.WAST})
         case "WAS-S":
-            if r, err := downloadRoster("WAS-S", "operating_awards/was-s/was-s_list.php", false); err == nil {
-                rosters.WASS = r
-            }
+            tasks = append(tasks, rosterTask{"WAS-S", "operating_awards/was-s/was-s_list.php", false, &rosters.WASS})
         case "P":
-            if r, err := downloadRoster("PFX", "operating_awards/pfx/prefix_list.php", false); err == nil {
-                rosters.Prefix = r
-            }
+            tasks = append(tasks, rosterTask{"PFX", "operating_awards/pfx/prefix_list.php", false, &rosters.Prefix})
         case "DX":
-            if r, err := downloadRoster("DXQ", "operating_awards/dx/dxq_list.php", true); err == nil {
-                rosters.DXQ = r
-            }
-            if r, err := downloadRoster("DXC", "operating_awards/dx/dxc_list.php", true); err == nil {
-                rosters.DXC = r
-            }
+            tasks = append(tasks, rosterTask{"DXQ", "operating_awards/dx/dxq_list.php", true, &rosters.DXQ})
+            tasks = append(tasks, rosterTask{"DXC", "operating_awards/dx/dxc_list.php", true, &rosters.DXC})
         case "QRP":
-            if r, err := downloadRoster("QRP 1x", "operating_awards/qrp_awards/qrp_x1_list.php", true); err == nil {
-                rosters.QRP1x = r
-            }
-            if r, err := downloadRoster("QRP 2x", "operating_awards/qrp_awards/qrp_x2_list.php", true); err == nil {
-                rosters.QRP2x = r
-            }
+            tasks = append(tasks, rosterTask{"QRP 1x", "operating_awards/qrp_awards/qrp_x1_list.php", true, &rosters.QRP1x})
+            tasks = append(tasks, rosterTask{"QRP 2x", "operating_awards/qrp_awards/qrp_x2_list.php", true, &rosters.QRP2x})
         case "TKA":
-            if r, err := downloadRoster("TKA", "operating_awards/triplekey/triplekey_list.php", true); err == nil {
-                rosters.TKA = r
-            }
+            tasks = append(tasks, rosterTask{"TKA", "operating_awards/triplekey/triplekey_list.php", true, &rosters.TKA})
         case "RC":
-            if r, err := downloadRoster("RC", "operating_awards/rag_chew/ragchew_list.php", true); err == nil {
-                rosters.RC = r
-            }
+            tasks = append(tasks, rosterTask{"RC", "operating_awards/rag_chew/ragchew_list.php", true, &rosters.RC})
         }
+    }
+
+    // Download all rosters in parallel
+    if len(tasks) > 0 {
+        var wg sync.WaitGroup
+        for _, task := range tasks {
+            wg.Add(1)
+            go func(t rosterTask) {
+                defer wg.Done()
+                if r, err := downloadRoster(t.name, t.url, t.useSKCCKey); err == nil {
+                    *t.target = r
+                }
+            }(task)
+        }
+        wg.Wait()
     }
 
     return rosters
