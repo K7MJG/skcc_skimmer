@@ -20,12 +20,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -228,8 +230,7 @@ type Rosters struct {
 type Member struct {
 	SKCCNumber  string   // With suffix (e.g., "2748S")
 	PlainNumber string   // Without suffix (e.g., "2748")
-	Callsign    string   // Primary callsign
-	PrimaryCall string   // Same as Callsign for now
+	Callsign    string   // Primary callsign (stored as-is from database, may include /SK, /EX)
 	Name        string   // Member name
 	SPC         string   // State/Province/Country
 	OldCalls    []string // Previous callsigns
@@ -1787,7 +1788,7 @@ func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Ros
 
 // Run starts the interactive mode loop
 func (im *InteractiveMode) Run() {
-	fmt.Println("\nInteractive mode. Enter callsigns or \"q\" to quit, \"r\" to refresh.\n")
+	fmt.Println("\nInteractive mode. Enter callsigns or \"q\" to quit, \"r\" to refresh.")
 
 	scanner := bufio.NewScanner(os.Stdin)
 
@@ -1891,7 +1892,7 @@ func (im *InteractiveMode) lookupByNumber(numberStr string) {
 	// Find member with this number
 	found := false
 	for callsign, member := range im.members {
-		if member.PlainNumber == cleaned && callsign == member.PrimaryCall {
+		if member.PlainNumber == cleaned && callsign == member.Callsign {
 			im.printMemberInfo(callsign, member)
 			found = true
 			break
@@ -2614,7 +2615,6 @@ func downloadSKCCData() error {
 			SKCCNumber:  parts[0],
 			PlainNumber: cleanSKCCNumber(parts[0]),
 			Callsign:    strings.ToUpper(parts[1]),
-			PrimaryCall: strings.ToUpper(parts[1]),
 			Name:        parts[2],
 			SPC:         parts[3],
 			DXCode:      parts[5],
@@ -2630,13 +2630,20 @@ func downloadSKCCData() error {
 			member.OldCalls = strings.Split(parts[4], ",")
 		}
 
-		// Index by primary callsign
+		// Store callsign AS-IS from database (including /SK, /EX suffixes)
+		// Current callsign takes precedence - always add/overwrite
 		members[member.Callsign] = member
 
-		// Index by old callsigns
+		// Index by old callsigns - DON'T overwrite existing entries
+		// This matches Python logic: old calls don't replace current calls
 		for _, oldCall := range member.OldCalls {
 			if oldCall != "" {
-				members[strings.ToUpper(oldCall)] = member
+				oldCallClean := strings.ToUpper(strings.TrimSpace(oldCall))
+				// Only add if not already present (don't overwrite current calls with old calls)
+				if _, exists := members[oldCallClean]; !exists {
+					members[oldCallClean] = member
+				}
+				// Note: Python also has logic for inactive->active upgrades, but we can skip for now
 			}
 		}
 
@@ -2718,7 +2725,7 @@ func parseADI(filename string) ([]QSO, error) {
 		for _, match := range matches {
 			if len(match) >= 3 {
 				field := strings.ToUpper(match[1])
-				value := match[2]
+				value := strings.TrimSpace(match[2])  // Trim whitespace from value
 
 				switch field {
 				case "QSO_DATE":
@@ -2790,18 +2797,19 @@ func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardPr
 		myMember:   myMember,
 	}
 
-	// Build memberDB indexed by SKCC number
+	// Build memberDB indexed by SKCC number AND callsignDB for GetSKCCFromCall
+	// We need to iterate by member NUMBER (not by callsign) to ensure ALL members
+	// who have/had a callsign are indexed properly
 	seenNumbers := make(map[string]bool)
-	for _, member := range memberDB {
-		if !seenNumbers[member.PlainNumber] {
-			ap.memberDB[member.PlainNumber] = member
-			seenNumbers[member.PlainNumber] = true
-		}
-	}
 
-	// Build callsignDB for GetSKCCFromCall lookups
-	for call, member := range memberDB {
-		callUpper := strings.ToUpper(call)
+	// Helper function to add callsign to callsignDB
+	addToCallsignDB := func(callsign string, member *Member) {
+		callUpper := strings.ToUpper(strings.TrimSpace(callsign))
+		if callUpper == "" {
+			return
+		}
+
+		// Check if this member already indexed under this callsign
 		found := false
 		for _, m := range ap.callsignDB[callUpper] {
 			if m.PlainNumber == member.PlainNumber {
@@ -2811,6 +2819,47 @@ func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardPr
 		}
 		if !found {
 			ap.callsignDB[callUpper] = append(ap.callsignDB[callUpper], member)
+		}
+
+		// Also index by base callsign if it has /SK or /EX suffix
+		if strings.Contains(callUpper, "/") {
+			parts := strings.SplitN(callUpper, "/", 2)
+			if len(parts) == 2 && (parts[1] == "SK" || parts[1] == "EX") {
+				baseCall := parts[0]
+				found := false
+				for _, m := range ap.callsignDB[baseCall] {
+					if m.PlainNumber == member.PlainNumber {
+						found = true
+						break
+					}
+				}
+				if !found {
+					ap.callsignDB[baseCall] = append(ap.callsignDB[baseCall], member)
+				}
+			}
+		}
+	}
+
+	// Build list of unique members (by SKCC number)
+	// This is necessary because memberDB map keys are callsigns, and multiple
+	// members can share the same callsign (current for one, old for another)
+	uniqueMembers := make([]*Member, 0, len(memberDB))
+	for _, member := range memberDB {
+		if !seenNumbers[member.PlainNumber] {
+			uniqueMembers = append(uniqueMembers, member)
+			ap.memberDB[member.PlainNumber] = member
+			seenNumbers[member.PlainNumber] = true
+		}
+	}
+
+	// Now index all callsigns for each unique member
+	for _, member := range uniqueMembers {
+		// Index current callsign
+		addToCallsignDB(member.Callsign, member)
+
+		// Index all old callsigns
+		for _, oldCall := range member.OldCalls {
+			addToCallsignDB(oldCall, member)
 		}
 	}
 
@@ -3057,7 +3106,7 @@ func (ap *AwardProcessor) createProcessedQSO(qso QSO, mbr *Member) ProcessedQSO 
 
 	processed := ProcessedQSO{
 		Call:       qso.Call,
-		CallPri:    mbr.PrimaryCall,
+		CallPri:    mbr.Callsign,
 		QSODate:    qso.QSODate,
 		TimeOn:     qso.TimeOn,
 		TimeOff:    qso.TimeOff,
@@ -3134,20 +3183,12 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
 		processed.TribAwardQSO = true
 	}
 
-	// Senator Award (I have Tx8, they have Tribune/Senator, started 2013-08-01)
+	// Senator Award (I have Tx8, they have Tribune, started 2013-08-01)
 	myTX8Date := normalizeDate(ap.myTX8Date)
-	if qsoDate >= "20130801" && myTX8Date != "" {
-		if mbr.TDate != "" {
-			mbrTDate := normalizeDate(mbr.TDate)
-			if qsoDate >= myTX8Date && qsoDate >= mbrTDate {
-				processed.SenAwardQSO = true
-			}
-		} else if mbr.SDate != "" {
-			mbrSDate := normalizeDate(mbr.SDate)
-			if qsoDate >= myTX8Date && qsoDate >= mbrSDate {
-				processed.SenAwardQSO = true
-			}
-		}
+	mbrTDate := normalizeDate(mbr.TDate)
+	if qsoDate >= "20130801" && myTX8Date != "" && mbrTDate != "" &&
+		qsoDate >= myTX8Date && qsoDate >= mbrTDate {
+		processed.SenAwardQSO = true
 	}
 
 	// DX Awards
@@ -3168,12 +3209,25 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
 		}
 	}
 
-	// Prefix Award
-	prefix := extractPrefix(processed.Call)
-	if prefix != "" {
-		processed.Pfx = prefix
-		processed.PfxCall = processed.Call
-		processed.PfxPts = mbr.PlainNumber
+	// Prefix Award - started on 20130101
+	// Python logic (line 3816-3826): Split by /, try each segment, use the one that has valid SKCC
+	if qsoDate >= "20130101" {
+		callSegments := strings.Split(processed.Call, "/")
+		for _, pfxCall := range callSegments {
+			// Check if this segment has a valid SKCC member (matches Python line 3819)
+			pfxSKCCNr, _ := ap.GetSKCCFromCall(pfxCall, mbr.PlainNumber)
+			if pfxSKCCNr != "" {
+				processed.PfxCall = pfxCall
+				// Extract prefix from the segment that matched (Python line 3823-3826)
+				if len(pfxCall) >= 3 && pfxCall[2] >= '0' && pfxCall[2] <= '9' {
+					processed.Pfx = pfxCall[:3]
+				} else if len(pfxCall) >= 2 {
+					processed.Pfx = pfxCall[:2]
+				}
+				processed.PfxPts = pfxSKCCNr
+				break  // Use first matching segment
+			}
+		}
 	}
 
 	// QRP Awards
@@ -3210,25 +3264,30 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
 }
 
 func calculateDuration(timeOn, timeOff string) int {
-	// Parse HHMMSS to minutes
-	getMinutes := func(t string) int {
+	// Parse HHMMSS to seconds, then convert to minutes (matching Python logic)
+	getSeconds := func(t string) int {
 		if len(t) < 4 {
 			return 0
 		}
 		hh, _ := strconv.Atoi(t[0:2])
 		mm, _ := strconv.Atoi(t[2:4])
-		return hh*60 + mm
+		ss := 0
+		if len(t) >= 6 {
+			ss, _ = strconv.Atoi(t[4:6])
+		}
+		return hh*3600 + mm*60 + ss
 	}
 
-	onMins := getMinutes(timeOn)
-	offMins := getMinutes(timeOff)
+	onSecs := getSeconds(timeOn)
+	offSecs := getSeconds(timeOff)
 
-	duration := offMins - onMins
-	if duration < 0 {
-		duration += 24 * 60 // Handle midnight rollover
+	durationSecs := offSecs - onSecs
+	if durationSecs < 0 {
+		durationSecs += 24 * 3600 // Handle midnight rollover
 	}
 
-	return duration
+	// Return duration in minutes (floor division, matching Python's // 60)
+	return durationSecs / 60
 }
 
 // ============================================================================
@@ -3305,31 +3364,41 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
 	awards["WAS-T"] = contactsWAST
 	awards["WAS-S"] = contactsWASS
 
-	// Prefix - keep highest member number per prefix
+	// Prefix - ONE entry per prefix (NOT per prefix+band combination)
+	// Keep QSO with HIGHEST member number for each prefix (Python line 4149)
 	contactsP := make(map[string]ProcessedQSO)
 	for _, qso := range processed {
-		if qso.Pfx != "" {
-			key := qso.Pfx + "_" + qso.Band
-			existing, exists := contactsP[key]
+		if qso.Pfx != "" && qso.PfxPts != "" {
+			existing, exists := contactsP[qso.Pfx]
 			if !exists {
-				contactsP[key] = qso
+				contactsP[qso.Pfx] = qso
 			} else {
+				// Compare member numbers - keep higher
 				existingNum, _ := strconv.Atoi(existing.PfxPts)
 				newNum, _ := strconv.Atoi(qso.PfxPts)
 				if newNum > existingNum {
-					contactsP[key] = qso
+					contactsP[qso.Pfx] = qso
 				}
 			}
 		}
 	}
 	awards["P"] = contactsP
 
-	// QRP
+	// QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found
+	// Python logic (line 4157-4162): Keep first QSO, upgrade 1x to 2x if 2x found later
 	contactsQRP := make(map[string]ProcessedQSO)
 	for _, qso := range processed {
 		if qso.QRPx1QSO {
 			key := qso.SKCCNr + "_" + qso.Band
-			contactsQRP[key] = qso
+			existing, exists := contactsQRP[key]
+			if !exists {
+				// First QSO for this member/band combination
+				contactsQRP[key] = qso
+			} else if qso.QRPx2QSO && !existing.QRPx2QSO {
+				// Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
+				contactsQRP[key] = qso
+			}
+			// Otherwise keep the first QSO (don't overwrite)
 		}
 	}
 	awards["QRP"] = contactsQRP
@@ -3352,13 +3421,35 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
 	awards["DXC"] = contactsDXC
 	awards["DXQ"] = contactsDXQ
 
-	// RC - keep longest per member
+	// RC - Process in ADI file order with back-to-back duplicate handling
+	// Python logic (line 4084-4118): Allow multiple QSOs with same member
+	// BUT if same member appears consecutively in ADI file, keep only longest
 	contactsRC := make(map[string]ProcessedQSO)
+	var lastRCMember string
+	var lastRCKey string
+	var lastRCMins int
+
 	for _, qso := range processed {
 		if qso.RagChewQSO {
-			existing, exists := contactsRC[qso.SKCCNr]
-			if !exists || qso.RagChewMins > existing.RagChewMins {
-				contactsRC[qso.SKCCNr] = qso
+			// Use unique key: member_date_time (matches Python line 4088)
+			rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
+
+			if qso.SKCCNr != lastRCMember {
+				// Different member - always add
+				contactsRC[rcKey] = qso
+				lastRCMember = qso.SKCCNr
+				lastRCKey = rcKey
+				lastRCMins = qso.RagChewMins
+			} else {
+				// Same member as previous - only keep if longer
+				if qso.RagChewMins > lastRCMins {
+					// Remove previous and add this one (Python line 4107-4109)
+					delete(contactsRC, lastRCKey)
+					contactsRC[rcKey] = qso
+					lastRCKey = rcKey
+					lastRCMins = qso.RagChewMins
+				}
+				// If not longer, skip this QSO (keep the previous one)
 			}
 		}
 	}
@@ -4617,14 +4708,109 @@ func main() {
 		return
 	}
 
-	// TODO: Real-time monitoring not yet fully integrated
-	// The following features are implemented but need integration:
-	// 1. Get nearby spotters and display
-	// 2. Launch RBN connection and spot processing
-	// 3. Launch Sked monitoring (if enabled)
-	// 4. Launch progress dots (if enabled)
-	// 5. File watching for ADI updates
-	//
-	// For now, the program calculates awards and exits
-	// This allows testing of award calculation logic without RBN connection
+	// Download rosters for goal/target matching (needed for interactive mode)
+	var rosters *Rosters
+	if *interactive || !config.AwardsOnly {
+		fmt.Println("\nDownloading award rosters...")
+		rosters = downloadRosters(config)
+	}
+
+	// Handle interactive mode if requested
+	if *interactive {
+		im := NewInteractiveMode(config, members, rosters)
+		im.Run()
+		return
+	}
+
+	// Real-time monitoring mode
+	fmt.Println("\nStarting real-time monitoring...")
+
+	// TODO: Get nearby spotters from RBN status page
+	// For now, use empty spotter map
+	config.SpottersNearby = make(map[string]bool)
+
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Set up signal handling for Ctrl+C
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	// Create WaitGroup for all goroutines
+	var wg sync.WaitGroup
+
+	// Create spot processor for RBN spots
+	spotProcessor := NewSpotProcessor(config)
+
+	// Launch RBN connection
+	rbn := NewRBNConnection(config.MyCallsign)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		// Run RBN connection and process spots
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				if err := rbn.Connect(); err != nil {
+					fmt.Printf("RBN connection error: %v\n", err)
+					// Retry after delay
+					time.Sleep(30 * time.Second)
+					continue
+				}
+			}
+		}
+	}()
+
+	// Launch Sked monitoring if enabled
+	if config.Sked.Enabled {
+		sked := NewSkedMonitor(config, spotProcessor)
+		wg.Add(1)
+		go sked.MonitorTask(ctx, &wg)
+	}
+
+	// Launch file watching if ADI file provided
+	if config.ADIFile != "" {
+		fw := NewFileWatcher(config, config.ADIFile)
+		wg.Add(1)
+		go fw.WatchTask(ctx, &wg)
+	}
+
+	// Launch progress dots if enabled
+	if config.ProgressDots.Enabled {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
+			defer ticker.Stop()
+			dotsOnLine := 0
+			for {
+				select {
+				case <-ctx.Done():
+					if dotsOnLine > 0 {
+						fmt.Println()
+					}
+					return
+				case <-ticker.C:
+					fmt.Print(".")
+					dotsOnLine++
+					if dotsOnLine >= config.ProgressDots.DotsPerLine {
+						fmt.Println()
+						dotsOnLine = 0
+					}
+				}
+			}
+		}()
+	}
+
+	// Wait for shutdown signal
+	<-sigChan
+	fmt.Println("\n\nShutting down...")
+	cancel()
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+	fmt.Println("Shutdown complete")
 }
