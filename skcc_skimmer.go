@@ -1199,6 +1199,8 @@ type SkedLogin struct {
 type SkedMonitor struct {
 	config          *Config
 	spotProcessor   *SpotProcessor
+	members         map[string]*Member
+	rosters         *Rosters
 	previousLogins  map[string][]string
 	firstPass       bool
 	mu              sync.RWMutex
@@ -1208,10 +1210,12 @@ type SkedMonitor struct {
 }
 
 // NewSkedMonitor creates a new sked monitor
-func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor) *SkedMonitor {
+func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor, members map[string]*Member, rosters *Rosters) *SkedMonitor {
 	return &SkedMonitor{
 		config:         config,
 		spotProcessor:  spotProcessor,
+		members:        members,
+		rosters:        rosters,
 		previousLogins: make(map[string][]string),
 		firstPass:      true,
 		k3yRegex:       regexp.MustCompile(`\b(K3Y)/([0-9]|KP4|KH6|KL7)\b`),
@@ -1307,8 +1311,13 @@ func (sm *SkedMonitor) ProcessLogins(logins []SkedLogin) map[string][]string {
 func (sm *SkedMonitor) processLogin(callsign, status string) []string {
 	var report []string
 
-	// TODO: Add member info (needs SKCC member database integration)
-	// report = append(report, buildMemberInfo(callsign))
+	// Add member info
+	if member, exists := sm.members[callsign]; exists {
+		memberInfo := sm.buildMemberInfoForSked(callsign, member)
+		if memberInfo != "" {
+			report = append(report, memberInfo)
+		}
+	}
 
 	// Check if recently spotted
 	sm.spotProcessor.mu.RLock()
@@ -1357,10 +1366,9 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
 		}
 	}
 
-	// TODO: Add regular goal/target matching (needs roster integration)
-	// regularGoals, targets := buildGoalTargetReport(callsign, 0, "")
-	// goalList = append(goalList, regularGoals...)
-	// targetList = targets
+	// Add regular goal/target matching
+	regularGoals := sm.buildGoalsForSked(callsign)
+	goalList = append(goalList, regularGoals...)
 
 	if len(goalList) > 0 {
 		report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
@@ -1395,6 +1403,127 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
 	}
 
 	return nil
+}
+
+// buildMemberInfoForSked formats member information for Sked page display
+func (sm *SkedMonitor) buildMemberInfoForSked(callsign string, member *Member) string {
+	number, suffix := sm.getFullMemberNumberForSked(callsign, member)
+
+	// Truncate name to 9 characters max
+	name := member.Name
+	if len(name) > 9 {
+		name = name[:9]
+	}
+
+	return fmt.Sprintf("(%5s %-4s %-9s %3s)", number, suffix, name, member.SPC)
+}
+
+// getFullMemberNumberForSked returns the member number and award suffix
+func (sm *SkedMonitor) getFullMemberNumberForSked(callsign string, member *Member) (string, string) {
+	number := member.PlainNumber
+	suffix := ""
+	level := 1
+
+	// Check award dates to determine highest achievement
+	sDate := effectiveDate(member.SDate)
+	tDate := effectiveDate(member.TDate)
+	cDate := effectiveDate(member.CDate)
+	tx8Date := effectiveDate(member.TX8Date)
+
+	// Senator is highest
+	if sDate != "" {
+		suffix = "S"
+		if sm.rosters != nil && sm.rosters.Senator != nil {
+			if lvl, exists := sm.rosters.Senator[number]; exists {
+				level = lvl
+			}
+		}
+		if level > 1 {
+			suffix = fmt.Sprintf("Sx%d", level)
+		}
+		return number, suffix
+	}
+
+	// Tribune second
+	if tDate != "" || tx8Date != "" {
+		suffix = "T"
+		if sm.rosters != nil && sm.rosters.Tribune != nil {
+			if lvl, exists := sm.rosters.Tribune[number]; exists {
+				level = lvl
+			}
+		}
+		if level > 1 {
+			suffix = fmt.Sprintf("Tx%d", level)
+		}
+		return number, suffix
+	}
+
+	// Centurion third
+	if cDate != "" {
+		suffix = "C"
+		if sm.rosters != nil && sm.rosters.Centurion != nil {
+			if lvl, exists := sm.rosters.Centurion[number]; exists {
+				level = lvl
+			}
+		}
+		if level > 1 {
+			suffix = fmt.Sprintf("Cx%d", level)
+		}
+		return number, suffix
+	}
+
+	return number, suffix
+}
+
+// buildGoalsForSked determines which goals the user needs this member for
+func (sm *SkedMonitor) buildGoalsForSked(callsign string) []string {
+	var goals []string
+
+	member, exists := sm.members[callsign]
+	if !exists {
+		return goals
+	}
+
+	// Check each goal
+	for _, goal := range sm.config.Goals {
+		switch goal {
+		case "BRAG":
+			// All SKCC members count for BRAG
+			goals = append(goals, "BRAG")
+
+		case "TKA":
+			// All SKCC members count for TKA
+			goals = append(goals, "TKA")
+
+		case "WAS-S":
+			// Need Senator members from different states
+			sDate := effectiveDate(member.SDate)
+			if sDate != "" {
+				goals = append(goals, "WAS-S")
+			}
+
+		case "WAS-T":
+			// Need Tribune members from different states
+			tDate := effectiveDate(member.TDate)
+			tx8Date := effectiveDate(member.TX8Date)
+			if tDate != "" || tx8Date != "" {
+				goals = append(goals, "WAS-T")
+			}
+
+		case "WAS-C":
+			// Need Centurion members from different states
+			cDate := effectiveDate(member.CDate)
+			if cDate != "" {
+				goals = append(goals, "WAS-C")
+			}
+
+		case "WAS":
+			// All SKCC members count for basic WAS
+			goals = append(goals, "WAS")
+		}
+	}
+
+	return goals
 }
 
 // processSpecialEvent processes K3Y or SKM special events from status
@@ -1512,7 +1641,15 @@ func (sm *SkedMonitor) DisplayLogins() error {
 		return err
 	}
 
+	if sm.config.Verbose {
+		fmt.Printf("[DEBUG] Sked page returned %d logins\n", len(logins))
+	}
+
 	skedHits := sm.ProcessLogins(logins)
+
+	if sm.config.Verbose {
+		fmt.Printf("[DEBUG] %d logins match goals/targets\n", len(skedHits))
+	}
 
 	if len(skedHits) > 0 {
 		now := time.Now().UTC()
@@ -1639,6 +1776,12 @@ func shouldNotifyLogin(config *Config, goalList, targetList []string) bool {
 // MonitorTask runs the sked monitoring loop
 func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
+
+	// Do initial check immediately
+	if err := sm.DisplayLogins(); err != nil {
+		fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
+	}
+
 	ticker := time.NewTicker(time.Duration(sm.config.Sked.CheckSeconds) * time.Second)
 	defer ticker.Stop()
 
@@ -1669,10 +1812,18 @@ type FileWatcher struct {
 
 // NewFileWatcher creates a new file watcher
 func NewFileWatcher(config *Config, adiFile string) *FileWatcher {
-	return &FileWatcher{
+	fw := &FileWatcher{
 		config:  config,
 		adiFile: adiFile,
 	}
+
+	// Initialize with current file stats to avoid false change on first check
+	if stat, err := os.Stat(adiFile); err == nil {
+		fw.lastModTime = stat.ModTime()
+		fw.lastSize = stat.Size()
+	}
+
+	return fw
 }
 
 // WatchTask monitors the ADI file for changes
@@ -1724,10 +1875,16 @@ func (fw *FileWatcher) checkForChanges() error {
 		return err
 	}
 
-	// Update tracking
+	// Get final stat after file stabilized
+	finalStat, err := os.Stat(fw.adiFile)
+	if err != nil {
+		return err
+	}
+
+	// Update tracking with final values
 	fw.mu.Lock()
-	fw.lastModTime = stat.ModTime()
-	fw.lastSize = stat.Size()
+	fw.lastModTime = finalStat.ModTime()
+	fw.lastSize = finalStat.Size()
 	fw.mu.Unlock()
 
 	// Trigger refresh
@@ -5114,9 +5271,8 @@ func main() {
 	// Write award files
 	writeAwardFiles(awards, ap)
 
-	fmt.Println("\nQSO files generated, terminating skcc_skimmer...")
-
 	if config.AwardsOnly {
+		fmt.Println("\nQSO files generated, terminating skcc_skimmer...")
 		return
 	}
 
@@ -5165,13 +5321,27 @@ func main() {
 					time.Sleep(30 * time.Second)
 					continue
 				}
+
+				// Connected successfully, now process spots from the channel
+				for spotLine := range rbn.spotChan {
+					if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
+						if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
+							fmt.Println(output)
+						}
+					}
+				}
+
+				// Connection closed, retry after delay
+				fmt.Println("RBN connection closed, reconnecting in 30 seconds...")
+				time.Sleep(30 * time.Second)
 			}
 		}
 	}()
 
 	// Launch Sked monitoring if enabled
 	if config.Sked.Enabled {
-		sked := NewSkedMonitor(config, spotProcessor)
+		fmt.Println("Starting SKCC Sked page monitoring...")
+		sked := NewSkedMonitor(config, spotProcessor, members, rosters)
 		wg.Add(1)
 		go sked.MonitorTask(ctx, &wg)
 	}
