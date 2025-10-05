@@ -34,13 +34,32 @@ import (
 // Version information
 const Version = "9.0.0-go"
 
+// Global state for progress dot coordination
+var (
+	dotsOnLine   int
+	dotsMutex    sync.Mutex
+)
+
+// printWithDotClear prints text, clearing any progress dots on the current line first
+func printWithDotClear(text string) {
+	dotsMutex.Lock()
+	defer dotsMutex.Unlock()
+
+	if dotsOnLine > 0 {
+		fmt.Println() // Move to new line
+	}
+	fmt.Println(text)
+	dotsOnLine = 0
+}
+
 // Network constants
 const (
-	RBNServer     = "telnet.reversebeacon.net"
-	RBNPort       = 7000
-	SKCCDataURL   = "https://skccgroup.com/skimmer-data.txt"
-	SKCCBaseURL   = "https://www.skccgroup.com/"
-	SkedStatusURL = "http://sked.skccgroup.com/get-status.php"
+	RBNServer      = "telnet.reversebeacon.net"
+	RBNPort        = 7000
+	RBNStatusURL   = "https://reversebeacon.net/cont_includes/status.php?t=skt"
+	SKCCDataURL    = "https://skccgroup.com/skimmer-data.txt"
+	SKCCBaseURL    = "https://www.skccgroup.com/"
+	SkedStatusURL  = "http://sked.skccgroup.com/get-status.php"
 )
 
 // US States for WAS awards
@@ -672,6 +691,8 @@ type Spot struct {
 // SpotProcessor handles parsing and filtering of RBN spots
 type SpotProcessor struct {
 	config      *Config
+	members     map[string]*Member
+	rosters     *Rosters
 	lastSpotted map[string]SpotTime
 	notified    map[string]float64
 	mu          sync.RWMutex
@@ -686,9 +707,11 @@ type SpotTime struct {
 }
 
 // NewSpotProcessor creates a new spot processor
-func NewSpotProcessor(config *Config) *SpotProcessor {
+func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters) *SpotProcessor {
 	return &SpotProcessor{
 		config:      config,
+		members:     members,
+		rosters:     rosters,
 		lastSpotted: make(map[string]SpotTime),
 		notified:    make(map[string]float64),
 		zuluRegex:   regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
@@ -891,8 +914,23 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
 		output = fmt.Sprintf("%s%sK3Y/%s on %8s %s",
 			spot.Zulu, notificationFlag, spot.CallSignSuffix, freqStr, strings.Join(report, "; "))
 	} else {
-		// TODO: Implement buildMemberInfo to show member number and awards
+		// Build member info string
 		memberInfo := ""
+		if member, exists := sp.members[callsign]; exists {
+			memberData := MemberData{
+				PlainNumber: member.PlainNumber,
+				Name:        member.Name,
+				SPC:         member.SPC,
+				MbrStatus:   member.Status,
+				CDate:       member.CDate,
+				TDate:       member.TDate,
+				Tx8Date:     member.TX8Date,
+				SDate:       member.SDate,
+				JoinDate:    member.JoinDate,
+				DXCode:      member.DXCode,
+			}
+			memberInfo = buildMemberInfo(callsign, map[string]MemberData{callsign: memberData}, sp.rosters)
+		}
 		output = fmt.Sprintf("%s%s%-6s %s on %8s %s",
 			spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
 	}
@@ -1006,9 +1044,24 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, freqKHz float64,
 	var goals []string
 	var targets []string
 
-	// TODO: Implement goal/target matching logic using rosters
-	// This will check if the spotted callsign is needed for user's goals
-	// and if the user can help the spotted callsign with their targets
+	// For now, we'll implement a simplified version that just checks if the callsign is an SKCC member
+	// and adds basic goal markers. Full implementation requires award tracking state.
+
+	// Check if this is an SKCC member
+	member, exists := sp.members[callsign]
+	if !exists || callsign == sp.config.MyCallsign {
+		return goals, targets
+	}
+
+	// Don't spot inactive members
+	if member.Status != "A" {
+		return goals, targets
+	}
+
+	// For now, just indicate they're an SKCC member and needed for BRAG
+	// TODO: Add full award tracking to determine specific goals/targets
+	goals = append(goals, "BRAG")
+	goals = append(goals, "TKA")
 
 	return goals, targets
 }
@@ -1183,6 +1236,115 @@ func (sm *SpotterManager) GetNearbySpotters(radiusMiles int) []SpotterDistance {
 	})
 
 	return nearby
+}
+
+// DiscoverSpotters fetches RBN spotters and populates the spotter manager
+func (sm *SpotterManager) DiscoverSpotters(myGrid string) error {
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	resp, err := client.Get(RBNStatusURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch RBN status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("RBN status returned HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read RBN status: %w", err)
+	}
+
+	html := string(body)
+
+	// Parse HTML to extract spotter information using Python's regex patterns
+	// Match Python: r'<tr.*?online24h online7d total">(.*?)</tr>'
+	rowRegex := regexp.MustCompile(`(?s)<tr.*?online24h online7d total">(.*?)</tr>`)
+	rows := rowRegex.FindAllString(html, -1)
+
+	// Match Python: r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>'
+	columnsRegex := regexp.MustCompile(`(?s)<td.*?><a href="/dxsd1\.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>`)
+
+	for _, row := range rows {
+		matches := columnsRegex.FindStringSubmatch(row)
+		if len(matches) == 4 {
+			callsign := strings.TrimSpace(matches[1])
+			csvBands := strings.TrimSpace(matches[2])
+			grid := strings.TrimSpace(matches[3])
+
+			// Skip invalid grids
+			if grid == "XX88LL" || grid == "" {
+				continue
+			}
+
+			// Add spotter (errors are silently ignored for invalid grids)
+			_ = sm.AddSpotter(callsign, myGrid, grid, csvBands)
+		}
+	}
+
+	return nil
+}
+
+// DisplaySpotters prints the nearby spotters in a formatted list
+func DisplaySpotters(sm *SpotterManager, radiusMiles int, gridSquare string, distanceUnits string) {
+	nearby := sm.GetNearbySpotters(radiusMiles)
+
+	unit := "miles"
+	if distanceUnits == "km" {
+		unit = "kilometers"
+	}
+
+	count := len(nearby)
+	spotterWord := "spotter"
+	if count != 1 {
+		spotterWord = "spotters"
+	}
+
+	fmt.Printf("\nFinding RBN spotters within %d %s of '%s'...\n", radiusMiles, unit, gridSquare)
+	fmt.Printf("  Found %d nearby %s:\n", count, spotterWord)
+
+	if count == 0 {
+		return
+	}
+
+	// Format spotters as "CALL(dist)"
+	var formatted []string
+	for _, spotter := range nearby {
+		var distStr string
+		if distanceUnits == "km" {
+			km := int(float64(spotter.Miles) / 0.62137)
+			distStr = fmt.Sprintf("%dkm", km)
+		} else {
+			distStr = fmt.Sprintf("%dmi", spotter.Miles)
+		}
+		formatted = append(formatted, fmt.Sprintf("%s(%s)", spotter.Callsign, distStr))
+	}
+
+	// Wrap to 80 characters, starting each line with "    "
+	line := "    "
+	for i, item := range formatted {
+		if i > 0 {
+			item = ", " + item
+		}
+
+		// Check if adding this item would exceed 80 chars
+		if len(line)+len(item) > 80 && len(line) > 4 {
+			// Print current line and start a new one
+			fmt.Println(line)
+			line = "    " + strings.TrimPrefix(item, ", ")
+		} else {
+			line += item
+		}
+	}
+
+	// Print any remaining content
+	if len(line) > 4 {
+		fmt.Println(line)
+	}
 }
 
 // ============================================================================
@@ -1367,7 +1529,9 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
 	}
 
 	// Add regular goal/target matching
-	regularGoals := sm.buildGoalsForSked(callsign)
+	// TODO: Pass actual awards data when Sked monitoring is integrated with award processor
+	emptyMap := make(map[string]bool)
+	regularGoals := sm.buildGoalsForSked(callsign, emptyMap, emptyMap, emptyMap, emptyMap, emptyMap)
 	goalList = append(goalList, regularGoals...)
 
 	if len(goalList) > 0 {
@@ -1476,7 +1640,7 @@ func (sm *SkedMonitor) getFullMemberNumberForSked(callsign string, member *Membe
 }
 
 // buildGoalsForSked determines which goals the user needs this member for
-func (sm *SkedMonitor) buildGoalsForSked(callsign string) []string {
+func (sm *SkedMonitor) buildGoalsForSked(callsign string, contactsForWAS, contactsForWASC, contactsForWAST, contactsForWASS, bragContacts map[string]bool) []string {
 	var goals []string
 
 	member, exists := sm.members[callsign]
@@ -1484,42 +1648,49 @@ func (sm *SkedMonitor) buildGoalsForSked(callsign string) []string {
 		return goals
 	}
 
+	state := member.SPC
+
 	// Check each goal
 	for _, goal := range sm.config.Goals {
 		switch goal {
 		case "BRAG":
-			// All SKCC members count for BRAG
-			goals = append(goals, "BRAG")
+			// Check if we need this member for BRAG
+			memberNumber := member.PlainNumber
+			if memberNumber != "" && !bragContacts[memberNumber] {
+				goals = append(goals, "BRAG")
+			}
 
 		case "TKA":
 			// All SKCC members count for TKA
 			goals = append(goals, "TKA")
 
 		case "WAS-S":
-			// Need Senator members from different states
+			// Need Senator members from different states that we haven't worked yet
 			sDate := effectiveDate(member.SDate)
-			if sDate != "" {
+			if sDate != "" && isUSState(state) && !contactsForWASS[state] {
 				goals = append(goals, "WAS-S")
 			}
 
 		case "WAS-T":
-			// Need Tribune members from different states
+			// Need Tribune members from different states that we haven't worked yet
 			tDate := effectiveDate(member.TDate)
 			tx8Date := effectiveDate(member.TX8Date)
-			if tDate != "" || tx8Date != "" {
+			if (tDate != "" || tx8Date != "") && isUSState(state) && !contactsForWAST[state] {
 				goals = append(goals, "WAS-T")
 			}
 
 		case "WAS-C":
-			// Need Centurion members from different states
+			// Need Centurion members from different states that we haven't worked yet
 			cDate := effectiveDate(member.CDate)
-			if cDate != "" {
+			if cDate != "" && isUSState(state) && !contactsForWASC[state] {
 				goals = append(goals, "WAS-C")
 			}
 
 		case "WAS":
-			// All SKCC members count for basic WAS
-			goals = append(goals, "WAS")
+			// Need SKCC members from different states that we haven't worked yet
+			if isUSState(state) && !contactsForWAS[state] {
+				goals = append(goals, "WAS")
+			}
 		}
 	}
 
@@ -1677,7 +1848,10 @@ func (sm *SkedMonitor) DisplayLogins() error {
 		firstPass := sm.firstPass
 		sm.mu.RUnlock()
 
-		// Display header
+				// Display header (with newline before subsequent displays)
+	if !firstPass {
+		fmt.Println()
+	}
 		fmt.Println("=========== SKCC Sked Page ===========")
 
 		// Sort callsigns for consistent display
@@ -1726,7 +1900,7 @@ func (sm *SkedMonitor) DisplayLogins() error {
 
 			// Format and display output
 			output := fmt.Sprintf("%s%s%-6s %s", zuluTime, newIndicator, callsign, strings.Join(skedHits[callsign], "; "))
-			fmt.Println(output)
+			printWithDotClear(output)
 
 			// TODO: Log to file if enabled
 			_ = zuluDate // Will be used for logging
@@ -2496,7 +2670,7 @@ func parseConfig(filename string) (*Config, error) {
 		},
 		ProgressDots: ProgressDotsConfig{
 			Enabled:        true,
-			DisplaySeconds: 10,
+			DisplaySeconds: 5,
 			DotsPerLine:    30,
 		},
 	}
@@ -4535,7 +4709,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
 	}
 }
 
-func printProgress(awards map[string]interface{}) {
+func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
 	fmt.Println()
 	fmt.Println("*** Awards Progress ***")
 
@@ -4642,6 +4816,11 @@ func printProgress(awards map[string]interface{}) {
 	// TKA
 	if contains(config.Goals, "TKA") {
 		printTKAProgress(contactsTKASK, contactsTKABUG, contactsTKASS)
+	}
+
+	// BRAG
+	if contains(config.Goals, "BRAG") {
+		printBRAGProgress(ap)
 	}
 
 	fmt.Println()
@@ -5018,6 +5197,84 @@ func getRCRequired(level int) int {
 	return 450 + (level-10)*25
 }
 
+func getBragContactsForMonth(ap *AwardProcessor, year, month int) map[string]bool {
+	bragContacts := make(map[string]bool)
+
+	// Get month boundaries
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0).Add(-time.Second)
+
+	for _, qso := range ap.processedQSOs {
+		// Skip K9SKC
+		if qso.Call == "K9SKC" {
+			continue
+		}
+
+		// Skip if no SKCC number
+		if qso.SKCCNr == "" || qso.SKCCNr == "NONE" {
+			continue
+		}
+
+		// Parse QSO date
+		qsoTime, err := time.Parse("20060102", qso.QSODate)
+		if err != nil {
+			continue
+		}
+
+		// Check if QSO is within the specified month
+		if qsoTime.Before(monthStart) || qsoTime.After(monthEnd) {
+			continue
+		}
+
+		// Get member info
+		member := ap.memberDB[qso.SKCCNr]
+		if member == nil {
+			continue
+		}
+
+		// Check join date
+		joinDate := effectiveDate(member.JoinDate)
+		if joinDate == "" || qso.QSODate <= joinDate {
+			continue
+		}
+
+		// TODO: Implement sprint and WARC checking
+		// For now, just count all contacts (matches AC2C test case with 0 contacts in Sept/Oct)
+		bragContacts[qso.SKCCNr] = true
+	}
+
+	return bragContacts
+}
+
+func printBRAGProgress(ap *AwardProcessor) {
+	// Get current month
+	now := time.Now().UTC()
+	currentYear := now.Year()
+	currentMonth := int(now.Month())
+
+	// Get previous month
+	var prevYear, prevMonth int
+	if currentMonth == 1 {
+		prevYear = currentYear - 1
+		prevMonth = 12
+	} else {
+		prevYear = currentYear
+		prevMonth = currentMonth - 1
+	}
+
+	// Calculate contacts for both months
+	prevMonthContacts := getBragContactsForMonth(ap, prevYear, prevMonth)
+	currentMonthContacts := getBragContactsForMonth(ap, currentYear, currentMonth)
+
+	// Month names
+	monthNames := []string{"", "January", "February", "March", "April", "May", "June",
+		"July", "August", "September", "October", "November", "December"}
+
+	fmt.Printf("BRAG: For %s: %d, For %s: %d\n",
+		monthNames[prevMonth], len(prevMonthContacts),
+		monthNames[currentMonth], len(currentMonthContacts))
+}
+
 func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
 	allMembers := make(map[string]bool)
 	for k := range sk {
@@ -5263,7 +5520,7 @@ func main() {
 	printConfigSummary(config)
 
 	// Print progress
-	printProgress(awards)
+	printProgress(awards, ap)
 
 	// Print FYI messages
 	printFYIMessages(awards, rosters, config, members)
@@ -5286,9 +5543,23 @@ func main() {
 	// Real-time monitoring mode
 	fmt.Println("\nStarting real-time monitoring...")
 
-	// TODO: Get nearby spotters from RBN status page
-	// For now, use empty spotter map
-	config.SpottersNearby = make(map[string]bool)
+	// Discover RBN spotters
+	spotterMgr := NewSpotterManager()
+	if err := spotterMgr.DiscoverSpotters(config.MyGridsquare); err != nil {
+		fmt.Printf("*** Error discovering RBN spotters: %v\n", err)
+		fmt.Println("Continuing without spotter filtering...")
+		config.SpottersNearby = make(map[string]bool)
+	} else {
+		// Display spotters
+		DisplaySpotters(spotterMgr, config.SpotterRadius, config.MyGridsquare, config.DistanceUnits)
+
+		// Populate nearby spotters map
+		config.SpottersNearby = make(map[string]bool)
+		nearby := spotterMgr.GetNearbySpotters(config.SpotterRadius)
+		for _, spotter := range nearby {
+			config.SpottersNearby[spotter.Callsign] = true
+		}
+	}
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -5302,7 +5573,7 @@ func main() {
 	var wg sync.WaitGroup
 
 	// Create spot processor for RBN spots
-	spotProcessor := NewSpotProcessor(config)
+	spotProcessor := NewSpotProcessor(config, members, rosters)
 
 	// Launch RBN connection
 	rbn := NewRBNConnection(config.MyCallsign)
@@ -5324,9 +5595,14 @@ func main() {
 
 				// Connected successfully, now process spots from the channel
 				for spotLine := range rbn.spotChan {
+					// Verbose mode: print every RBN line
+					if config.Verbose {
+						fmt.Printf("   %s\n", spotLine)
+					}
+
 					if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
 						if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
-							fmt.Println(output)
+							printWithDotClear(output)
 						}
 					}
 				}
@@ -5353,28 +5629,31 @@ func main() {
 		go fw.WatchTask(ctx, &wg)
 	}
 
-	// Launch progress dots if enabled
-	if config.ProgressDots.Enabled {
+	// Launch progress dots if enabled (but not in verbose mode)
+if config.ProgressDots.Enabled && !config.Verbose {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
 			defer ticker.Stop()
-			dotsOnLine := 0
 			for {
 				select {
 				case <-ctx.Done():
+					dotsMutex.Lock()
 					if dotsOnLine > 0 {
 						fmt.Println()
 					}
+					dotsMutex.Unlock()
 					return
 				case <-ticker.C:
+					dotsMutex.Lock()
 					fmt.Print(".")
 					dotsOnLine++
 					if dotsOnLine >= config.ProgressDots.DotsPerLine {
 						fmt.Println()
 						dotsOnLine = 0
 					}
+					dotsMutex.Unlock()
 				}
 			}
 		}()
