@@ -2361,6 +2361,22 @@ func parseConfig(filename string) (*Config, error) {
 			parts := strings.SplitN(line, "=", 2)
 			key := strings.TrimSpace(parts[0])
 			value := strings.TrimSpace(parts[1])
+
+			// Strip inline comments (must be done before quote removal)
+			if idx := strings.Index(value, "#"); idx != -1 {
+				// Only strip if # is outside quotes
+				inQuotes := false
+				for i, ch := range value {
+					if ch == '\'' || ch == '"' {
+						inQuotes = !inQuotes
+					}
+					if !inQuotes && i == idx {
+						value = strings.TrimSpace(value[:idx])
+						break
+					}
+				}
+			}
+
 			value = strings.Trim(value, "'\"")
 			value = strings.TrimPrefix(value, "r")
 			value = strings.Trim(value, "'\"")
@@ -4054,6 +4070,314 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
 // PROGRESS DISPLAY
 // ============================================================================
 
+func printConfigSummary(config *Config) {
+	fmt.Println()
+	// Goals
+	if len(config.Goals) > 0 {
+		fmt.Printf("GOALS: %s\n", strings.Join(config.Goals, ", "))
+	}
+	// Targets
+	if len(config.Targets) > 0 {
+		fmt.Printf("TARGETS: %s\n", strings.Join(config.Targets, ", "))
+	}
+	// Bands
+	if len(config.Bands) > 0 {
+		bandStrs := make([]string, len(config.Bands))
+		for i, b := range config.Bands {
+			bandStrs[i] = strconv.Itoa(b)
+		}
+		fmt.Printf("BANDS: %s\n", strings.Join(bandStrs, ", "))
+	}
+}
+
+func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *Config, members map[string]*Member) {
+	myMember := members[config.MyCallsign]
+	if myMember == nil {
+		return
+	}
+
+	myNumber := myMember.PlainNumber
+
+	contactsC := awards["C"].(map[string]ProcessedQSO)
+	contactsT := awards["T"].(map[string]ProcessedQSO)
+	contactsS := awards["S"].(map[string]ProcessedQSO)
+	contactsP := awards["P"].(map[string]ProcessedQSO)
+	contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
+	contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
+	contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
+	contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
+	contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
+	contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
+	contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
+	contactsRC := awards["RC"].(map[string]ProcessedQSO)
+	contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
+	contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
+	contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
+
+	fmt.Println()
+
+	// C award FYI
+	if contains(config.Goals, "C") {
+		cCount := len(contactsC)
+		if cCount >= 100 {
+			cLevel := cCount / 100
+			if myMember.CDate != "" {
+				if awardLevel, exists := rosters.Centurion[myNumber]; exists {
+					if cLevel > awardLevel {
+						cOrCx := "C"
+						if awardLevel > 1 {
+							cOrCx = fmt.Sprintf("Cx%d", awardLevel)
+						}
+						nextLevelName := "C"
+						if cLevel > 1 {
+							nextLevelName = fmt.Sprintf("Cx%d", cLevel)
+						}
+						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, cOrCx)
+					}
+				}
+			} else {
+				if _, exists := rosters.Centurion[myNumber]; !exists && cLevel >= 1 {
+					fmt.Println("FYI: You qualify for C but have not yet applied for it.")
+				}
+			}
+		}
+	}
+
+	// T award FYI
+	if contains(config.Goals, "T") {
+		tCount := len(contactsT)
+		if tCount >= 50 {
+			tLevel := tCount / 50
+			if myMember.CDate == "" {
+				if tLevel > 0 {
+					fmt.Println("NOTE: Tribune award requires Centurion first. Apply for C before T.")
+				}
+			} else if myMember.TDate != "" {
+				if awardLevel, exists := rosters.Tribune[myNumber]; exists {
+					if tLevel > awardLevel {
+						tOrTx := "T"
+						if awardLevel > 1 {
+							tOrTx = fmt.Sprintf("Tx%d", awardLevel)
+						}
+						nextLevelName := "T"
+						if tLevel > 1 {
+							nextLevelName = fmt.Sprintf("Tx%d", tLevel)
+						}
+						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, tOrTx)
+					}
+				}
+			} else {
+				if _, exists := rosters.Tribune[myNumber]; !exists && tLevel >= 1 {
+					fmt.Println("FYI: You qualify for T but have not yet applied for it.")
+				}
+			}
+		}
+	}
+
+	// S award FYI
+	if contains(config.Goals, "S") {
+		sCount := len(contactsS)
+		tribuneContacts := len(contactsT)
+		if tribuneContacts < 400 {
+			if sCount >= 200 {
+				fmt.Printf("NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", tribuneContacts)
+			}
+		} else if sCount >= 200 {
+			sLevel := sCount / 200
+			if myMember.SDate != "" {
+				if awardLevel, exists := rosters.Senator[myNumber]; exists {
+					if sLevel > awardLevel {
+						sOrSx := "S"
+						if awardLevel > 1 {
+							sOrSx = fmt.Sprintf("Sx%d", awardLevel)
+						}
+						nextLevelName := "S"
+						if sLevel > 1 {
+							nextLevelName = fmt.Sprintf("Sx%d", sLevel)
+						}
+						fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", nextLevelName, sOrSx)
+					}
+				}
+			} else {
+				if _, exists := rosters.Senator[myNumber]; !exists && sLevel >= 1 {
+					fmt.Println("FYI: You qualify for S but have not yet applied for it.")
+				}
+			}
+		}
+	}
+
+	// WAS variants FYI
+	if contains(config.Goals, "WAS") {
+		if len(contactsWAS) == len(usStates) {
+			if _, exists := rosters.WAS[config.MyCallsign]; !exists {
+				fmt.Println("FYI: You qualify for WAS but have not yet applied for it.")
+			}
+		}
+	}
+	if contains(config.Goals, "WAS-C") {
+		if len(contactsWASC) == len(usStates) {
+			if _, exists := rosters.WASC[config.MyCallsign]; !exists {
+				fmt.Println("FYI: You qualify for WAS-C but have not yet applied for it.")
+			}
+		}
+	}
+	if contains(config.Goals, "WAS-T") {
+		if len(contactsWAST) == len(usStates) {
+			if _, exists := rosters.WAST[config.MyCallsign]; !exists {
+				fmt.Println("FYI: You qualify for WAS-T but have not yet applied for it.")
+			}
+		}
+	}
+	if contains(config.Goals, "WAS-S") {
+		if len(contactsWASS) == len(usStates) {
+			if _, exists := rosters.WASS[config.MyCallsign]; !exists {
+				fmt.Println("FYI: You qualify for WAS-S but have not yet applied for it.")
+			}
+		}
+	}
+
+	// Prefix FYI
+	if contains(config.Goals, "P") {
+		pTotal := 0
+		for _, qso := range contactsP {
+			pts, _ := strconv.Atoi(qso.PfxPts)
+			pTotal += pts
+		}
+		if pTotal > 500000 {
+			pLevel := pTotal / 500000
+			if awardLevel, exists := rosters.Prefix[config.MyCallsign]; exists {
+				if pLevel > awardLevel {
+					fmt.Printf("FYI: You qualify for Px%d but have only applied for Px%d.\n", pLevel, awardLevel)
+				}
+			} else if pLevel >= 1 {
+				fmt.Printf("FYI: You qualify for Px%d but have not yet applied for it.\n", pLevel)
+			}
+		}
+	}
+
+	// DX FYI
+	if contains(config.Goals, "DX") {
+		// DXC
+		dxcCount := len(contactsDXC)
+		if dxcCount >= 10 {
+			dxcLevel, _, _ := getDXLevel(dxcCount)
+			if awardLevel, exists := rosters.DXC[myNumber]; exists {
+				if dxcLevel > awardLevel {
+					fmt.Printf("FYI: You qualify for DXCx%d but have only applied for DXCx%d.\n", dxcLevel, awardLevel)
+				}
+			} else {
+				fmt.Printf("FYI: You qualify for DXCx%d but have not yet applied for it.\n", dxcLevel)
+			}
+		}
+
+		// DXQ
+		dxqCount := len(contactsDXQ)
+		if dxqCount >= 10 {
+			dxqLevel, _, _ := getDXLevel(dxqCount)
+			if awardLevel, exists := rosters.DXQ[myNumber]; exists {
+				if dxqLevel > awardLevel {
+					fmt.Printf("FYI: You qualify for DXQx%d but have only applied for DXQx%d.\n", dxqLevel, awardLevel)
+				}
+			} else {
+				fmt.Printf("FYI: You qualify for DXQx%d but have not yet applied for it.\n", dxqLevel)
+			}
+		}
+	}
+
+	// QRP FYI
+	if contains(config.Goals, "QRP") {
+		pts1x := 0.0
+		pts2x := 0.0
+		for _, qso := range contactsQRP {
+			pts := qrpBandPoints[qso.Band]
+			pts1x += pts
+			if qso.QRPx2QSO {
+				pts2x += pts
+			}
+		}
+
+		// 1xQRP
+		if pts1x >= 300 {
+			qrp1xLevel := int(pts1x / 300)
+			if awardLevel, exists := rosters.QRP1x[myNumber]; exists {
+				if qrp1xLevel > awardLevel {
+					fmt.Printf("FYI: You qualify for 1xQRP x%d but have only applied for 1xQRP x%d.\n", qrp1xLevel, awardLevel)
+				}
+			} else {
+				fmt.Printf("FYI: You qualify for 1xQRP x%d but have not yet applied for it.\n", qrp1xLevel)
+			}
+		}
+
+		// 2xQRP
+		if pts2x >= 150 {
+			qrp2xLevel := int(pts2x / 150)
+			if awardLevel, exists := rosters.QRP2x[myNumber]; exists {
+				if qrp2xLevel > awardLevel {
+					fmt.Printf("FYI: You qualify for 2xQRP x%d but have only applied for 2xQRP x%d.\n", qrp2xLevel, awardLevel)
+				}
+			} else {
+				fmt.Printf("FYI: You qualify for 2xQRP x%d but have not yet applied for it.\n", qrp2xLevel)
+			}
+		}
+	}
+
+	// TKA FYI
+	if contains(config.Goals, "TKA") {
+		skCount := len(contactsTKASK)
+		bugCount := len(contactsTKABUG)
+		ssCount := len(contactsTKASS)
+
+		allMembers := make(map[string]bool)
+		for k := range contactsTKASK {
+			allMembers[k] = true
+		}
+		for k := range contactsTKABUG {
+			allMembers[k] = true
+		}
+		for k := range contactsTKASS {
+			allMembers[k] = true
+		}
+		uniqueTotal := len(allMembers)
+
+		if skCount >= 100 && bugCount >= 100 && ssCount >= 100 && uniqueTotal >= 300 {
+			if _, exists := rosters.TKA[myNumber]; !exists {
+				fmt.Println("FYI: You qualify for TKA but have not yet applied for it.")
+			}
+		}
+	}
+
+	// RC FYI
+	if contains(config.Goals, "RC") {
+		totalMins := 0
+		for _, qso := range contactsRC {
+			totalMins += qso.RagChewMins
+		}
+
+		if totalMins >= 300 {
+			rcLevel := getRCLevel(totalMins)
+			if awardLevel, exists := rosters.RC[myNumber]; exists {
+				if rcLevel > awardLevel {
+					levelName := "RC"
+					if rcLevel > 1 {
+						levelName = fmt.Sprintf("RCx%d", rcLevel)
+					}
+					appliedName := "RC"
+					if awardLevel > 1 {
+						appliedName = fmt.Sprintf("RCx%d", awardLevel)
+					}
+					fmt.Printf("FYI: You qualify for %s but have only applied for %s.\n", levelName, appliedName)
+				}
+			} else {
+				levelName := "RC"
+				if rcLevel > 1 {
+					levelName = fmt.Sprintf("RCx%d", rcLevel)
+				}
+				fmt.Printf("FYI: You qualify for %s but have not yet applied for it.\n", levelName)
+			}
+		}
+	}
+}
+
 func printProgress(awards map[string]interface{}) {
 	fmt.Println()
 	fmt.Println("*** Awards Progress ***")
@@ -4561,16 +4885,77 @@ func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
 // progress dots, file watching) are implemented but not yet integrated into
 // the main loop. Current functionality focuses on award calculation from ADI files.
 
+func showUsage() {
+	fmt.Println("Usage:")
+	fmt.Println()
+	fmt.Println("   skcc_skimmer")
+	fmt.Println("                   [--adi <adi-file>]")
+	fmt.Println("                   [--awards-only]")
+	fmt.Println("                   [--bands <comma-separated-bands>]")
+	fmt.Println("                   [--brag-months <number-of-months-back>]")
+	fmt.Println("                   [--callsign <your-callsign>]")
+	fmt.Println("                   [--goals <goals>]")
+	fmt.Println("                   [--help]")
+	fmt.Println("                   [--interactive]")
+	fmt.Println("                   [--logfile <logfile-name>]")
+	fmt.Println("                   [--maidenhead <grid-square>]")
+	fmt.Println("                   [--notification <on|off>]")
+	fmt.Println("                   [--radius <distance-in-miles>]")
+	fmt.Println("                   [--targets <targets>]")
+	fmt.Println("                   [--verbose]")
+	fmt.Println(" or...")
+	fmt.Println()
+	fmt.Println("   skcc_skimmer")
+	fmt.Println("                   [-a <adi-file>]")
+	fmt.Println("                   [-b <comma-separated-bands>]")
+	fmt.Println("                   [-c <your-callsign>]")
+	fmt.Println("                   [-g <goals>]")
+	fmt.Println("                   [-h]")
+	fmt.Println("                   [-i]")
+	fmt.Println("                   [-l <logfile-name>]")
+	fmt.Println("                   [-m <grid-square>]")
+	fmt.Println("                   [-n <on|off>]")
+	fmt.Println("                   [-r <distance-in-miles>]")
+	fmt.Println("                   [-t <targets>]")
+	fmt.Println("                   [-v]")
+	fmt.Println()
+	os.Exit(0)
+}
+
 func main() {
 	// Parse command-line flags
 	callsign := flag.String("c", "", "Your callsign")
+	flag.StringVar(callsign, "callsign", "", "Your callsign")
 	adiFile := flag.String("a", "", "ADI file path")
+	flag.StringVar(adiFile, "adi", "", "ADI file path")
 	goals := flag.String("g", "", "Goals (comma-separated)")
+	flag.StringVar(goals, "goals", "", "Goals (comma-separated)")
 	targets := flag.String("t", "", "Targets (comma-separated)")
+	flag.StringVar(targets, "targets", "", "Targets (comma-separated)")
 	maidenhead := flag.String("m", "", "Your grid square")
+	flag.StringVar(maidenhead, "maidenhead", "", "Your grid square")
+	bands := flag.String("b", "", "Comma-separated bands")
+	flag.StringVar(bands, "bands", "", "Comma-separated bands")
+	radius := flag.Int("r", 0, "Distance in miles")
+	flag.IntVar(radius, "radius", 0, "Distance in miles")
+	verbose := flag.Bool("v", false, "Verbose output")
+	flag.BoolVar(verbose, "verbose", false, "Verbose output")
+	logfile := flag.String("l", "", "Logfile name")
+	flag.StringVar(logfile, "logfile", "", "Logfile name")
+	notification := flag.String("n", "", "Notification (on|off)")
+	flag.StringVar(notification, "notification", "", "Notification (on|off)")
+	bragMonths := flag.Int("brag-months", 0, "Number of months back for BRAG")
 	awardsOnly := flag.Bool("awards-only", false, "Calculate awards only and exit")
 	interactive := flag.Bool("i", false, "Interactive mode")
+	flag.BoolVar(interactive, "interactive", false, "Interactive mode")
+	showHelp := flag.Bool("h", false, "Show help")
+	flag.BoolVar(showHelp, "help", false, "Show help")
 	flag.Parse()
+
+	// Show help if requested
+	if *showHelp {
+		showUsage()
+	}
 
 	fmt.Printf("SKCC Skimmer version %s\n\n", Version)
 
@@ -4597,17 +4982,34 @@ func main() {
 	if *maidenhead != "" {
 		config.MyGridsquare = strings.ToUpper(*maidenhead)
 	}
+	if *bands != "" {
+		config.Bands = parseBands(*bands)
+	}
+	if *radius > 0 {
+		config.SpotterRadius = *radius
+	}
+	if *verbose {
+		config.Verbose = *verbose
+	}
+	if *logfile != "" {
+		config.LogFile.Enabled = true
+		config.LogFile.FileName = *logfile
+	}
+	if *notification != "" {
+		if strings.ToLower(*notification) == "on" {
+			config.Notification.Enabled = true
+		} else {
+			config.Notification.Enabled = false
+		}
+	}
+	// Note: bragMonths not yet implemented in Go version
+	_ = bragMonths
 	config.AwardsOnly = *awardsOnly
 	config.Interactive = *interactive
 
-	// Validate required fields
-	if config.MyCallsign == "" {
-		fmt.Println("Error: MY_CALLSIGN required")
-		os.Exit(1)
-	}
-	if config.ADIFile == "" {
-		fmt.Println("Error: ADI_FILE required")
-		os.Exit(1)
+	// Validate required fields - show usage if missing
+	if config.MyCallsign == "" || config.ADIFile == "" {
+		showUsage()
 	}
 
 	// Download SKCC data
@@ -4623,6 +5025,10 @@ func main() {
 	}
 
 	// Parse ADI file
+	// Download rosters before processing (needed for FYI messages)
+	fmt.Println("\nDownloading award rosters...")
+	rosters := downloadRosters(config)
+
 	fmt.Printf("\nReading QSOs for %s from '%s'...\n", config.MyCallsign, config.ADIFile)
 	qsos, err := parseADI(config.ADIFile)
 	if err != nil {
@@ -4696,8 +5102,14 @@ func main() {
 	// Extract awards
 	awards := ExtractAwards(processedQSOs)
 
+	// Display configuration summary
+	printConfigSummary(config)
+
 	// Print progress
 	printProgress(awards)
+
+	// Print FYI messages
+	printFYIMessages(awards, rosters, config, members)
 
 	// Write award files
 	writeAwardFiles(awards, ap)
@@ -4706,13 +5118,6 @@ func main() {
 
 	if config.AwardsOnly {
 		return
-	}
-
-	// Download rosters for goal/target matching (needed for interactive mode)
-	var rosters *Rosters
-	if *interactive || !config.AwardsOnly {
-		fmt.Println("\nDownloading award rosters...")
-		rosters = downloadRosters(config)
 	}
 
 	// Handle interactive mode if requested
