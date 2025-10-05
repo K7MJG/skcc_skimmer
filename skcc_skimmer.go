@@ -1336,6 +1336,7 @@ func DisplaySpotters(sm *SpotterManager, radiusMiles int, gridSquare string, dis
     if len(line) > 4 {
         fmt.Println(line)
     }
+    fmt.Println()
 }
 
 // ============================================================================
@@ -1843,7 +1844,7 @@ func (sm *SkedMonitor) DisplayLogins() error {
     if !firstPass {
         fmt.Println()
     }
-        fmt.Println("=========== SKCC Sked Page ===========")
+        printWithDotClear("=========== SKCC Sked Page ===========")
 
         // Sort callsigns for consistent display
         var callsigns []string
@@ -4236,8 +4237,6 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
     contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
     contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
-
-    fmt.Println()
 
     // C award FYI
     if contains(config.Goals, "C") {
