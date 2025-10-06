@@ -5329,7 +5329,6 @@ func main() {
         fmt.Printf("Error reading ADI file: %v\n", err)
         os.Exit(1)
     }
-    fmt.Printf("Loaded %s QSOs\n", formatComma(len(qsos)))
 
     // Process QSOs through award processor
     ap, err := NewAwardProcessor(members, config.MyCallsign)
@@ -5557,7 +5556,6 @@ func main() {
     // Handle Ctrl+C - exit immediately (OS will clean up)
     go func() {
         <-sigChan
-        fmt.Println("\n\nExiting...")
         os.Exit(0)
     }()
 
