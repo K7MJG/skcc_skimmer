@@ -4265,8 +4265,8 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
 
         for i, qso := range sorted {
             dateStr := formatDate(qso.QSODate)
-            fmt.Fprintf(file, "%3d  %s  %-12s %-8s\n",
-                i+1, dateStr, qso.Call, qso.SKCCNr)
+            fmt.Fprintf(file, "%-6d %s  %-13s %-8s %-12s %-12s %s\n",
+                i+1, dateStr, qso.Call, qso.SKCCNr, qso.Name, qso.State, name)
         }
         fmt.Fprintln(file)
     }

@@ -857,7 +857,7 @@ class cAwardFileWriter:
 
     @staticmethod
     async def write_tka_key_type_section(file: aiofiles.threadpool.text.AsyncTextIOWrapper,
-                                       contacts: dict[str, tuple[str, str, str]],
+                                       contacts: dict[str, tuple[str, str, str, str, str]],
                                        key_type: str) -> None:
         """Write a section of TKA contacts for a specific key type.
 
@@ -867,9 +867,9 @@ class cAwardFileWriter:
             key_type: The key type name (BUG, SK, SS)
         """
         sorted_contacts = sorted(contacts.items(), key=lambda x: x[1][0])
-        for idx, (member_number, (qso_date, _, callsign)) in enumerate(sorted_contacts, 1):
+        for idx, (member_number, (qso_date, _, callsign, name, spc)) in enumerate(sorted_contacts, 1):
             date_str = cDateTimeFormatter.format_date(qso_date)
-            await file.write(f"{idx:<6} {date_str}  {callsign:<12} {member_number:<9} {key_type}\n")
+            await file.write(f"{idx:<6} {date_str}  {callsign:<13} {member_number:<8} {name:<12} {spc:<12} {key_type}\n")
 
 
 class cFastDateTime:
@@ -1404,9 +1404,9 @@ class cQSO:
     ContactsForDXC:   dict[str, tuple[str, str, str, str, str]]  # Key: dxcc_code, Value: (date, member_number, call, name, band)
     ContactsForDXQ:   dict[str, tuple[str, str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, band, dxcc_code)
     DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
-    ContactsForTKA_SK:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Straight Key
-    ContactsForTKA_BUG: dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Bug
-    ContactsForTKA_SS:  dict[str, tuple[str, str, str]]  # Key: member_number, Value: (date, member_number, call) - Sideswiper
+    ContactsForTKA_SK:  dict[str, tuple[str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, spc) - Straight Key
+    ContactsForTKA_BUG: dict[str, tuple[str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, spc) - Bug
+    ContactsForTKA_SS:  dict[str, tuple[str, str, str, str, str]]  # Key: member_number, Value: (date, member_number, call, name, spc) - Sideswiper
     ContactsForRC:      dict[str, tuple[str, str, str, str, str, int]]  # Key: member_number, Value: (date, member_number, call, name, band, minutes) - Rag Chew
 
 
@@ -3186,8 +3186,8 @@ class cQSO:
 
                 else:  # sk_logged and ss_logged
                     # Member in SK and SS
-                    # When equal, prefer to remove from SS (opposite of >=)
-                    if len(cls.ContactsForTKA_SK) > len(cls.ContactsForTKA_SS):
+                    # Xojo uses >=, removing from SK when counts are equal
+                    if len(cls.ContactsForTKA_SK) >= len(cls.ContactsForTKA_SS):
                         work_dict = 'SK'
                     else:
                         work_dict = 'SS'
@@ -3938,10 +3938,25 @@ class cAwards:
             qso_time = qso_datetime[8:] if len(qso_datetime) > 8 else ''
 
             # Extract numeric portion from SKCC field (unless it's "NONE")
+            # Handle corrupt SKCC numbers like "24S73T" by rejecting them entirely
             if skcc == 'NONE':
                 skcc_numeric = 'NONE'
+            elif not skcc:
+                skcc_numeric = ''
+            elif skcc.isdigit():
+                # All numeric - use as-is
+                skcc_numeric = skcc
+            elif len(skcc) > 1:
+                # Try to separate assuming only last char might be suffix
+                prefix_part = skcc[:-1]
+                if prefix_part.isdigit():
+                    # Valid format like "1923T"
+                    skcc_numeric = prefix_part
+                else:
+                    # Corrupted format like "24S73T" - reject entirely (set to blank)
+                    skcc_numeric = ''
             else:
-                skcc_numeric = ''.join(filter(str.isdigit, skcc)) if skcc else ''
+                skcc_numeric = ''
 
             qso = cls.QSO(
                 log_call=call,
@@ -4164,7 +4179,8 @@ class cAwards:
             # TKA contacts
             if qso.tka_qso == "YES":
                 # Use primary callsign from member database for TKA (matching Xojo's Log_Call_Pri)
-                contact_tuple_tka = (date, member_num, tka_callsign)
+                # Include name and SPC (State/Province/Country) from processed QSO
+                contact_tuple_tka = (date, member_num, tka_callsign, name, state)
                 key_type = qso.log_key_type.upper()
 
                 # Xojo uses LIMIT 1 in SQL, keeping only the FIRST QSO for each member/key-type
