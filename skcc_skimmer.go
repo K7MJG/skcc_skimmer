@@ -64,11 +64,11 @@ const (
 
 // US States for WAS awards
 var usStates = []string{
-    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
-    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
-    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
-    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
-    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "AK", "AL", "AR", "AZ", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "IA", "ID", "IL", "IN", "KS", "KY", "LA", "MA", "MD",
+    "ME", "MI", "MN", "MO", "MS", "MT", "NC", "ND", "NE", "NH",
+    "NJ", "NM", "NV", "NY", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY",
 }
 
 // All states including territories (for validation)
@@ -3725,11 +3725,11 @@ func writeAwardFiles(awards map[string]interface{}, ap *AwardProcessor) {
     writeCTSAward("T", awards["T"].(map[string]ProcessedQSO))
     writeCTSAward("S", awards["S"].(map[string]ProcessedQSO))
 
-    // WAS awards
-    writeWASAward("WAS", awards["WAS"].(map[string]ProcessedQSO))
-    writeWASAward("WAS-C", awards["WAS-C"].(map[string]ProcessedQSO))
-    writeWASAward("WAS-T", awards["WAS-T"].(map[string]ProcessedQSO))
-    writeWASAward("WAS-S", awards["WAS-S"].(map[string]ProcessedQSO))
+    // WAS awards - states output in alphabetical order with suffix and callsign substitution
+    writeWASAward("WAS", awards["WAS"].(map[string]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-C", awards["WAS-C"].(map[string]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-T", awards["WAS-T"].(map[string]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-S", awards["WAS-S"].(map[string]ProcessedQSO), ap.memberDB)
 
     // Prefix award
     writePrefixAward(awards["P"].(map[string]ProcessedQSO))
@@ -3905,7 +3905,54 @@ func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
     }
 }
 
-func writeWASAward(name string, contacts map[string]ProcessedQSO) {
+// getWASDisplayData returns the callsign and SKCC number with suffix for WAS award display
+// This matches Xojo/Python behavior of substituting primary callsign and adding suffix
+func getWASDisplayData(qso ProcessedQSO, members map[string]*Member) (string, string) {
+    // Look up the member to get their award dates and primary callsign
+    member, exists := members[qso.SKCCNr]
+    if !exists {
+        return qso.Call, qso.SKCCNr
+    }
+
+    // Use member's primary callsign (matching Xojo behavior)
+    displayCall := member.Callsign
+    if displayCall == "" {
+        displayCall = qso.Call
+    }
+
+    // Recreate suffix as it would have appeared at the time of the QSO
+    skccWithSuffix := qso.SKCCNr
+    qsoDate := qso.QSODate
+
+    // Normalize dates (first 8 chars: YYYYMMDD)
+    centDate := member.CDate
+    if len(centDate) > 8 {
+        centDate = centDate[:8]
+    }
+    tribDate := member.TDate
+    if len(tribDate) > 8 {
+        tribDate = tribDate[:8]
+    }
+    senDate := member.SDate
+    if len(senDate) > 8 {
+        senDate = senDate[:8]
+    }
+
+    // Add suffix based on member's award dates at the time of QSO
+    if centDate != "" && qsoDate >= centDate {
+        skccWithSuffix = qso.SKCCNr + "C"
+    }
+    if tribDate != "" && qsoDate >= tribDate {
+        skccWithSuffix = qso.SKCCNr + "T"
+    }
+    if senDate != "" && qsoDate >= senDate {
+        skccWithSuffix = qso.SKCCNr + "S"
+    }
+
+    return displayCall, skccWithSuffix
+}
+
+func writeWASAward(name string, contacts map[string]ProcessedQSO, members map[string]*Member) {
     filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
     file, err := os.Create(filename)
     if err != nil {
@@ -3913,19 +3960,41 @@ func writeWASAward(name string, contacts map[string]ProcessedQSO) {
     }
     defer file.Close()
 
+    // Write states in alphabetical order (matching Xojo/Python behavior)
     for _, state := range usStates {
         if qso, exists := contacts[state]; exists {
+            // Get display callsign and SKCC number with suffix
+            displayCall, skccWithSuffix := getWASDisplayData(qso, members)
+
             dateStr := formatDate(qso.QSODate)
             nameStr := qso.Name
             if len(nameStr) > 12 {
                 nameStr = nameStr[:12]
             }
-            fmt.Fprintf(file, "%-8s %-12s %-9s %-13s %-16s %s\n",
-                qso.State, qso.Call, qso.SKCCNr, nameStr, dateStr, qso.Band)
+            // Add leading space to match Xojo format
+            fmt.Fprintf(file, " %-8s %-12s %-9s %-13s %-16s %s\n",
+                qso.State, displayCall, skccWithSuffix, nameStr, dateStr, qso.Band)
         } else {
             fmt.Fprintln(file, state)
         }
     }
+}
+
+// formatWithCommas formats a number with thousand separators
+func formatWithCommas(n int) string {
+    s := strconv.Itoa(n)
+    if len(s) <= 3 {
+        return s
+    }
+
+    var result strings.Builder
+    for i, digit := range s {
+        if i > 0 && (len(s)-i)%3 == 0 {
+            result.WriteRune(',')
+        }
+        result.WriteRune(digit)
+    }
+    return result.String()
 }
 
 func writePrefixAward(contacts map[string]ProcessedQSO) {
@@ -3960,8 +4029,11 @@ func writePrefixAward(contacts map[string]ProcessedQSO) {
         if len(nameStr) > 12 {
             nameStr = nameStr[:12]
         }
-        fmt.Fprintf(file, "%5d  %s   %-13s %-8d %-12s %-12s %3s  %10d\n",
-            i+1, dateStr, qso.Call, pts, nameStr, qso.Pfx, band, totalPoints)
+        // Format cumulative points with thousand separators
+        totalPtsStr := formatWithCommas(totalPoints)
+        // Use PfxCall (normalized callsign without portable indicators) to match Xojo
+        fmt.Fprintf(file, "%5d  %s   %-13s %-8d %-12s %-12s %3s  %10s\n",
+            i+1, dateStr, qso.PfxCall, pts, nameStr, qso.Pfx, band, totalPtsStr)
     }
 }
 
