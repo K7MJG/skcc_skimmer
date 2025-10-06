@@ -3465,15 +3465,16 @@ func calculateDuration(timeOn, timeOff string) int {
 // ============================================================================
 
 // ExtractAwards extracts award-specific contacts from processed QSOs
-func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
+// Uses dual-pass processing: chrono for C/T/S/DX, adiOrder for WAS/P/QRP/TKA/BRAG/RC
+func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]interface{} {
     awards := make(map[string]interface{})
 
-    // C, T, S awards
+    // C, T, S awards - use chronological order (oldest QSO first)
     contactsC := make(map[string]ProcessedQSO)
     contactsT := make(map[string]ProcessedQSO)
     contactsS := make(map[string]ProcessedQSO)
 
-    for _, qso := range processed {
+    for _, qso := range chrono {
         key := qso.SKCCNr
 
         // Centurion - all members
@@ -3500,13 +3501,13 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     awards["T"] = contactsT
     awards["S"] = contactsS
 
-    // WAS variants
+    // WAS variants - use ADI file order
     contactsWAS := make(map[string]ProcessedQSO)
     contactsWASC := make(map[string]ProcessedQSO)
     contactsWAST := make(map[string]ProcessedQSO)
     contactsWASS := make(map[string]ProcessedQSO)
 
-    for _, qso := range processed {
+    for _, qso := range adiOrder {
         if qso.WasQSO {
             if _, exists := contactsWAS[qso.State]; !exists {
                 contactsWAS[qso.State] = qso
@@ -3535,9 +3536,9 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     awards["WAS-S"] = contactsWASS
 
     // Prefix - ONE entry per prefix (NOT per prefix+band combination)
-    // Keep QSO with HIGHEST member number for each prefix (Python line 4149)
+    // Keep QSO with HIGHEST member number for each prefix - use ADI file order
     contactsP := make(map[string]ProcessedQSO)
-    for _, qso := range processed {
+    for _, qso := range adiOrder {
         if qso.Pfx != "" && qso.PfxPts != "" {
             existing, exists := contactsP[qso.Pfx]
             if !exists {
@@ -3554,10 +3555,10 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     }
     awards["P"] = contactsP
 
-    // QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found
+    // QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found - use ADI file order
     // Python logic (line 4157-4162): Keep first QSO, upgrade 1x to 2x if 2x found later
     contactsQRP := make(map[string]ProcessedQSO)
-    for _, qso := range processed {
+    for _, qso := range adiOrder {
         if qso.QRPx1QSO {
             key := qso.SKCCNr + "_" + qso.Band
             existing, exists := contactsQRP[key]
@@ -3573,10 +3574,10 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     }
     awards["QRP"] = contactsQRP
 
-    // DX
+    // DX - use chronological order (oldest QSO first)
     contactsDXC := make(map[string]ProcessedQSO)
     contactsDXQ := make(map[string]ProcessedQSO)
-    for _, qso := range processed {
+    for _, qso := range chrono {
         if qso.DXCQSO {
             if _, exists := contactsDXC[qso.DXCode]; !exists {
                 contactsDXC[qso.DXCode] = qso
@@ -3599,7 +3600,7 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     var lastRCKey string
     var lastRCMins int
 
-    for _, qso := range processed {
+    for _, qso := range adiOrder {
         if qso.RagChewQSO {
             // Use unique key: member_date_time (matches Python line 4088)
             rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
@@ -3625,12 +3626,12 @@ func ExtractAwards(processed []ProcessedQSO) map[string]interface{} {
     }
     awards["RC"] = contactsRC
 
-    // TKA
+    // TKA - use ADI file order
     contactsTKASK := make(map[string]ProcessedQSO)
     contactsTKABUG := make(map[string]ProcessedQSO)
     contactsTKASS := make(map[string]ProcessedQSO)
 
-    for _, qso := range processed {
+    for _, qso := range adiOrder {
         if qso.TKAQSO {
             kt := strings.ToUpper(qso.KeyType)
             switch kt {
@@ -5393,8 +5394,25 @@ func main() {
     fmt.Printf("\nProcessed %s %s: %s %s for awards\n",
         formatComma(ap.qsosProcessed), qsoPlural, formatComma(ap.qsosAdded), qualifyWord)
 
-    // Extract awards
-    awards := ExtractAwards(processedQSOs)
+    // Dual-pass processing to match Python/Xojo behavior:
+    // - C/T/S/DX awards use chronological order (oldest QSO first)
+    // - WAS/P/QRP/TKA/BRAG/RC awards use ADI file order
+
+    // Save copy in ADI file order (original order)
+    processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
+    copy(processedQSOsADI, processedQSOs)
+
+    // Sort chronologically for C/T/S/DX awards
+    processedQSOsChrono := processedQSOs
+    sort.Slice(processedQSOsChrono, func(i, j int) bool {
+        if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
+            return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
+        }
+        return processedQSOsChrono[i].TimeOn < processedQSOsChrono[j].TimeOn
+    })
+
+    // Extract awards using dual-pass
+    awards := ExtractAwards(processedQSOsChrono, processedQSOsADI)
 
     // Display configuration summary
     printConfigSummary(config)
