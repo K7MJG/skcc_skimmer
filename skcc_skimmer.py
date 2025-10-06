@@ -3145,8 +3145,9 @@ class cQSO:
         )
 
         # For each duplicate, remove from appropriate dictionaries
-        # Important: Process in reverse sorted order to match Xojo's iteration pattern
-        for member in sorted(all_duplicates, reverse=True):
+        # Important: Process in ascending sorted order to match Xojo's database iteration
+        # (Xojo's SQL has no ORDER BY, so returns in insertion/chronological order)
+        for member in sorted(all_duplicates):
             # Check which dictionaries contain this member
             bug_logged = member in cls.ContactsForTKA_BUG
             sk_logged = member in cls.ContactsForTKA_SK

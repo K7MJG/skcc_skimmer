@@ -3673,11 +3673,19 @@ func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
         allMembers[k]++
     }
 
-    // Remove duplicates
+    // Extract duplicates and sort in ascending order to match Xojo's
+    // database iteration (no ORDER BY = insertion/chronological order)
+    var duplicates []string
     for member, count := range allMembers {
-        if count <= 1 {
-            continue
+        if count > 1 {
+            duplicates = append(duplicates, member)
         }
+    }
+    sort.Strings(duplicates) // Sort ascending to match Xojo behavior
+
+    // Process duplicates in sorted order
+    for _, member := range duplicates {
+        count := allMembers[member]
 
         // Member in multiple dicts - remove from largest
         for count > 1 {
