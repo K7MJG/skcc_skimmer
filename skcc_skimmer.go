@@ -2802,7 +2802,6 @@ func downloadSKCCData() error {
         count++
     }
 
-    fmt.Printf("Loaded %d SKCC members\n", count)
     return scanner.Err()
 }
 
@@ -5330,7 +5329,7 @@ func main() {
         fmt.Printf("Error reading ADI file: %v\n", err)
         os.Exit(1)
     }
-    fmt.Printf("Loaded %d QSOs\n", len(qsos))
+    fmt.Printf("Loaded %s QSOs\n", formatComma(len(qsos)))
 
     // Process QSOs through award processor
     ap, err := NewAwardProcessor(members, config.MyCallsign)
@@ -5555,12 +5554,13 @@ func main() {
         }()
     }
 
-    // Wait for shutdown signal
-    <-sigChan
-    fmt.Println("\n\nShutting down...")
-    cancel()
+    // Handle Ctrl+C - exit immediately (OS will clean up)
+    go func() {
+        <-sigChan
+        fmt.Println("\n\nExiting...")
+        os.Exit(0)
+    }()
 
-    // Wait for all goroutines to finish
+    // Keep main goroutine alive
     wg.Wait()
-    fmt.Println("Shutdown complete")
 }
