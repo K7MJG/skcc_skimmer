@@ -5222,6 +5222,10 @@ func main() {
     awardsOnly := flag.Bool("awards-only", false, "Calculate awards only and exit")
     interactive := flag.Bool("i", false, "Interactive mode")
     flag.BoolVar(interactive, "interactive", false, "Interactive mode")
+    configFile := flag.String("f", "", "Full path to config file")
+    flag.StringVar(configFile, "config-file", "", "Full path to config file")
+    configPath := flag.String("p", "", "Directory containing skcc_skimmer.cfg")
+    flag.StringVar(configPath, "config-path", "", "Directory containing skcc_skimmer.cfg")
     showHelp := flag.Bool("h", false, "Show help")
     flag.BoolVar(showHelp, "help", false, "Show help")
     flag.Parse()
@@ -5233,11 +5237,30 @@ func main() {
 
     fmt.Printf("SKCC Skimmer version %s\n\n", Version)
 
+    // Determine config file path
+    configFilePath := "skcc_skimmer.cfg"
+    if *configFile != "" {
+        configFilePath = *configFile
+    } else if *configPath != "" {
+        configFilePath = filepath.Join(*configPath, "skcc_skimmer.cfg")
+    }
+
+    // Get absolute path and directory of config file
+    absConfigPath, err := filepath.Abs(configFilePath)
+    if err != nil {
+        absConfigPath = configFilePath
+    }
+    configDir := filepath.Dir(absConfigPath)
+
     // Load configuration
-    var err error
-    config, err = parseConfig("skcc_skimmer.cfg")
+    config, err = parseConfig(configFilePath)
     if err != nil {
         config = &Config{SpottersNearby: make(map[string]bool)}
+    }
+
+    // If ADI file from config is relative, make it relative to config file directory
+    if config.ADIFile != "" && !filepath.IsAbs(config.ADIFile) {
+        config.ADIFile = filepath.Join(configDir, config.ADIFile)
     }
 
     // Override with command-line flags

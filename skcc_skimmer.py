@@ -434,13 +434,28 @@ class cConfig:
     K3Y_YEAR:                 int
 
     config_file:              dict[str, Any]
+    config_file_path:         str = ''
+    config_dir_path:          str = ''
+    config_dir:               Path
 
     @classmethod
     async def init(cls, argv_v: list[str]) -> None:
+        # Parse args first to get config file/path options
+        cls._parse_args_for_config(argv_v)
+
         async def read_skcc_skimmer_cfg_async() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
-            ConfigFileAbsolute = Path('skcc_skimmer.cfg').resolve()
+            # Determine config file path
+            if cls.config_file_path:
+                ConfigFileAbsolute = Path(cls.config_file_path).resolve()
+            elif cls.config_dir_path:
+                ConfigFileAbsolute = (Path(cls.config_dir_path) / 'skcc_skimmer.cfg').resolve()
+            else:
+                ConfigFileAbsolute = Path('skcc_skimmer.cfg').resolve()
+
+            cls.config_dir = ConfigFileAbsolute.parent
+
             cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
 
             async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as config_file:
@@ -452,7 +467,13 @@ class cConfig:
         cls.config_file = await read_skcc_skimmer_cfg_async()
 
         cls.MY_CALLSIGN = cls.config_file.get('MY_CALLSIGN', '').upper()
-        cls.ADI_FILE = cls.config_file.get('ADI_FILE', '')
+
+        # If ADI_FILE from config is relative, make it relative to config file directory
+        adi_file_from_config = cls.config_file.get('ADI_FILE', '')
+        if adi_file_from_config and not Path(adi_file_from_config).is_absolute():
+            cls.ADI_FILE = str((cls.config_dir / adi_file_from_config).resolve())
+        else:
+            cls.ADI_FILE = adi_file_from_config
         cls.MY_GRIDSQUARE = cls.config_file.get('MY_GRIDSQUARE', '')
         cls.GOALS = set()
         cls.TARGETS = set()
@@ -505,6 +526,19 @@ class cConfig:
         cls._validate_config()
 
     @classmethod
+    def _parse_args_for_config(cls, arg_v: list[str]) -> None:
+        """Parse only config file/path arguments first"""
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("-f", "--config-file", type=str, help="Full path to config file")
+        parser.add_argument("-p", "--config-path", type=str, help="Directory containing skcc_skimmer.cfg")
+        args, _ = parser.parse_known_args(arg_v)
+
+        if args.config_file:
+            cls.config_file_path = args.config_file
+        if args.config_path:
+            cls.config_dir_path = args.config_path
+
+    @classmethod
     def _parse_args(cls, arg_v: list[str]) -> None:
         parser = argparse.ArgumentParser(description="SKCC Skimmer Configuration")
 
@@ -512,6 +546,8 @@ class cConfig:
         parser.add_argument("-b", "--bands", type=str, help="Comma-separated bands")
         parser.add_argument("-B", "--brag-months", type=int, help="Number of months back for bragging")
         parser.add_argument("-c", "--callsign", type=str, help="Your callsign")
+        parser.add_argument("-f", "--config-file", type=str, help="Full path to config file")
+        parser.add_argument("-p", "--config-path", type=str, help="Directory containing skcc_skimmer.cfg")
         parser.add_argument("-d", "--distance-units", type=str, choices=["mi", "km"], help="Distance units (mi/km)")
         parser.add_argument("-g", "--goals", type=str, help="Goals")
         parser.add_argument("-i", "--interactive", action="store_true", help="Enable interactive mode")
