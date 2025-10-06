@@ -754,35 +754,20 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
         return false, ""
     }
 
-    // DEBUG: Log entry for specific callsigns
-    if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
-        fmt.Printf("[DEBUG HandleSpot ENTRY] %s on %.1f by %s\n", callsign, spot.FrequencyKHz, spot.Spotter)
-    }
-
     // Check exclusion list
     for _, excluded := range sp.config.Exclusions {
         if callsign == excluded {
-            if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
-                fmt.Printf("[DEBUG HandleSpot] %s: excluded\n", callsign)
-            }
             return false, ""
         }
     }
 
     // Check if frequency is in configured bands
     if !sp.isInBands(spot.FrequencyKHz) {
-        if sp.config.Verbose && (callsign == "AC9HP" || callsign == "KC9HEK") {
-            fmt.Printf("[DEBUG HandleSpot] %s: not in configured bands (%.1f)\n", callsign, spot.FrequencyKHz)
-        }
         return false, ""
     }
 
     // Check if spotter is nearby
     spottedNearby := sp.config.SpottersNearby[spot.Spotter]
-
-    if sp.config.Verbose && (callsign == "WB2SMK" || callsign == "W2XU" || callsign == "K0FL" || callsign == "AC9HP" || callsign == "KC9HEK") {
-        fmt.Printf("[DEBUG HandleSpot] %s: spottedNearby=%v (spotter=%s)\n", callsign, spottedNearby, spot.Spotter)
-    }
 
     // Build report components
     var report []string
@@ -838,11 +823,6 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
         k3ySuffix = spot.CallSignSuffix
     }
     goalList, targetList := sp.buildGoalTargetReport(callsign, spot.FrequencyKHz, k3ySuffix)
-
-    // DEBUG: Log goal/target result for spotted callsigns
-    if sp.config.Verbose && (callsign == "WB2SMK" || callsign == "W2XU" || callsign == "K0FL" || len(goalList) > 0 || len(targetList) > 0) {
-        fmt.Printf("[DEBUG HandleSpot] %s: goals=%v, targets=%v\n", callsign, goalList, targetList)
-    }
 
     if len(goalList) > 0 {
         report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
@@ -1817,13 +1797,13 @@ func (sm *SkedMonitor) DisplayLogins() error {
     }
 
     if sm.config.Verbose {
-        fmt.Printf("[DEBUG] Sked page returned %d logins\n", len(logins))
+        fmt.Printf("Sked page returned %d logins\n", len(logins))
     }
 
     skedHits := sm.ProcessLogins(logins)
 
     if sm.config.Verbose {
-        fmt.Printf("[DEBUG] %d logins match goals/targets\n", len(skedHits))
+        fmt.Printf("%d logins match goals/targets\n", len(skedHits))
     }
 
     if len(skedHits) > 0 {
@@ -5302,7 +5282,23 @@ func main() {
     config.Interactive = *interactive
 
     // Validate required fields - show usage if missing
-    if config.MyCallsign == "" || config.ADIFile == "" {
+    if config.MyCallsign == "" {
+        fmt.Println("You must specify your callsign, either on the command line or in 'skcc_skimmer.cfg'.")
+        fmt.Println()
+        showUsage()
+    }
+
+    // ADI file is always required
+    if config.ADIFile == "" {
+        fmt.Println("You must specify an ADI file, either on the command line or in 'skcc_skimmer.cfg'.")
+        fmt.Println()
+        showUsage()
+    }
+
+    // For real-time monitoring (not awards-only), maidenhead is required
+    if !config.AwardsOnly && config.MyGridsquare == "" {
+        fmt.Println("Real-time monitoring requires your grid square. Use --maidenhead or -m to specify it.")
+        fmt.Println()
         showUsage()
     }
 
