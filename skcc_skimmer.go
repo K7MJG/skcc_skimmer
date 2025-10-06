@@ -371,6 +371,18 @@ func cleanSKCCNumber(skcc string) string {
     return result.String()
 }
 
+func isAllDigits(s string) bool {
+    if len(s) == 0 {
+        return false
+    }
+    for _, r := range s {
+        if r < '0' || r > '9' {
+            return false
+        }
+    }
+    return true
+}
+
 // extractCallsign extracts the base callsign from a slashed call
 // Examples: W1AW/4 -> W1AW, KH6/W6XX -> W6XX, VE3/K7MJG -> K7MJG
 func extractCallsign(call string) string {
@@ -2876,7 +2888,25 @@ func parseADI(filename string) ([]QSO, error) {
                     qso.State = strings.ToUpper(value)
                 case "SKCC":
                     qso.SKCC = value
-                    qso.SKCCPre = cleanSKCCNumber(value)
+                    // Parse SKCC number like Python does - detect corruption
+                    if len(value) == 0 {
+                        qso.SKCCPre = ""
+                    } else if isAllDigits(value) {
+                        // All numeric - use as-is
+                        qso.SKCCPre = value
+                    } else if len(value) > 1 {
+                        // Try to separate assuming only last char might be suffix
+                        prefixPart := value[:len(value)-1]
+                        if isAllDigits(prefixPart) {
+                            // Valid format like "1923T"
+                            qso.SKCCPre = prefixPart
+                        } else {
+                            // Corrupted format like "24S73T" - reject entirely (set to blank)
+                            qso.SKCCPre = ""
+                        }
+                    } else {
+                        qso.SKCCPre = ""
+                    }
                 case "TX_PWR":
                     qso.TxPwr = value
                 case "RX_PWR":
