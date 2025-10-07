@@ -32,7 +32,7 @@ import (
 )
 
 // Version information
-const Version = "9.0.0-go"
+const Version = "development"
 
 // Global state for progress dot coordination
 var (
@@ -5416,6 +5416,8 @@ func showUsage() {
     fmt.Println("                   [--bands <comma-separated-bands>]")
     fmt.Println("                   [--brag-months <number-of-months-back>]")
     fmt.Println("                   [--callsign <your-callsign>]")
+    fmt.Println("                   [--config-file <full-path-to-config-file>]")
+    fmt.Println("                   [--config-path <directory-containing-config>]")
     fmt.Println("                   [--goals <goals>]")
     fmt.Println("                   [--help]")
     fmt.Println("                   [--interactive]")
@@ -5431,12 +5433,14 @@ func showUsage() {
     fmt.Println("                   [-a <adi-file>]")
     fmt.Println("                   [-b <comma-separated-bands>]")
     fmt.Println("                   [-c <your-callsign>]")
+    fmt.Println("                   [-f <full-path-to-config-file>]")
     fmt.Println("                   [-g <goals>]")
     fmt.Println("                   [-h]")
     fmt.Println("                   [-i]")
     fmt.Println("                   [-l <logfile-name>]")
     fmt.Println("                   [-m <grid-square>]")
     fmt.Println("                   [-n <on|off>]")
+    fmt.Println("                   [-p <directory-containing-config>]")
     fmt.Println("                   [-r <distance-in-miles>]")
     fmt.Println("                   [-t <targets>]")
     fmt.Println("                   [-v]")

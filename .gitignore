@@ -1,4 +1,5 @@
 QSOs
 __pycache__
 cVersion.py
-releases/**
+builds/**
+skcc_skimmer

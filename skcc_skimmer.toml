@@ -1,0 +1,62 @@
+# SKCC Skimmer Configuration File
+
+# Basic settings
+MY_CALLSIGN = ''
+MY_GRIDSQUARE = ''
+# ADI log file (can use forward slashes on all platforms)
+ADI_FILE = ''
+
+SPOTTER_RADIUS = 2000  # miles
+
+# Award goals and targets (comma-separated)
+GOALS = 'c,t,s'
+TARGETS = 'c,txn,sxn'
+
+# Bands to monitor (space-separated)
+BANDS = '160 80 60 40 30 20 17 15 12 10 6'
+
+# Exclusions and friends (space-separated callsigns)
+EXCLUSIONS = 'W1AW'
+FRIENDS = ''
+
+# Distance units: 'mi' or 'km'
+DISTANCE_UNITS = 'mi'
+
+# K3Y year
+K3Y_YEAR = 2024
+
+# Verbose mode
+VERBOSE = false
+
+# Progress dots configuration
+[PROGRESS_DOTS]
+ENABLED = true
+DISPLAY_SECONDS = 5
+DOTS_PER_LINE = 75
+
+# SKCC Sked monitoring
+[SKED]
+ENABLED = true
+CHECK_SECONDS = 60
+
+# Log file configuration
+[LOG_FILE]
+ENABLED = false
+FILE_NAME = 'skcc_skimmer.log'
+DELETE_ON_STARTUP = false
+
+# High WPM handling
+[HIGH_WPM]
+ACTION = 'always-display'  # Valid: 'suppress', 'warn', 'always-display'
+THRESHOLD = 1  # WPM
+
+# Off-frequency handling
+[OFF_FREQUENCY]
+ACTION = 'suppress'  # Valid: 'suppress', 'warn'
+TOLERANCE = 10  # +/- kHz
+
+# Notification configuration
+[NOTIFICATION]
+ENABLED = true
+CONDITION = 'goals,friends'  # Valid: 'goals', 'targets', 'friends' (comma-separated)
+RENOTIFICATION_DELAY_SECONDS = 120
