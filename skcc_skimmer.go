@@ -2422,6 +2422,231 @@ func isUSState(spc string) bool {
 // CONFIGURATION
 // ============================================================================
 
+// parseTOML parses a simple TOML file without external dependencies
+func parseTOML(filename string) (map[string]interface{}, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	config := make(map[string]interface{})
+	var currentSection string
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		// Check for section header [SECTION_NAME]
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			currentSection = strings.Trim(line, "[]")
+			config[currentSection] = make(map[string]interface{})
+			continue
+		}
+
+		// Parse key = value
+		if strings.Contains(line, "=") {
+			parts := strings.SplitN(line, "=", 2)
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			// Strip inline comments (but not inside quotes)
+			if idx := strings.Index(value, "#"); idx != -1 {
+				inQuotes := false
+				for i, ch := range value {
+					if ch == '"' {
+						inQuotes = !inQuotes
+					}
+					if !inQuotes && i == idx {
+						value = strings.TrimSpace(value[:idx])
+						break
+					}
+				}
+			}
+
+			// Parse value type
+			var parsedValue interface{}
+			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
+				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
+				// String value (double or single quotes)
+				parsedValue = strings.Trim(value, "\"'")
+			} else if value == "true" || value == "false" {
+				// Boolean value
+				parsedValue = value == "true"
+			} else if intVal, err := strconv.Atoi(value); err == nil {
+				// Integer value
+				parsedValue = intVal
+			} else {
+				// Default to string if can't parse
+				parsedValue = value
+			}
+
+			// Store in appropriate section
+			if currentSection != "" {
+				sectionMap := config[currentSection].(map[string]interface{})
+				sectionMap[key] = parsedValue
+			} else {
+				config[key] = parsedValue
+			}
+		}
+	}
+
+	return config, scanner.Err()
+}
+
+// parseConfigTOML applies TOML config data to Config struct
+func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
+	tomlData, err := parseTOML(filename)
+	if err != nil {
+		return cfg, nil // Return defaults if error
+	}
+
+	// Helper to get string from interface{}
+	getString := func(val interface{}) string {
+		if s, ok := val.(string); ok {
+			return s
+		}
+		return ""
+	}
+
+	// Helper to get int from interface{}
+	getInt := func(val interface{}) int {
+		if i, ok := val.(int); ok {
+			return i
+		}
+		return 0
+	}
+
+	// Helper to get bool from interface{}
+	getBool := func(val interface{}) bool {
+		if b, ok := val.(bool); ok {
+			return b
+		}
+		return false
+	}
+
+	// Parse top-level config values
+	if val, ok := tomlData["MY_CALLSIGN"]; ok {
+		cfg.MyCallsign = strings.ToUpper(getString(val))
+	}
+	if val, ok := tomlData["MY_GRIDSQUARE"]; ok {
+		cfg.MyGridsquare = strings.ToUpper(getString(val))
+	}
+	if val, ok := tomlData["ADI_FILE"]; ok {
+		cfg.ADIFile = getString(val)
+	}
+	if val, ok := tomlData["GOALS"]; ok {
+		cfg.Goals = parseGoalsTargets(getString(val))
+	}
+	if val, ok := tomlData["TARGETS"]; ok {
+		cfg.Targets = parseGoalsTargets(getString(val))
+	}
+	if val, ok := tomlData["BANDS"]; ok {
+		cfg.Bands = parseBands(getString(val))
+	}
+	if val, ok := tomlData["EXCLUSIONS"]; ok {
+		cfg.Exclusions = strings.Fields(getString(val))
+	}
+	if val, ok := tomlData["FRIENDS"]; ok {
+		cfg.Friends = strings.Fields(getString(val))
+	}
+	if val, ok := tomlData["K3Y_YEAR"]; ok {
+		cfg.K3YYear = getInt(val)
+	}
+	if val, ok := tomlData["SPOTTER_RADIUS"]; ok {
+		cfg.SpotterRadius = getInt(val)
+	}
+	if val, ok := tomlData["VERBOSE"]; ok {
+		cfg.Verbose = getBool(val)
+	}
+	if val, ok := tomlData["DISTANCE_UNITS"]; ok {
+		cfg.DistanceUnits = getString(val)
+	}
+
+	// Parse HIGH_WPM section
+	if section, ok := tomlData["HIGH_WPM"].(map[string]interface{}); ok {
+		if val, ok := section["ACTION"]; ok {
+			cfg.HighWPM.Action = getString(val)
+		}
+		if val, ok := section["THRESHOLD"]; ok {
+			cfg.HighWPM.Threshold = getInt(val)
+		}
+	}
+
+	// Parse OFF_FREQUENCY section
+	if section, ok := tomlData["OFF_FREQUENCY"].(map[string]interface{}); ok {
+		if val, ok := section["ACTION"]; ok {
+			cfg.OffFrequency.Action = getString(val)
+		}
+		if val, ok := section["TOLERANCE"]; ok {
+			cfg.OffFrequency.Tolerance = getInt(val)
+		}
+	}
+
+	// Parse NOTIFICATION section
+	if section, ok := tomlData["NOTIFICATION"].(map[string]interface{}); ok {
+		if val, ok := section["ENABLED"]; ok {
+			cfg.Notification.Enabled = getBool(val)
+		}
+		if val, ok := section["CONDITION"]; ok {
+			condStr := getString(val)
+			cfg.Notification.Condition = []string{}
+			for _, c := range strings.Split(condStr, ",") {
+				c = strings.TrimSpace(c)
+				if c != "" {
+					cfg.Notification.Condition = append(cfg.Notification.Condition, c)
+				}
+			}
+		}
+		if val, ok := section["RENOTIFICATION_DELAY_SECONDS"]; ok {
+			cfg.Notification.RenotificationDelaySeconds = getInt(val)
+		}
+	}
+
+	// Parse SKED section
+	if section, ok := tomlData["SKED"].(map[string]interface{}); ok {
+		if val, ok := section["ENABLED"]; ok {
+			cfg.Sked.Enabled = getBool(val)
+		}
+		if val, ok := section["CHECK_SECONDS"]; ok {
+			cfg.Sked.CheckSeconds = getInt(val)
+		}
+	}
+
+	// Parse LOG_FILE section
+	if section, ok := tomlData["LOG_FILE"].(map[string]interface{}); ok {
+		if val, ok := section["ENABLED"]; ok {
+			cfg.LogFile.Enabled = getBool(val)
+		}
+		if val, ok := section["FILE_NAME"]; ok {
+			cfg.LogFile.FileName = getString(val)
+		}
+		if val, ok := section["DELETE_ON_STARTUP"]; ok {
+			cfg.LogFile.DeleteOnStartup = getBool(val)
+		}
+	}
+
+	// Parse PROGRESS_DOTS section
+	if section, ok := tomlData["PROGRESS_DOTS"].(map[string]interface{}); ok {
+		if val, ok := section["ENABLED"]; ok {
+			cfg.ProgressDots.Enabled = getBool(val)
+		}
+		if val, ok := section["DISPLAY_SECONDS"]; ok {
+			cfg.ProgressDots.DisplaySeconds = getInt(val)
+		}
+		if val, ok := section["DOTS_PER_LINE"]; ok {
+			cfg.ProgressDots.DotsPerLine = getInt(val)
+		}
+	}
+
+	return cfg, nil
+}
+
 func parseConfig(filename string) (*Config, error) {
     cfg := &Config{
         SpotterRadius:          750,
@@ -2459,6 +2684,11 @@ func parseConfig(filename string) (*Config, error) {
             DisplaySeconds: 5,
             DotsPerLine:    30,
         },
+    }
+
+    // Check if file is TOML or CFG based on extension
+    if strings.HasSuffix(strings.ToLower(filename), ".toml") {
+        return parseConfigTOML(filename, cfg)
     }
 
     file, err := os.Open(filename)
@@ -5259,12 +5489,27 @@ func main() {
 
     fmt.Printf("SKCC Skimmer version %s\n\n", Version)
 
-    // Determine config file path
-    configFilePath := "skcc_skimmer.cfg"
+    // Determine config file path - prefer .toml over .cfg
+    var configFilePath string
     if *configFile != "" {
+        // User specified explicit file
         configFilePath = *configFile
     } else if *configPath != "" {
-        configFilePath = filepath.Join(*configPath, "skcc_skimmer.cfg")
+        // User specified directory - check for .toml first, then .cfg
+        tomlPath := filepath.Join(*configPath, "skcc_skimmer.toml")
+        cfgPath := filepath.Join(*configPath, "skcc_skimmer.cfg")
+        if _, err := os.Stat(tomlPath); err == nil {
+            configFilePath = tomlPath
+        } else {
+            configFilePath = cfgPath
+        }
+    } else {
+        // Default location - check for .toml first, then .cfg
+        if _, err := os.Stat("skcc_skimmer.toml"); err == nil {
+            configFilePath = "skcc_skimmer.toml"
+        } else {
+            configFilePath = "skcc_skimmer.cfg"
+        }
     }
 
     // Get absolute path and directory of config file
@@ -5273,6 +5518,9 @@ func main() {
         absConfigPath = configFilePath
     }
     configDir := filepath.Dir(absConfigPath)
+
+    // Print which config file is being loaded
+    fmt.Printf("Reading configuration from '%s'...\n", absConfigPath)
 
     // Load configuration
     config, err = parseConfig(configFilePath)

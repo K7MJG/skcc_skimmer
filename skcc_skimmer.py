@@ -57,6 +57,7 @@ import string
 import sys
 import textwrap
 import time
+import tomllib
 import traceback
 from collections.abc import AsyncGenerator, Callable, Coroutine, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -446,21 +447,35 @@ class cConfig:
         async def read_skcc_skimmer_cfg_async() -> dict[str, Any]:
             config_vars: dict[str, Any] = {}
 
-            # Determine config file path
+            # Determine config file path - prefer .toml over .cfg
             if cls.config_file_path:
+                # User specified explicit file
                 ConfigFileAbsolute = Path(cls.config_file_path).resolve()
             elif cls.config_dir_path:
-                ConfigFileAbsolute = (Path(cls.config_dir_path) / 'skcc_skimmer.cfg').resolve()
+                # User specified directory - check for .toml first, then .cfg
+                toml_path = (Path(cls.config_dir_path) / 'skcc_skimmer.toml').resolve()
+                cfg_path = (Path(cls.config_dir_path) / 'skcc_skimmer.cfg').resolve()
+                ConfigFileAbsolute = toml_path if toml_path.exists() else cfg_path
             else:
-                ConfigFileAbsolute = Path('skcc_skimmer.cfg').resolve()
+                # Default location - check for .toml first, then .cfg
+                toml_path = Path('skcc_skimmer.toml').resolve()
+                cfg_path = Path('skcc_skimmer.cfg').resolve()
+                ConfigFileAbsolute = toml_path if toml_path.exists() else cfg_path
 
             cls.config_dir = ConfigFileAbsolute.parent
 
-            cDisplay.print(f"Reading skcc_skimmer.cfg from '{ConfigFileAbsolute}'...")
+            cDisplay.print(f"Reading configuration from '{ConfigFileAbsolute}'...")
 
-            async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as config_file:
-                ConfigFileString = await config_file.read()
-                exec(ConfigFileString, {}, config_vars)
+            # Parse based on file extension
+            if ConfigFileAbsolute.suffix == '.toml':
+                async with aiofiles.open(ConfigFileAbsolute, 'rb') as config_file:
+                    toml_bytes = await config_file.read()
+                    config_vars = tomllib.loads(toml_bytes.decode('utf-8'))
+            else:
+                # Original .cfg parsing with exec()
+                async with aiofiles.open(ConfigFileAbsolute, 'r', encoding='utf-8') as config_file:
+                    ConfigFileString = await config_file.read()
+                    exec(ConfigFileString, {}, config_vars)
 
             return config_vars
 
