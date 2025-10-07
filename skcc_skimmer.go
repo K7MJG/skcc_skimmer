@@ -1838,10 +1838,7 @@ func (sm *SkedMonitor) DisplayLogins() error {
         firstPass := sm.firstPass
         sm.mu.RUnlock()
 
-                // Display header (with newline before subsequent displays)
-    if !firstPass {
-        fmt.Println()
-    }
+        // Display header (printWithDotClear handles newline after dots if needed)
         printWithDotClear("=========== SKCC Sked Page ===========")
 
         // Sort callsigns for consistent display
