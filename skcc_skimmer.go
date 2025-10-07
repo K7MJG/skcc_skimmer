@@ -6,7 +6,7 @@ package main
  * Copyright (c) 2015-2025 Mark J Glenn
  *
  * SKCC Skimmer - Go Edition
- * Complete rewrite maintaining 100% behavioral parity with Python/Xojo versions
+ * Complete rewrite maintaining 100% behavioral parity with Python version
  */
 
 import (
@@ -39,6 +39,10 @@ var (
     dotsOnLine   int
     dotsMutex    sync.Mutex
 )
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
 
 // printWithDotClear prints text, clearing any progress dots on the current line first
 func printWithDotClear(text string) {
@@ -205,7 +209,10 @@ type Rosters struct {
     RC        map[string]int // SKCC# -> level
 }
 
-// Member represents an SKCC member from the database
+// ============================================================================
+// MEMBER DATA
+// ============================================================================
+
 type Member struct {
     SKCCNumber  string   // With suffix (e.g., "2748S")
     PlainNumber string   // Without suffix (e.g., "2748")
@@ -222,7 +229,10 @@ type Member struct {
     Status      string   // A=Active, SK=Silent Key
 }
 
-// QSO represents a QSO from the ADI log
+// ============================================================================
+// QSO PROCESSING & AWARD PROCESSOR
+// ============================================================================
+
 type QSO struct {
     Call       string
     SKCC       string // As logged
@@ -438,10 +448,9 @@ func formatSkippedQSO(date, time, call, band, reason string) string {
 }
 
 // ============================================================================
-// RBN (Reverse Beacon Network) CONNECTION
+// RBN CONNECTION
 // ============================================================================
 
-// RBNConnection manages connection to the Reverse Beacon Network
 type RBNConnection struct {
     callsign string
     ctx      context.Context
@@ -624,10 +633,9 @@ func isOnSKCCFrequency(frequencyKHz float64, toleranceKHz int) bool {
 }
 
 // ============================================================================
-// SPOT PROCESSING (cSPOTS)
+// SPOT PROCESSING
 // ============================================================================
 
-// Spot represents a parsed DX spot from RBN
 type Spot struct {
     Zulu           string
     Spotter        string
@@ -1050,11 +1058,10 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
 }
 
 // ============================================================================
-// MAIDENHEAD GRID & DISTANCE CALCULATION (cSpotters)
+// SPOTTER MANAGEMENT
 // ============================================================================
 
-// Spotter represents an RBN spotter with distance and bands
-type Spotter struct {
+type Spotter struct{
     Miles int
     Bands []int
 }
@@ -1332,10 +1339,9 @@ func DisplaySpotters(sm *SpotterManager, radiusMiles int, gridSquare string, dis
 }
 
 // ============================================================================
-// SKCC SKED MONITORING (cSked)
+// SKED MONITORING
 // ============================================================================
 
-// SkedLogin represents a login entry from the SKCC Sked page
 type SkedLogin struct {
     Callsign string
     Status   string
@@ -1960,6 +1966,10 @@ func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
 // ============================================================================
 
 // FileWatcher monitors ADI file for changes and triggers award recalculation
+// ============================================================================
+// FILE WATCHING
+// ============================================================================
+
 type FileWatcher struct {
     config         *Config
     adiFile        string
@@ -2086,6 +2096,10 @@ func (fw *FileWatcher) refresh() error {
 // ============================================================================
 
 // InteractiveMode handles user input for callsign lookups and commands
+// ============================================================================
+// INTERACTIVE MODE
+// ============================================================================
+
 type InteractiveMode struct {
     config  *Config
     members map[string]*Member
@@ -2543,6 +2557,10 @@ func parseConfig(filename string) (*Config, error) {
     return cfg, nil
 }
 
+// ============================================================================
+// GOALS/TARGETS PARSING
+// ============================================================================
+
 func parseGoalsTargets(value string) []string {
     value = strings.ToUpper(value)
     parts := strings.Split(value, ",")
@@ -2931,7 +2949,7 @@ func parseADI(filename string) ([]QSO, error) {
 }
 
 // ============================================================================
-// AWARD PROCESSOR - Core Logic (Direct translation from Python cAwards)
+// AWARD PROCESSOR - Core Logic
 // ============================================================================
 
 func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardProcessor, error) {
@@ -5195,6 +5213,10 @@ func showUsage() {
     fmt.Println()
     os.Exit(0)
 }
+
+// ============================================================================
+// MAIN
+// ============================================================================
 
 func main() {
     // Parse command-line flags
