@@ -7,6 +7,8 @@ Builds for all supported platforms concurrently
 import asyncio
 import os
 import shutil
+import tarfile
+import zipfile
 from pathlib import Path
 
 from build import get_version_from_git, substitute_version
@@ -22,10 +24,10 @@ PLATFORMS = [
 ]
 
 
-async def build_for_platform(goos: str, goarch: str, version: str, temp_source: Path, output_dir: Path) -> tuple[str, bool, str]:
+async def build_for_platform(goos: str, goarch: str, temp_source: Path, output_dir: Path) -> tuple[str, bool, str]:
     """Build for a specific platform. Returns (platform_name, success, message)"""
     platform_name = f"{goos}/{goarch}"
-    output_name = f"skcc_skimmer-{version}-{goos}-{goarch}"
+    output_name = f"skcc_skimmer-{goos}-{goarch}"
 
     if goos == "windows":
         output_name += ".exe"
@@ -58,7 +60,6 @@ async def build_for_platform(goos: str, goarch: str, version: str, temp_source: 
 async def build_all_platforms() -> None:
     """Build for all supported platforms"""
     source_file = Path("skcc_skimmer.go")
-    output_dir = Path("builds")
 
     if not source_file.exists():
         print(f"Error: {source_file} not found")
@@ -66,6 +67,9 @@ async def build_all_platforms() -> None:
 
     # Get version from git
     version = await get_version_from_git()
+
+    # Create output directory with version in name
+    output_dir = Path(f"skcc_skimmer_{version}")
 
     print(f"Building SKCC Skimmer Go version {version} for all platforms...")
     print()
@@ -86,13 +90,14 @@ async def build_all_platforms() -> None:
     try:
         # Build all platforms concurrently
         tasks = [
-            build_for_platform(goos, goarch, version, temp_source, output_dir)
+            build_for_platform(goos, goarch, temp_source, output_dir)
             for goos, goarch in PLATFORMS
         ]
 
         results = await asyncio.gather(*tasks)
 
-        # Display results
+        # Display build results
+        build_failed = False
         for platform_name, success, message in results:
             if success:
                 print(f"Building for {platform_name}...")
@@ -100,6 +105,12 @@ async def build_all_platforms() -> None:
             else:
                 print(f"Building for {platform_name}...")
                 print(f"  ✗ Failed: {message}")
+                build_failed = True
+
+        if build_failed:
+            print()
+            print("Some builds failed. Skipping archive creation.")
+            return
 
         print()
         print(f"Build complete! Executables in ./{output_dir}/")
@@ -111,6 +122,28 @@ async def build_all_platforms() -> None:
             size = file.stat().st_size
             size_mb = size / (1024 * 1024)
             print(f"  {file.name:50} {size_mb:6.2f} MB")
+
+        print()
+        print("Creating archives...")
+
+        # Create zip archive
+        zip_name = f"{output_dir}.zip"
+        with zipfile.ZipFile(zip_name, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file in files:
+                zipf.write(file, f"{output_dir.name}/{file.name}")
+        zip_size = Path(zip_name).stat().st_size / (1024 * 1024)
+        print(f"  ✓ {zip_name} ({zip_size:.2f} MB)")
+
+        # Create tar.gz archive
+        tar_name = f"{output_dir}.tar.gz"
+        with tarfile.open(tar_name, 'w:gz') as tarf:
+            for file in files:
+                tarf.add(file, arcname=f"{output_dir.name}/{file.name}")
+        tar_size = Path(tar_name).stat().st_size / (1024 * 1024)
+        print(f"  ✓ {tar_name} ({tar_size:.2f} MB)")
+
+        print()
+        print("Archives created successfully!")
 
     finally:
         # Clean up temporary source file
