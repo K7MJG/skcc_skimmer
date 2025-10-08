@@ -147,6 +147,7 @@ type Config struct {
     HighWPM      HighWPMConfig
     OffFrequency OffFrequencyConfig
     Notification NotificationConfig
+    SpotWindow   SpotWindowConfig
     Sked         SkedConfig
     LogFile      LogFileConfig
     ProgressDots ProgressDotsConfig
@@ -169,6 +170,12 @@ type NotificationConfig struct {
     Enabled                   bool
     Condition                 []string // "goals", "targets", "friends"
     RenotificationDelaySeconds int
+}
+
+// SpotWindowConfig controls spot aggregation/deduplication
+type SpotWindowConfig struct {
+    Enabled bool
+    Seconds int // Window duration to collect duplicate spots
 }
 
 // SkedConfig controls SKCC Sked monitoring
@@ -648,14 +655,15 @@ type Spot struct {
 
 // SpotProcessor handles parsing and filtering of RBN spots
 type SpotProcessor struct {
-    config      *Config
-    members     map[string]*Member
-    rosters     *Rosters
-    lastSpotted map[string]SpotTime
-    notified    map[string]float64
-    mu          sync.RWMutex
-    zuluRegex   *regexp.Regexp
-    dbRegex     *regexp.Regexp
+    config       *Config
+    members      map[string]*Member
+    rosters      *Rosters
+    lastSpotted  map[string]SpotTime
+    notified     map[string]float64
+    pendingSpots map[string]*PendingSpot // For spot windowing/aggregation
+    mu           sync.RWMutex
+    zuluRegex    *regexp.Regexp
+    dbRegex      *regexp.Regexp
 }
 
 // SpotTime tracks when a callsign was last spotted
@@ -664,16 +672,25 @@ type SpotTime struct {
     Timestamp    float64
 }
 
+// PendingSpot tracks a spot waiting in the aggregation window
+type PendingSpot struct {
+    FirstSpot     *Spot
+    Output        string
+    SpotterCount  int
+    Timer         *time.Timer
+}
+
 // NewSpotProcessor creates a new spot processor
 func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters) *SpotProcessor {
     return &SpotProcessor{
-        config:      config,
-        members:     members,
-        rosters:     rosters,
-        lastSpotted: make(map[string]SpotTime),
-        notified:    make(map[string]float64),
-        zuluRegex:   regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
-        dbRegex:     regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
+        config:       config,
+        members:      members,
+        rosters:      rosters,
+        lastSpotted:  make(map[string]SpotTime),
+        notified:     make(map[string]float64),
+        pendingSpots: make(map[string]*PendingSpot),
+        zuluRegex:    regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
+        dbRegex:      regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
     }
 }
 
@@ -893,7 +910,75 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
             spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
     }
 
+    // Handle spot windowing/aggregation if enabled
+    if sp.config.SpotWindow.Enabled && sp.config.SpotWindow.Seconds > 0 {
+        return sp.aggregateSpot(spot, output, goalList, targetList)
+    }
+
     return true, output
+}
+
+// aggregateSpot handles spot windowing - collecting multiple spotters before displaying
+func (sp *SpotProcessor) aggregateSpot(spot *Spot, output string, goalList, targetList []string) (bool, string) {
+    callsign := extractCallsign(spot.CallSign)
+    spotKey := buildSpotKey(callsign, spot.FrequencyKHz, goalList, targetList)
+
+    sp.mu.Lock()
+    defer sp.mu.Unlock()
+
+    // Check if we already have a pending spot for this key
+    if pending, exists := sp.pendingSpots[spotKey]; exists {
+        // Increment spotter count
+        pending.SpotterCount++
+        return false, "" // Don't display yet, still aggregating
+    }
+
+    // This is the first spot for this key - create pending entry and start timer
+    pending := &PendingSpot{
+        FirstSpot:    spot,
+        Output:       output,
+        SpotterCount: 1,
+    }
+
+    // Create timer that will display the aggregated spot after window expires
+    pending.Timer = time.AfterFunc(time.Duration(sp.config.SpotWindow.Seconds)*time.Second, func() {
+        sp.flushPendingSpot(spotKey)
+    })
+
+    sp.pendingSpots[spotKey] = pending
+    return false, "" // Don't display yet, waiting for window to expire
+}
+
+// flushPendingSpot displays an aggregated spot after the window expires
+func (sp *SpotProcessor) flushPendingSpot(spotKey string) {
+    sp.mu.Lock()
+    pending, exists := sp.pendingSpots[spotKey]
+    if !exists {
+        sp.mu.Unlock()
+        return
+    }
+    delete(sp.pendingSpots, spotKey)
+    sp.mu.Unlock()
+
+    // Modify output to show MULTIPLE(n) instead of single spotter
+    output := pending.Output
+    if pending.SpotterCount > 1 {
+        // Replace "by CALLSIGN(SNRdB)" with "by MULTIPLE(n)"
+        re := regexp.MustCompile(`by [A-Z0-9-]+\(\d+dB\)`)
+        output = re.ReplaceAllString(output, fmt.Sprintf("by MULTIPLE(%d)", pending.SpotterCount))
+    }
+
+    // Display the aggregated spot
+    printWithDotClear(output)
+}
+
+// buildSpotKey creates a unique key for spot aggregation
+func buildSpotKey(callsign string, freq float64, goalList, targetList []string) string {
+    // Round frequency to 0.1 kHz to group nearby spots
+    freqRounded := fmt.Sprintf("%.1f", freq)
+    goals := strings.Join(goalList, ",")
+    targets := strings.Join(targetList, ",")
+    return fmt.Sprintf("%s:%s:%s:%s", callsign, freqRounded, goals, targets)
 }
 
 // handleNotification determines if a beep should be played and returns the notification flag
@@ -2615,6 +2700,16 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 		}
 	}
 
+	// Parse SPOT_WINDOW section
+	if section, ok := tomlData["SPOT_WINDOW"].(map[string]interface{}); ok {
+		if val, ok := section["ENABLED"]; ok {
+			cfg.SpotWindow.Enabled = getBool(val)
+		}
+		if val, ok := section["SECONDS"]; ok {
+			cfg.SpotWindow.Seconds = getInt(val)
+		}
+	}
+
 	// Parse LOG_FILE section
 	if section, ok := tomlData["LOG_FILE"].(map[string]interface{}); ok {
 		if val, ok := section["ENABLED"]; ok {
@@ -2666,6 +2761,10 @@ func parseConfig(filename string) (*Config, error) {
             Enabled:                   true,
             Condition:                 []string{"goals", "targets", "friends"},
             RenotificationDelaySeconds: 30,
+        },
+        SpotWindow: SpotWindowConfig{
+            Enabled: false,
+            Seconds: 10,
         },
         Sked: SkedConfig{
             Enabled:      true,
@@ -2771,6 +2870,8 @@ func parseConfig(filename string) (*Config, error) {
                 parseOffFrequency(value, cfg)
             case "NOTIFICATION":
                 parseNotification(value, cfg)
+            case "SPOT_WINDOW":
+                parseSpotWindow(value, cfg)
             case "SKED":
                 parseSked(value, cfg)
             case "LOG_FILE":
@@ -2906,6 +3007,21 @@ func parseSked(value string, cfg *Config) {
         if matches := re.FindStringSubmatch(value); len(matches) > 1 {
             if v, err := strconv.Atoi(matches[1]); err == nil {
                 cfg.Sked.CheckSeconds = v
+            }
+        }
+    }
+}
+
+// parseSpotWindow parses SPOT_WINDOW dict from config
+func parseSpotWindow(value string, cfg *Config) {
+    if strings.Contains(value, "ENABLED") {
+        cfg.SpotWindow.Enabled = strings.Contains(value, "True") || strings.Contains(value, "true")
+    }
+    if strings.Contains(value, "SECONDS") {
+        re := regexp.MustCompile(`SECONDS['"]?\s*:\s*(\d+)`)
+        if matches := re.FindStringSubmatch(value); len(matches) > 1 {
+            if v, err := strconv.Atoi(matches[1]); err == nil {
+                cfg.SpotWindow.Seconds = v
             }
         }
     }
@@ -5759,6 +5875,11 @@ func main() {
 
     // Create spot processor for RBN spots
     spotProcessor := NewSpotProcessor(config, members, rosters)
+
+    // Display spot windowing configuration
+    if config.SpotWindow.Enabled {
+        fmt.Printf("\nSpot windowing enabled: aggregating duplicate spots within %d second window\n", config.SpotWindow.Seconds)
+    }
 
     // Launch RBN connection
     rbn := NewRBNConnection(config.MyCallsign)

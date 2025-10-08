@@ -399,6 +399,18 @@ class cConfig:
         )
 
     @dataclass
+    class cSpotWindow:
+        ENABLED: bool = False
+        SECONDS: int  = 10
+    @classmethod
+    def init_spot_window(cls) -> None:
+        spot_window_config = cls.config_file.get("SPOT_WINDOW", {})
+        cls.SPOT_WINDOW = cConfig.cSpotWindow(
+            ENABLED = spot_window_config.get("ENABLED", cConfig.cSpotWindow.ENABLED),
+            SECONDS = spot_window_config.get("SECONDS", cConfig.cSpotWindow.SECONDS),
+        )
+
+    @dataclass
     class cNotification:
         DEFAULT_CONDITION: ClassVar[list[str]] = ['goals', 'targets', 'friends']  # Class-level default
         ENABLED: bool = True
@@ -521,6 +533,7 @@ class cConfig:
         cls.init_logfile()
         cls.init_progress_dots()
         cls.init_sked()
+        cls.init_spot_window()
         cls.init_notifications()
         cls.init_off_frequency()
         cls.init_high_wpm()
@@ -1211,6 +1224,7 @@ class cSked:
 class cSPOTS:
     last_spotted: ClassVar[dict[str, tuple[float, float]]] = {}
     _Notified:    ClassVar[dict[str, float]] = {}
+    _PendingSpots: ClassVar[dict[str, dict[str, Any]]] = {}  # For spot windowing/aggregation
 
     _Zulu_RegEx:  ClassVar[re.Pattern[str]] = re.compile(r'^([01]?[0-9]|2[0-3])[0-5][0-9]Z$')
     _db_regex:    ClassVar[re.Pattern[str]] = re.compile(r'^\s{0,1}\d{1,2} dB$')
@@ -1290,6 +1304,60 @@ class cSPOTS:
             cls._Notified[CallSign] = Now + cConfig.NOTIFICATION.RENOTIFICATION_DELAY_SECONDS
 
         return NotificationFlag
+
+    @staticmethod
+    def _build_spot_key(CallSign: str, Freq: float, GoalList: list[str], TargetList: list[str]) -> str:
+        """Create a unique key for spot aggregation."""
+        freq_rounded = f"{Freq:.1f}"
+        goals = ",".join(GoalList)
+        targets = ",".join(TargetList)
+        return f"{CallSign}:{freq_rounded}:{goals}:{targets}"
+
+    @classmethod
+    async def _flush_pending_spot(cls, spot_key: str) -> None:
+        """Display an aggregated spot after the window expires."""
+        if spot_key not in cls._PendingSpots:
+            return
+
+        pending = cls._PendingSpots.pop(spot_key)
+        output = pending['output']
+        spotter_count = pending['spotter_count']
+
+        # Modify output to show MULTIPLE(n) instead of single spotter
+        if spotter_count > 1:
+            # Replace "by CALLSIGN(SNRdB)" or "by CALLSIGN(distance, SNRdB)" with "by MULTIPLE(n)"
+            import re
+            output = re.sub(r'by [A-Z0-9-]+\([^)]+\)', f'by MULTIPLE({spotter_count})', output)
+
+        # Display the aggregated spot
+        cDisplay.print(output)
+        await cUtil.log_async(pending['log_line'])
+
+    @classmethod
+    async def _aggregate_spot(cls, CallSign: str, Freq: float, GoalList: list[str],
+                             TargetList: list[str], Output: str, LogLine: str) -> None:
+        """Handle spot windowing - collecting multiple spotters before displaying."""
+        spot_key = cls._build_spot_key(CallSign, Freq, GoalList, TargetList)
+
+        if spot_key in cls._PendingSpots:
+            # Increment spotter count for existing pending spot
+            cls._PendingSpots[spot_key]['spotter_count'] += 1
+            return
+
+        # This is the first spot for this key - create pending entry and start timer
+        cls._PendingSpots[spot_key] = {
+            'output': Output,
+            'log_line': LogLine,
+            'spotter_count': 1,
+        }
+
+        # Schedule the flush after the configured window
+        async def flush_after_delay():
+            await asyncio.sleep(cConfig.SPOT_WINDOW.SECONDS)
+            await cls._flush_pending_spot(spot_key)
+
+        # Create background task for the timer
+        asyncio.create_task(flush_after_delay())
 
     @classmethod
     async def handle_spot_async(cls, Line: str) -> None:
@@ -1379,8 +1447,12 @@ class cSPOTS:
                 NotificationFlag = cls.handle_notification(CallSign, GoalList, TargetList)
                 Out = f'{Zulu}{NotificationFlag}{CallSign:<6} {MemberInfo} on {FrequencyString:>8} {"; ".join(Report)}'
 
-            cDisplay.print(Out)
-            await cUtil.log_async(f'{ZuluDate} {Out}')
+            # Handle spot windowing/aggregation if enabled
+            if cConfig.SPOT_WINDOW.ENABLED and cConfig.SPOT_WINDOW.SECONDS > 0:
+                await cls._aggregate_spot(CallSign, FrequencyKHz, GoalList, TargetList, Out, f'{ZuluDate} {Out}')
+            else:
+                cDisplay.print(Out)
+                await cUtil.log_async(f'{ZuluDate} {Out}')
 
 class QRPQSOData(TypedDict):
     date: str
