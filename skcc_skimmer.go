@@ -23,6 +23,7 @@ import (
     "os/signal"
     "path/filepath"
     "regexp"
+    "slices"
     "sort"
     "strconv"
     "strings"
@@ -750,10 +751,9 @@ func (sp *SpotProcessor) ParseSpot(line string) *Spot {
 
     // Handle callsign suffixes (e.g., W1AW/4)
     callSignSuffix := ""
-    if strings.Contains(callsign, "/") {
-        parts := strings.SplitN(callsign, "/", 2)
-        callsign = parts[0]
-        callSignSuffix = strings.ToUpper(parts[1])
+    if base, suffix, found := strings.Cut(callsign, "/"); found {
+        callsign = base
+        callSignSuffix = strings.ToUpper(suffix)
     }
 
     return &Spot{
@@ -780,10 +780,8 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
     }
 
     // Check exclusion list
-    for _, excluded := range sp.config.Exclusions {
-        if callsign == excluded {
-            return false, ""
-        }
+    if slices.Contains(sp.config.Exclusions, callsign) {
+        return false, ""
     }
 
     // Check if frequency is in configured bands
@@ -835,11 +833,8 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
     }
 
     // Check friends list
-    for _, friend := range sp.config.Friends {
-        if callsign == friend {
-            report = append(report, "friend")
-            break
-        }
+    if slices.Contains(sp.config.Friends, callsign) {
+        report = append(report, "friend")
     }
 
     // Get goal and target hits
@@ -859,13 +854,7 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
 
     // Determine if we should display this spot
     // Only show spots from nearby spotters for goals/targets, but always show user's callsign and friends
-    isFriend := false
-    for _, friend := range sp.config.Friends {
-        if callsign == friend {
-            isFriend = true
-            break
-        }
-    }
+    isFriend := slices.Contains(sp.config.Friends, callsign)
 
     if !((spottedNearby && (len(goalList) > 0 || len(targetList) > 0)) ||
         callsign == sp.config.MyCallsign ||
@@ -1618,13 +1607,7 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
     }
 
     // Check friends list
-    isFriend := false
-    for _, friend := range sm.config.Friends {
-        if callsign == friend {
-            isFriend = true
-            break
-        }
-    }
+    isFriend := slices.Contains(sm.config.Friends, callsign)
 
     if isFriend {
         report = append(report, "friend")
@@ -2359,13 +2342,9 @@ func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
     targetList := []string{}
 
     // Check friend status
-    isFriend := false
-    for _, friend := range im.config.Friends {
-        if strings.EqualFold(friend, callsign) {
-            isFriend = true
-            break
-        }
-    }
+    isFriend := slices.ContainsFunc(im.config.Friends, func(friend string) bool {
+        return strings.EqualFold(friend, callsign)
+    })
 
     if len(goalList) > 0 {
         report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
@@ -2532,10 +2511,9 @@ func parseTOML(filename string) (map[string]interface{}, error) {
 		}
 
 		// Parse key = value
-		if strings.Contains(line, "=") {
-			parts := strings.SplitN(line, "=", 2)
-			key := strings.TrimSpace(parts[0])
-			value := strings.TrimSpace(parts[1])
+		if key, value, found := strings.Cut(line, "="); found {
+			key = strings.TrimSpace(key)
+			value = strings.TrimSpace(value)
 
 			// Strip inline comments (but not inside quotes)
 			if idx := strings.Index(value, "#"); idx != -1 {
@@ -2800,10 +2778,9 @@ func parseConfig(filename string) (*Config, error) {
             continue
         }
 
-        if strings.Contains(line, "=") {
-            parts := strings.SplitN(line, "=", 2)
-            key := strings.TrimSpace(parts[0])
-            value := strings.TrimSpace(parts[1])
+        if key, value, found := strings.Cut(line, "="); found {
+            key = strings.TrimSpace(key)
+            value = strings.TrimSpace(value)
 
             // Helper function to strip inline comments from a line
             stripComment := func(s string) string {
@@ -3332,10 +3309,8 @@ func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardPr
         }
 
         // Also index by base callsign if it has /SK or /EX suffix
-        if strings.Contains(callUpper, "/") {
-            parts := strings.SplitN(callUpper, "/", 2)
-            if len(parts) == 2 && (parts[1] == "SK" || parts[1] == "EX") {
-                baseCall := parts[0]
+        if baseCall, suffix, found := strings.Cut(callUpper, "/"); found {
+            if suffix == "SK" || suffix == "EX" {
                 found := false
                 for _, m := range ap.callsignDB[baseCall] {
                     if m.PlainNumber == member.PlainNumber {
