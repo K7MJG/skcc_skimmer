@@ -3739,8 +3739,8 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
         }
     }
 
-    // TKA
-    if qso.KeyType != "" {
+    // TKA (Triple Key Award started 10-Nov-2018)
+    if qso.QSODate >= "20181110" && qso.KeyType != "" {
         kt := strings.ToUpper(qso.KeyType)
         if kt == "SK" || kt == "S" || kt == "BUG" || kt == "B" || kt == "SS" {
             processed.TKAQSO = true
@@ -4234,7 +4234,7 @@ func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
     }
     defer file.Close()
 
-    // Sort by date
+    // Sort by date, then time (matching Xojo: ORDER BY Log_QSO_DATE, Log_TIME_ON)
     var sorted []ProcessedQSO
     for _, c := range contacts {
         sorted = append(sorted, c)
@@ -4243,7 +4243,7 @@ func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
         if sorted[i].QSODate != sorted[j].QSODate {
             return sorted[i].QSODate < sorted[j].QSODate
         }
-        return sorted[i].Call < sorted[j].Call
+        return sorted[i].TimeOn < sorted[j].TimeOn
     })
 
     for i, qso := range sorted {
@@ -4405,12 +4405,18 @@ func writeQRPAward(contacts map[string]ProcessedQSO) {
         }
     }
 
-    // Sort by date
+    // Sort by date, then time (matching Xojo: ORDER BY Log_QSO_DATE, Log_TIME_ON)
     sort.Slice(qrp1x, func(i, j int) bool {
-        return qrp1x[i].QSODate < qrp1x[j].QSODate
+        if qrp1x[i].QSODate != qrp1x[j].QSODate {
+            return qrp1x[i].QSODate < qrp1x[j].QSODate
+        }
+        return qrp1x[i].TimeOn < qrp1x[j].TimeOn
     })
     sort.Slice(qrp2x, func(i, j int) bool {
-        return qrp2x[i].QSODate < qrp2x[j].QSODate
+        if qrp2x[i].QSODate != qrp2x[j].QSODate {
+            return qrp2x[i].QSODate < qrp2x[j].QSODate
+        }
+        return qrp2x[i].TimeOn < qrp2x[j].TimeOn
     })
 
     // Write 1x file
@@ -4496,7 +4502,10 @@ func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
             sorted = append(sorted, qso)
         }
         sort.Slice(sorted, func(i, j int) bool {
-            return sorted[i].QSODate < sorted[j].QSODate
+            if sorted[i].QSODate != sorted[j].QSODate {
+                return sorted[i].QSODate < sorted[j].QSODate
+            }
+            return sorted[i].TimeOn < sorted[j].TimeOn
         })
 
         for i, qso := range sorted {
@@ -4541,7 +4550,10 @@ func writeRCAward(contacts map[string]ProcessedQSO) {
         sorted = append(sorted, qso)
     }
     sort.Slice(sorted, func(i, j int) bool {
-        return sorted[i].QSODate < sorted[j].QSODate
+        if sorted[i].QSODate != sorted[j].QSODate {
+            return sorted[i].QSODate < sorted[j].QSODate
+        }
+        return sorted[i].TimeOn < sorted[j].TimeOn
     })
 
     for _, qso := range sorted {
@@ -4583,8 +4595,12 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
         for _, qso := range contacts {
             sorted = append(sorted, qso)
         }
+        // Sort by date, then time (matching standard chronological order)
         sort.Slice(sorted, func(i, j int) bool {
-            return sorted[i].QSODate < sorted[j].QSODate
+            if sorted[i].QSODate != sorted[j].QSODate {
+                return sorted[i].QSODate < sorted[j].QSODate
+            }
+            return sorted[i].TimeOn < sorted[j].TimeOn
         })
 
         for i, qso := range sorted {
