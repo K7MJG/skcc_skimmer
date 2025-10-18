@@ -39,6 +39,12 @@ DOTS_PER_LINE = 75
 ENABLED = true
 CHECK_SECONDS = 60
 
+# Spot windowing (aggregation/deduplication)
+# Reduces output clutter when many spotters see the same station
+[SPOT_WINDOW]
+ENABLED = false  # Set to true to aggregate duplicate spots
+SECONDS = 10     # Window duration (in seconds) to collect duplicate spots
+
 # Log file configuration
 [LOG_FILE]
 ENABLED = false

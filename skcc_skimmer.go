@@ -3232,7 +3232,7 @@ func parseADI(filename string) ([]QSO, error) {
                     qso.DXCC = value
                 case "BAND":
                     qso.Band = strings.ToUpper(value)
-                case "KEY_TYPE":
+                case "KEY_TYPE", "APP_SKCCLOGGER_KEYTYPE":
                     qso.KeyType = strings.ToUpper(value)
                 case "NAME":
                     qso.Name = value
@@ -4951,8 +4951,8 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     if cCount >= 100 {
         level := cCount / 100
         remaining := (level+1)*100 - cCount
-        fmt.Printf("C: Have %s which qualifies for Cx%d. Cx%d requires %d (%d more)\n",
-            formatComma(cCount), level, level+1, (level+1)*100, remaining)
+        fmt.Printf("C: Have %s which qualifies for Cx%d. Cx%d requires %s (%s more)\n",
+            formatComma(cCount), level, level+1, formatComma((level+1)*100), formatComma(remaining))
     } else {
         fmt.Printf("C: Have %d. C requires 100 (%d more)\n", cCount, 100-cCount)
     }
@@ -4962,8 +4962,8 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     if tCount >= 50 {
         level := tCount / 50
         remaining := (level+1)*50 - tCount
-        fmt.Printf("T: Have %s which qualifies for Tx%d. Tx%d requires %d (%d more)\n",
-            formatComma(tCount), level, level+1, (level+1)*50, remaining)
+        fmt.Printf("T: Have %s which qualifies for Tx%d. Tx%d requires %s (%s more)\n",
+            formatComma(tCount), level, level+1, formatComma((level+1)*50), formatComma(remaining))
     } else if members[config.MyCallsign].CDate != "" {
         fmt.Printf("T: Have %d. T requires 50 (%d more)\n", tCount, 50-tCount)
     } else {
@@ -4976,8 +4976,8 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
         if sCount >= 200 {
             level := sCount / 200
             remaining := (level+1)*200 - sCount
-            fmt.Printf("S: Have %s which qualifies for Sx%d. Sx%d requires %d (%d more)\n",
-                formatComma(sCount), level, level+1, (level+1)*200, remaining)
+            fmt.Printf("S: Have %s which qualifies for Sx%d. Sx%d requires %s (%s more)\n",
+                formatComma(sCount), level, level+1, formatComma((level+1)*200), formatComma(remaining))
         } else {
             fmt.Printf("S: Have %d. S requires 200 (%d more)\n", sCount, 200-sCount)
         }
