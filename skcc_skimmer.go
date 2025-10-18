@@ -4605,8 +4605,10 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
 
         for i, qso := range sorted {
             dateStr := formatDate(qso.QSODate)
+            // Use CallPri (member's current primary callsign) not Call (ADI callsign)
+            // This matches Python/Xojo which uses log_call_pri from member database
             fmt.Fprintf(file, "%-6d %s  %-13s %-8s %-12s %-12s %s\n",
-                i+1, dateStr, qso.Call, qso.SKCCNr, qso.Name, qso.State, name)
+                i+1, dateStr, qso.CallPri, qso.SKCCNr, qso.Name, qso.State, name)
         }
         fmt.Fprintln(file)
     }
