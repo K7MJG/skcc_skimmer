@@ -1071,13 +1071,74 @@ func getBandEdges(band int) (float64, float64) {
     }
 }
 
+// buildAwardGoals checks which awards a spotted member helps with (based on rosters)
+// Used by both RBN spot processor and Sked monitor
+func buildAwardGoals(callsign string, memberNumber string, rosters *Rosters, goalList []string) []string {
+    var goals []string
+
+    for _, goal := range goalList {
+        switch goal {
+        case "C":
+            if _, exists := rosters.Centurion[memberNumber]; !exists {
+                goals = append(goals, "C")
+            }
+        case "T":
+            if _, exists := rosters.Tribune[memberNumber]; !exists {
+                goals = append(goals, "T")
+            }
+        case "S":
+            if _, exists := rosters.Senator[memberNumber]; !exists {
+                goals = append(goals, "S")
+            }
+        case "WAS":
+            if _, exists := rosters.WAS[callsign]; !exists {
+                goals = append(goals, "WAS")
+            }
+        case "WAS-C":
+            if _, exists := rosters.WASC[callsign]; !exists {
+                goals = append(goals, "WAS-C")
+            }
+        case "WAS-T":
+            if _, exists := rosters.WAST[callsign]; !exists {
+                goals = append(goals, "WAS-T")
+            }
+        case "WAS-S":
+            if _, exists := rosters.WASS[callsign]; !exists {
+                goals = append(goals, "WAS-S")
+            }
+        case "P":
+            if _, exists := rosters.Prefix[callsign]; !exists {
+                goals = append(goals, "P")
+            }
+        case "DXC":
+            if _, exists := rosters.DXC[memberNumber]; !exists {
+                goals = append(goals, "DXC")
+            }
+        case "DXQ":
+            if _, exists := rosters.DXQ[memberNumber]; !exists {
+                goals = append(goals, "DXQ")
+            }
+        case "QRP":
+            if _, exists := rosters.QRP1x[memberNumber]; !exists {
+                goals = append(goals, "QRP")
+            }
+        case "RC":
+            if _, exists := rosters.RC[memberNumber]; !exists {
+                goals = append(goals, "RC")
+            }
+        case "BRAG":
+            goals = append(goals, "BRAG")
+        case "TKA":
+            goals = append(goals, "TKA")
+        }
+    }
+    return goals
+}
+
 // buildGoalTargetReport builds lists of goals and targets for a spotted callsign
 func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ string) ([]string, []string) {
     var goals []string
     var targets []string
-
-    // For now, we'll implement a simplified version that just checks if the callsign is an SKCC member
-    // and adds basic goal markers. Full implementation requires award tracking state.
 
     // Check if this is an SKCC member
     member, exists := sp.members[callsign]
@@ -1094,39 +1155,12 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
         return goals, targets
     }
 
-    // For now, just indicate they're an SKCC member and needed for goals the user has configured
-    // TODO: Add full award tracking to determine specific goals/targets
+    // Get member's SKCC number (plain version without suffix)
+    memberNumber := member.PlainNumber
 
-    // Check if BRAG is in user's goals
-    for _, goal := range sp.config.Goals {
-        if goal == "BRAG" {
-            goals = append(goals, "BRAG")
-            break
-        }
-    }
-
-    // Check if TKA is in user's goals
-    for _, goal := range sp.config.Goals {
-        if goal == "TKA" {
-            goals = append(goals, "TKA")
-            break
-        }
-    }
-
-    // Check targets similarly
-    for _, target := range sp.config.Targets {
-        if target == "BRAG" {
-            targets = append(targets, "BRAG")
-            break
-        }
-    }
-
-    for _, target := range sp.config.Targets {
-        if target == "TKA" {
-            targets = append(targets, "TKA")
-            break
-        }
-    }
+    // Use shared function to build goals list
+    goals = buildAwardGoals(callsign, memberNumber, sp.rosters, sp.config.Goals)
+    targets = buildAwardGoals(callsign, memberNumber, sp.rosters, sp.config.Targets)
 
     return goals, targets
 }
@@ -4686,7 +4720,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     if contains(config.Goals, "C") {
         cCount := len(contactsC)
         if cCount >= 100 {
-            cLevel := cCount / 100
+            cLevel := calculateAwardLevel(cCount, 100)
             if myMember.CDate != "" {
                 if awardLevel, exists := rosters.Centurion[myNumber]; exists {
                     if cLevel > awardLevel {
@@ -4713,7 +4747,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     if contains(config.Goals, "T") {
         tCount := len(contactsT)
         if tCount >= 50 {
-            tLevel := tCount / 50
+            tLevel := calculateAwardLevel(tCount, 50)
             if myMember.CDate == "" {
                 if tLevel > 0 {
                     fmt.Println("NOTE: Tribune award requires Centurion first. Apply for C before T.")
@@ -4749,7 +4783,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
                 fmt.Printf("NOTE: Senator award requires Tribune x8 (400 contacts) first. Currently have %d Tribune contacts.\n", tribuneContacts)
             }
         } else if sCount >= 200 {
-            sLevel := sCount / 200
+            sLevel := calculateAwardLevel(sCount, 200)
             if myMember.SDate != "" {
                 if awardLevel, exists := rosters.Senator[myNumber]; exists {
                     if sLevel > awardLevel {
@@ -4810,7 +4844,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
             pTotal += pts
         }
         if pTotal > 500000 {
-            pLevel := pTotal / 500000
+            pLevel := getPrefixLevel(pTotal)
             if awardLevel, exists := rosters.Prefix[config.MyCallsign]; exists {
                 if pLevel > awardLevel {
                     fmt.Printf("FYI: You qualify for Px%d but have only applied for Px%d.\n", pLevel, awardLevel)
@@ -4967,10 +5001,17 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     // C award
     cCount := len(contactsC)
     if cCount >= 100 {
-        level := cCount / 100
-        remaining := (level+1)*100 - cCount
+        level := calculateAwardLevel(cCount, 100)
+        nextLevel := level
+        if level < 10 {
+            nextLevel = level + 1
+        } else {
+            nextLevel = level + 5
+        }
+        nextLevelRequired := nextLevel * 100
+        remaining := nextLevelRequired - cCount
         fmt.Printf("C: Have %s which qualifies for Cx%d. Cx%d requires %s (%s more)\n",
-            formatComma(cCount), level, level+1, formatComma((level+1)*100), formatComma(remaining))
+            formatComma(cCount), level, nextLevel, formatComma(nextLevelRequired), formatComma(remaining))
     } else {
         fmt.Printf("C: Have %d. C requires 100 (%d more)\n", cCount, 100-cCount)
     }
@@ -4978,10 +5019,17 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     // T award
     tCount := len(contactsT)
     if tCount >= 50 {
-        level := tCount / 50
-        remaining := (level+1)*50 - tCount
+        level := calculateAwardLevel(tCount, 50)
+        nextLevel := level
+        if level < 10 {
+            nextLevel = level + 1
+        } else {
+            nextLevel = level + 5
+        }
+        nextLevelRequired := nextLevel * 50
+        remaining := nextLevelRequired - tCount
         fmt.Printf("T: Have %s which qualifies for Tx%d. Tx%d requires %s (%s more)\n",
-            formatComma(tCount), level, level+1, formatComma((level+1)*50), formatComma(remaining))
+            formatComma(tCount), level, nextLevel, formatComma(nextLevelRequired), formatComma(remaining))
     } else if members[config.MyCallsign].CDate != "" {
         fmt.Printf("T: Have %d. T requires 50 (%d more)\n", tCount, 50-tCount)
     } else {
@@ -4992,10 +5040,17 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     sCount := len(contactsS)
     if len(contactsT) >= 400 {
         if sCount >= 200 {
-            level := sCount / 200
-            remaining := (level+1)*200 - sCount
+            level := calculateAwardLevel(sCount, 200)
+            nextLevel := level
+            if level < 10 {
+                nextLevel = level + 1
+            } else {
+                nextLevel = level + 5
+            }
+            nextLevelRequired := nextLevel * 200
+            remaining := nextLevelRequired - sCount
             fmt.Printf("S: Have %s which qualifies for Sx%d. Sx%d requires %s (%s more)\n",
-                formatComma(sCount), level, level+1, formatComma((level+1)*200), formatComma(remaining))
+                formatComma(sCount), level, nextLevel, formatComma(nextLevelRequired), formatComma(remaining))
         } else {
             fmt.Printf("S: Have %d. S requires 200 (%d more)\n", sCount, 200-sCount)
         }
@@ -5010,10 +5065,25 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
         pTotal += pts
     }
     if pTotal > 500000 {
-        level := pTotal / 500000
-        remaining := (level+1)*500000 - pTotal
+        level := getPrefixLevel(pTotal)
+        nextLevel := level
+        if level < 10 {
+            nextLevel = level + 1
+        } else {
+            nextLevel = level + 5
+        }
+
+        // Calculate requirement for next level
+        var nextLevelRequired int
+        if nextLevel <= 10 {
+            nextLevelRequired = nextLevel * 500000
+        } else {
+            nextLevelRequired = 5000000 + ((nextLevel - 10) / 5) * 2500000
+        }
+
+        remaining := nextLevelRequired - pTotal
         fmt.Printf("P: Have %s which qualifies for Px%d. Next level requires more than %s (%s more)\n",
-            formatComma(pTotal), level, formatComma((level+1)*500000), formatComma(remaining))
+            formatComma(pTotal), level, formatComma(nextLevelRequired), formatComma(remaining))
     } else {
         fmt.Printf("P: Have %s. Px1 requires more than 500000 (%s more)\n",
             formatComma(pTotal), formatComma(500000-pTotal))
@@ -5343,6 +5413,62 @@ func printDXProgress(dxc, dxq map[string]ProcessedQSO) {
                 count, level, next, target, target-count)
         }
     }
+}
+
+// calculateAwardLevel calculates award level for awards that increment by 1 up to level 10,
+// then by 5 thereafter (C, T, P use variants of this)
+func calculateAwardLevel(value int, baseUnit int) int {
+	if value < baseUnit {
+		return 0 // Not qualified yet
+	}
+
+	// Calculate raw level
+	rawLevel := value / baseUnit
+
+	if rawLevel <= 10 {
+		return rawLevel
+	}
+
+	// Beyond level 10, levels increment by 5
+	// Calculate how many base units past level 10
+	unitsPastThreshold := value - (10 * baseUnit)
+
+	// Each 5 levels worth of base units = one increment
+	increments := unitsPastThreshold / (5 * baseUnit)
+
+	// If exactly at a 5-level boundary, use that level
+	if unitsPastThreshold%(5*baseUnit) == 0 && unitsPastThreshold > 0 {
+		return 10 + (increments * 5)
+	}
+
+	// Otherwise, we're at the previous 5-level
+	if increments > 0 {
+		return 10 + (increments * 5)
+	}
+	return 10
+}
+
+func getPrefixLevel(points int) int {
+	// Prefix progression per SKCC rules:
+	// Px1-Px10: Each level requires an additional 500,000 points
+	// Px1 at >500k, Px2 at >1M, ..., Px10 at >5M
+	// Beyond Px10: Px15 at >7.5M, Px20 at >10M, Px25 at >12.5M (2.5M increments)
+	if points <= 500000 {
+		return 0 // No P award yet
+	} else if points <= 5000000 {
+		// Px1 through Px10 - each 500k increment adds 1 level
+		return points / 500000
+	} else {
+		// After 5M (Px10): levels jump by 5, thresholds by 2.5M
+		// Px10: >5M, Px15: >7.5M, Px20: >10M, Px25: >12.5M
+		if points <= 7500000 {
+			return 10 // Still at Px10
+		} else {
+			// Calculate how many 2.5M increments past 7.5M
+			incrementsPast7_5M := (points - 7500001) / 2500000 + 1
+			return 10 + (int(incrementsPast7_5M) * 5)
+		}
+	}
 }
 
 func getDXLevel(count int) (current, next, target int) {

@@ -10,7 +10,7 @@ SPOTTER_RADIUS = 2000  # miles
 
 # Award goals and targets (comma-separated)
 GOALS = 'c,t,s'
-TARGETS = 'c,txn,sxn'
+TARGETS = 'c,t,s'
 
 # Bands to monitor (space-separated)
 BANDS = '160 80 60 40 30 20 17 15 12 10 6'
@@ -42,7 +42,7 @@ CHECK_SECONDS = 60
 # Spot windowing (aggregation/deduplication)
 # Reduces output clutter when many spotters see the same station
 [SPOT_WINDOW]
-ENABLED = false  # Set to true to aggregate duplicate spots
+ENABLED = true  # Set to true to aggregate duplicate spots
 SECONDS = 10     # Window duration (in seconds) to collect duplicate spots
 
 # Log file configuration
