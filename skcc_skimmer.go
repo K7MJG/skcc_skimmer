@@ -5498,7 +5498,14 @@ func printRCProgress(contacts map[string]ProcessedQSO) {
 
     if totalMins >= 300 {
         level := getRCLevel(totalMins)
-        next := level + 1
+        // Calculate next valid level in progression
+        var next int
+        if level < 10 {
+            next = level + 1
+        } else {
+            // After level 10, progression is by 5s: 15, 20, 25, 30, 35, 40, 45...
+            next = ((level / 5) + 1) * 5
+        }
         required := getRCRequired(next)
         remaining := required - totalMins
         plural := "QSO"
@@ -5518,23 +5525,40 @@ func printRCProgress(contacts map[string]ProcessedQSO) {
 }
 
 func getRCLevel(mins int) int {
+    // RC progression: level = minutes / 300
+    // Progression: 1-10 by 1, then 15, 20, 25, 30, 35, 40, 45...
     if mins < 300 {
         return 0
     }
-    if mins < 450 {
-        return 1 + (mins-300)/15
+    rawLevel := mins / 300
+    if rawLevel <= 10 {
+        return rawLevel
     }
-    return 10 + (mins-450)/25
+    // For levels > 10: increment by 5 for each 5*300 minutes
+    unitsPastThreshold := mins - (10 * 300)
+    increments := unitsPastThreshold / (5 * 300)
+    if unitsPastThreshold%(5*300) == 0 && unitsPastThreshold > 0 {
+        return 10 + (increments * 5)
+    }
+    if increments > 0 {
+        return 10 + (increments * 5)
+    }
+    return 10
 }
 
 func getRCRequired(level int) int {
+    // RC progression: level = minutes / 300
+    // Progression: RC (1), RCx2, RCx3... RCx10, RCx15, RCx20, RCx25...
     if level == 0 {
         return 300
     }
     if level <= 10 {
-        return 300 + level*15
+        return level * 300
     }
-    return 450 + (level-10)*25
+    // For levels > 10: progression is 15, 20, 25, 30, 35, 40, 45...
+    // Find which progression group this level is in
+    // Level 15 = 15*300, Level 20 = 20*300, Level 25 = 25*300, etc.
+    return level * 300
 }
 
 func getBragContactsForMonth(ap *AwardProcessor, year, month int) map[string]bool {
