@@ -1286,8 +1286,27 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // Can't determine power levels from spot alone
 
     // 12. TKA (line 2583)
+    // Python logic: Only show TKA if user hasn't completed it (needs SK < 100 OR BUG < 100 OR SS < 100)
     if contains("TKA") {
-        goals = append(goals, "TKA")
+        contactsTKASK, _ := awards["TKA_SK"].(map[string]ProcessedQSO)
+        contactsTKABUG, _ := awards["TKA_BUG"].(map[string]ProcessedQSO)
+        contactsTKASS, _ := awards["TKA_SS"].(map[string]ProcessedQSO)
+
+        skCount := len(contactsTKASK)
+        bugCount := len(contactsTKABUG)
+        ssCount := len(contactsTKASS)
+
+        // Only show TKA if requirements not yet met (Python line 2591)
+        if skCount < 100 || bugCount < 100 || ssCount < 100 {
+            // Check if we've already worked this member for TKA (any key type)
+            _, inSK := contactsTKASK[memberNumber]
+            _, inBUG := contactsTKABUG[memberNumber]
+            _, inSS := contactsTKASS[memberNumber]
+
+            if !inSK && !inBUG && !inSS {
+                goals = append(goals, "TKA")
+            }
+        }
     }
 
     return goals
