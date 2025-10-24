@@ -659,6 +659,11 @@ type SpotProcessor struct {
     config       *Config
     members      map[string]*Member
     rosters      *Rosters
+    awards       map[string]interface{} // Contact lists from award processing
+    myCDate      string                 // User's Centurion award date
+    myTDate      string                 // User's Tribune award date
+    mySDate      string                 // User's Senator award date
+    myDXCode     string                 // User's DXCC code (for DXQ foreign check)
     lastSpotted  map[string]SpotTime
     notified     map[string]float64
     pendingSpots map[string]*PendingSpot // For spot windowing/aggregation
@@ -682,11 +687,16 @@ type PendingSpot struct {
 }
 
 // NewSpotProcessor creates a new spot processor
-func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters) *SpotProcessor {
+func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters, awards map[string]interface{}, myCDate, myTDate, mySDate, myDXCode string) *SpotProcessor {
     return &SpotProcessor{
         config:       config,
         members:      members,
         rosters:      rosters,
+        awards:       awards,
+        myCDate:      myCDate,
+        myTDate:      myTDate,
+        mySDate:      mySDate,
+        myDXCode:     myDXCode,
         lastSpotted:  make(map[string]SpotTime),
         notified:     make(map[string]float64),
         pendingSpots: make(map[string]*PendingSpot),
@@ -1071,67 +1081,195 @@ func getBandEdges(band int) (float64, float64) {
     }
 }
 
-// buildAwardGoals checks which awards a spotted member helps with (based on rosters)
+// buildAwardGoals checks which awards a spotted member helps with (based on contacts already worked)
 // Used by both RBN spot processor and Sked monitor
-func buildAwardGoals(callsign string, memberNumber string, rosters *Rosters, goalList []string) []string {
+func buildAwardGoals(_ string, memberNumber string, state string, member *Member, awards map[string]interface{}, myCDate, myTDate, mySDate, myDXCode string, goalList []string) []string {
     var goals []string
 
-    for _, goal := range goalList {
-        switch goal {
-        case "C":
-            if _, exists := rosters.Centurion[memberNumber]; !exists {
-                goals = append(goals, "C")
+    // Helper to check if a goal is in the list
+    contains := func(goal string) bool {
+        for _, g := range goalList {
+            if g == goal {
+                return true
             }
-        case "T":
-            if _, exists := rosters.Tribune[memberNumber]; !exists {
-                goals = append(goals, "T")
+        }
+        return false
+    }
+
+    // Process awards in Python's exact order to match output formatting
+    // This matches Python's get_goal_hits() function order (lines 2488-2600)
+
+    // 1. BRAG (line 2488)
+    if contains("BRAG") {
+        goals = append(goals, "BRAG")
+    }
+
+    // 2. C (line 2495)
+    if contains("C") {
+        // Check if we've already worked this member for Centurion
+        if contactsC, ok := awards["C"].(map[string]ProcessedQSO); ok {
+            if _, exists := contactsC[memberNumber]; !exists {
+                goals = append(goals, formatCTSAwardLevel("C", len(contactsC), myCDate, 100))
             }
-        case "S":
-            if _, exists := rosters.Senator[memberNumber]; !exists {
-                goals = append(goals, "S")
-            }
-        case "WAS":
-            if _, exists := rosters.WAS[callsign]; !exists {
-                goals = append(goals, "WAS")
-            }
-        case "WAS-C":
-            if _, exists := rosters.WASC[callsign]; !exists {
-                goals = append(goals, "WAS-C")
-            }
-        case "WAS-T":
-            if _, exists := rosters.WAST[callsign]; !exists {
-                goals = append(goals, "WAS-T")
-            }
-        case "WAS-S":
-            if _, exists := rosters.WASS[callsign]; !exists {
-                goals = append(goals, "WAS-S")
-            }
-        case "P":
-            if _, exists := rosters.Prefix[callsign]; !exists {
-                goals = append(goals, "P")
-            }
-        case "DXC":
-            if _, exists := rosters.DXC[memberNumber]; !exists {
-                goals = append(goals, "DXC")
-            }
-        case "DXQ":
-            if _, exists := rosters.DXQ[memberNumber]; !exists {
-                goals = append(goals, "DXQ")
-            }
-        case "QRP":
-            if _, exists := rosters.QRP1x[memberNumber]; !exists {
-                goals = append(goals, "QRP")
-            }
-        case "RC":
-            if _, exists := rosters.RC[memberNumber]; !exists {
-                goals = append(goals, "RC")
-            }
-        case "BRAG":
-            goals = append(goals, "BRAG")
-        case "TKA":
-            goals = append(goals, "TKA")
         }
     }
+
+    // 3. T (line 2501)
+    if contains("T") {
+        // Check if we've already worked this member for Tribune
+        if contactsT, ok := awards["T"].(map[string]ProcessedQSO); ok {
+            if _, exists := contactsT[memberNumber]; !exists {
+                goals = append(goals, formatCTSAwardLevel("T", len(contactsT), myTDate, 50))
+            }
+        }
+    }
+
+    // 4. S (line 2507)
+    if contains("S") {
+        // Check if we've already worked this member for Senator
+        if contactsS, ok := awards["S"].(map[string]ProcessedQSO); ok {
+            if _, exists := contactsS[memberNumber]; !exists {
+                goals = append(goals, formatCTSAwardLevel("S", len(contactsS), mySDate, 200))
+            }
+        }
+    }
+
+    // 5. WAS (line 2512)
+    if contains("WAS") {
+        // Check if we've already worked this state for WAS (US states only)
+        if isUSState(state) {
+            if contactsWAS, ok := awards["WAS"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsWAS[state]; !exists {
+                    goals = append(goals, "WAS")
+                }
+            }
+        }
+    }
+
+    // 6. WAS-C (line 2515)
+    if contains("WAS-C") {
+        // Check if we've already worked this state for WAS-C (US states only, member must have Centurion)
+        if isUSState(state) && effectiveDate(member.CDate) != "" {
+            if contactsWASC, ok := awards["WAS-C"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsWASC[state]; !exists {
+                    goals = append(goals, "WAS-C")
+                }
+            }
+        }
+    }
+
+    // 7. WAS-T (line 2518)
+    if contains("WAS-T") {
+        // Check if we've already worked this state for WAS-T (US states only, member must have Tribune)
+        if isUSState(state) && effectiveDate(member.TDate) != "" {
+            if contactsWAST, ok := awards["WAS-T"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsWAST[state]; !exists {
+                    goals = append(goals, "WAS-T")
+                }
+            }
+        }
+    }
+
+    // 8. WAS-S (line 2521)
+    if contains("WAS-S") {
+        // Check if we've already worked this state for WAS-S (US states only, member must have Senator)
+        if isUSState(state) && effectiveDate(member.SDate) != "" {
+            if contactsWASS, ok := awards["WAS-S"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsWASS[state]; !exists {
+                    goals = append(goals, "WAS-S")
+                }
+            }
+        }
+    }
+
+    // 9. P (line 2524)
+    if contains("P") {
+        // Prefix award - check if we need this prefix or a higher number
+        if contactsP, ok := awards["P"].(map[string]ProcessedQSO); ok {
+            // Extract prefix from call (2 or 3 character prefix)
+            call := member.Callsign
+            var prefix string
+            if len(call) >= 3 && call[2] >= '0' && call[2] <= '9' {
+                prefix = call[:3]
+            } else if len(call) >= 2 {
+                prefix = call[:2]
+            }
+
+            if prefix != "" {
+                // Calculate total current prefix points
+                totalPoints := 0
+                for _, qso := range contactsP {
+                    pts, _ := strconv.Atoi(qso.PfxPts)
+                    totalPoints += pts
+                }
+
+                // Check if we have this prefix already
+                existingQSO, exists := contactsP[prefix]
+                if !exists {
+                    // New prefix
+                    goals = append(goals, formatPrefixAwardLevel(totalPoints, memberNumber, nil))
+                } else {
+                    // Check if this member number is higher
+                    existingNum, _ := strconv.Atoi(existingQSO.PfxPts)
+                    newNum, _ := strconv.Atoi(memberNumber)
+                    if newNum > existingNum {
+                        goals = append(goals, formatPrefixAwardLevel(totalPoints, memberNumber, &existingQSO))
+                    }
+                }
+            }
+        }
+    }
+
+    // 10. DX (line 2535)
+    if contains("DX") {
+        // DX award - check both DXC (countries) and DXQ (foreign member QSOs)
+        // This matches Python's single 'DX' goal that encompasses both
+        if member.DXCode != "" {
+            // Check DXC (unique countries)
+            if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsDXC[member.DXCode]; !exists {
+                    goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
+                }
+            }
+
+            // Check DXQ (foreign member QSOs) - only for foreign members
+            if member.DXCode != myDXCode {
+                if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
+                    if _, exists := contactsDXQ[memberNumber]; !exists {
+                        goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
+                    }
+                }
+            }
+        }
+    }
+
+    // Also handle separate DXC/DXQ for backward compatibility
+    if contains("DXC") && member.DXCode != "" {
+        // DX Countries - check if we've worked this country
+        if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
+            if _, exists := contactsDXC[member.DXCode]; !exists {
+                goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
+            }
+        }
+    }
+
+    if contains("DXQ") && member.DXCode != "" && member.DXCode != myDXCode {
+        // DX QSOs - check if we've already worked this foreign member
+        if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
+            if _, exists := contactsDXQ[memberNumber]; !exists {
+                goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
+            }
+        }
+    }
+
+    // 11. QRP (line 2556) - Don't show for spot detection
+    // Can't determine power levels from spot alone
+
+    // 12. TKA (line 2583)
+    if contains("TKA") {
+        goals = append(goals, "TKA")
+    }
+
     return goals
 }
 
@@ -1155,12 +1293,13 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
         return goals, targets
     }
 
-    // Get member's SKCC number (plain version without suffix)
+    // Get member's SKCC number (plain version without suffix) and state
     memberNumber := member.PlainNumber
+    state := member.SPC
 
     // Use shared function to build goals list
-    goals = buildAwardGoals(callsign, memberNumber, sp.rosters, sp.config.Goals)
-    targets = buildAwardGoals(callsign, memberNumber, sp.rosters, sp.config.Targets)
+    goals = buildAwardGoals(callsign, memberNumber, state, member, sp.awards, sp.myCDate, sp.myTDate, sp.mySDate, sp.myDXCode, sp.config.Goals)
+    targets = buildAwardGoals(callsign, memberNumber, state, member, sp.awards, sp.myCDate, sp.myTDate, sp.mySDate, sp.myDXCode, sp.config.Targets)
 
     return goals, targets
 }
@@ -1626,11 +1765,17 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
         }
     }
 
-    // Add regular goal/target matching
-    // TODO: Pass actual awards data when Sked monitoring is integrated with award processor
-    emptyMap := make(map[string]bool)
-    regularGoals := sm.buildGoalsForSked(callsign, emptyMap, emptyMap, emptyMap, emptyMap, emptyMap)
-    goalList = append(goalList, regularGoals...)
+    // Add regular goal/target matching using shared function
+    if member, exists := sm.members[callsign]; exists {
+        memberNumber := member.PlainNumber
+        state := member.SPC
+        regularGoals := buildAwardGoals(callsign, memberNumber, state, member, sm.spotProcessor.awards, sm.spotProcessor.myCDate, sm.spotProcessor.myTDate, sm.spotProcessor.mySDate, sm.spotProcessor.myDXCode, sm.config.Goals)
+        goalList = append(goalList, regularGoals...)
+
+        // Add targets similarly
+        regularTargets := buildAwardGoals(callsign, memberNumber, state, member, sm.spotProcessor.awards, sm.spotProcessor.myCDate, sm.spotProcessor.myTDate, sm.spotProcessor.mySDate, sm.spotProcessor.myDXCode, sm.config.Targets)
+        targetList = append(targetList, regularTargets...)
+    }
 
     if len(goalList) > 0 {
         report = append(report, fmt.Sprintf("YOU need them for %s", strings.Join(goalList, ",")))
@@ -1729,64 +1874,6 @@ func (sm *SkedMonitor) getFullMemberNumberForSked(_ string, member *Member) (str
     }
 
     return number, suffix
-}
-
-// buildGoalsForSked determines which goals the user needs this member for
-func (sm *SkedMonitor) buildGoalsForSked(callsign string, contactsForWAS, contactsForWASC, contactsForWAST, contactsForWASS, bragContacts map[string]bool) []string {
-    var goals []string
-
-    member, exists := sm.members[callsign]
-    if !exists {
-        return goals
-    }
-
-    state := member.SPC
-
-    // Check each goal
-    for _, goal := range sm.config.Goals {
-        switch goal {
-        case "BRAG":
-            // Check if we need this member for BRAG
-            memberNumber := member.PlainNumber
-            if memberNumber != "" && !bragContacts[memberNumber] {
-                goals = append(goals, "BRAG")
-            }
-
-        case "TKA":
-            // All SKCC members count for TKA
-            goals = append(goals, "TKA")
-
-        case "WAS-S":
-            // Need Senator members from different states that we haven't worked yet
-            sDate := effectiveDate(member.SDate)
-            if sDate != "" && isUSState(state) && !contactsForWASS[state] {
-                goals = append(goals, "WAS-S")
-            }
-
-        case "WAS-T":
-            // Need Tribune members from different states that we haven't worked yet
-            tDate := effectiveDate(member.TDate)
-            tx8Date := effectiveDate(member.TX8Date)
-            if (tDate != "" || tx8Date != "") && isUSState(state) && !contactsForWAST[state] {
-                goals = append(goals, "WAS-T")
-            }
-
-        case "WAS-C":
-            // Need Centurion members from different states that we haven't worked yet
-            cDate := effectiveDate(member.CDate)
-            if cDate != "" && isUSState(state) && !contactsForWASC[state] {
-                goals = append(goals, "WAS-C")
-            }
-
-        case "WAS":
-            // Need SKCC members from different states that we haven't worked yet
-            if isUSState(state) && !contactsForWAS[state] {
-                goals = append(goals, "WAS")
-            }
-        }
-    }
-
-    return goals
 }
 
 // processSpecialEvent processes K3Y or SKM special events from status
@@ -5448,6 +5535,62 @@ func calculateAwardLevel(value int, baseUnit int) int {
 	return 10
 }
 
+// formatCTSAwardLevel returns the display string for C/T/S awards in goal/target detection
+// If user has no award yet: returns "C", "T", or "S"
+// If user has award: returns "Cx40", "Tx45", "Sx10" etc (next multiplier level)
+func formatCTSAwardLevel(awardType string, contactCount int, myAwardDate string, baseUnit int) string {
+	if effectiveDate(myAwardDate) == "" {
+		// User doesn't have this award yet, working toward initial award
+		return awardType
+	}
+
+	// User has award, working toward next multiplier
+	level := calculateAwardLevel(contactCount, baseUnit)
+
+	// Calculate next level
+	var nextLevel int
+	if level < 10 {
+		nextLevel = level + 1
+	} else {
+		// Round up to next multiple of 5
+		nextLevel = ((level / 5) + 1) * 5
+	}
+
+	// Format as "Cx40", "Tx45", etc.
+	if nextLevel > 1 {
+		return fmt.Sprintf("%sx%d", awardType, nextLevel)
+	}
+	return awardType
+}
+
+// formatDXAwardLevel returns the display string for DXC/DXQ awards ("DXCx10", "DXQx400", etc.)
+func formatDXAwardLevel(awardType string, currentCount int) string {
+	_, nextLevel, _ := getDXLevel(currentCount + 1) // +1 because we're adding one more
+	return fmt.Sprintf("%sx%d", awardType, nextLevel)
+}
+
+// formatPrefixAwardLevel returns the display string for P awards ("Px20(+14616)", "Px20(new +14616)", etc.)
+func formatPrefixAwardLevel(currentPoints int, memberNumber string, existingPrefix *ProcessedQSO) string {
+	level := getPrefixLevel(currentPoints)
+	var nextLevel int
+	if level < 10 {
+		nextLevel = level + 1
+	} else {
+		nextLevel = ((level / 5) + 1) * 5
+	}
+
+	memberPoints, _ := strconv.Atoi(memberNumber)
+
+	if existingPrefix != nil {
+		// We've worked this prefix before, show point difference
+		existingPoints, _ := strconv.Atoi(existingPrefix.PfxPts)
+		diff := memberPoints - existingPoints
+		return fmt.Sprintf("Px%d(+%d)", nextLevel, diff)
+	}
+	// New prefix
+	return fmt.Sprintf("Px%d(new +%d)", nextLevel, memberPoints)
+}
+
 func getPrefixLevel(points int) int {
 	// Prefix progression per SKCC rules:
 	// Px1-Px10: Each level requires an additional 500,000 points
@@ -6016,8 +6159,18 @@ func main() {
     // Create WaitGroup for all goroutines
     var wg sync.WaitGroup
 
+    // Get user's award dates and DXCC code for detailed goal/target display
+    myMember := members[config.MyCallsign]
+    var myCDate, myTDate, mySDate, myDXCode string
+    if myMember != nil {
+        myCDate = myMember.CDate
+        myTDate = myMember.TDate
+        mySDate = myMember.SDate
+        myDXCode = myMember.DXCode
+    }
+
     // Create spot processor for RBN spots
-    spotProcessor := NewSpotProcessor(config, members, rosters)
+    spotProcessor := NewSpotProcessor(config, members, rosters, awards, myCDate, myTDate, mySDate, myDXCode)
 
     // Display spot windowing configuration
     if config.SpotWindow.Enabled {
