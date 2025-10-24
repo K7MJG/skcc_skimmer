@@ -1,0 +1,3 @@
+#!/bin/sh
+exec uv run --python 3.14 build.py "$@"
+
