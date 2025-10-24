@@ -1105,6 +1105,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     }
 
     // 2. C (line 2495)
+    // No prerequisites for C
     if contains("C") {
         // Check if we've already worked this member for Centurion
         if contactsC, ok := awards["C"].(map[string]ProcessedQSO); ok {
@@ -1115,7 +1116,8 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     }
 
     // 3. T (line 2501)
-    if contains("T") {
+    // Requires: User has C AND Member has C
+    if contains("T") && effectiveDate(myCDate) != "" && effectiveDate(member.CDate) != "" {
         // Check if we've already worked this member for Tribune
         if contactsT, ok := awards["T"].(map[string]ProcessedQSO); ok {
             if _, exists := contactsT[memberNumber]; !exists {
@@ -1125,7 +1127,9 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     }
 
     // 4. S (line 2507)
-    if contains("S") {
+    // Requires: User has Tx8 (8 Tribune contacts) AND Member has T
+    // Simplified: User has T award AND Member has T
+    if contains("S") && effectiveDate(myTDate) != "" && effectiveDate(member.TDate) != "" {
         // Check if we've already worked this member for Senator
         if contactsS, ok := awards["S"].(map[string]ProcessedQSO); ok {
             if _, exists := contactsS[memberNumber]; !exists {
@@ -1224,16 +1228,23 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     if contains("DX") {
         // DX award - check both DXC (countries) and DXQ (foreign member QSOs)
         // This matches Python's single 'DX' goal that encompasses both
-        if member.DXCode != "" {
+        // Python requires: dxcc_code and dxcc_code.isdigit()
+        if member.DXCode != "" && isNumeric(member.DXCode) {
+            // Normalize DXCC code to 3 digits (Python uses zfill(3))
+            // "1" -> "001", "291" -> "291"
+            normalizedDXCode := normalizeDXCC(member.DXCode)
+
             // Check DXC (unique countries)
             if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsDXC[member.DXCode]; !exists {
+                if _, exists := contactsDXC[normalizedDXCode]; !exists {
                     goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
                 }
             }
 
             // Check DXQ (foreign member QSOs) - only for foreign members
-            if member.DXCode != myDXCode {
+            // Use normalized codes for comparison (Python normalizes both with zfill(3))
+            normalizedMyDXCode := normalizeDXCC(myDXCode)
+            if normalizedDXCode != normalizedMyDXCode {
                 if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
                     if _, exists := contactsDXQ[memberNumber]; !exists {
                         goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
@@ -1244,20 +1255,29 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     }
 
     // Also handle separate DXC/DXQ for backward compatibility
-    if contains("DXC") && member.DXCode != "" {
+    if contains("DXC") && member.DXCode != "" && isNumeric(member.DXCode) {
+        // Normalize DXCC code to 3 digits
+        normalizedDXCode := normalizeDXCC(member.DXCode)
+
         // DX Countries - check if we've worked this country
         if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsDXC[member.DXCode]; !exists {
+            if _, exists := contactsDXC[normalizedDXCode]; !exists {
                 goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
             }
         }
     }
 
-    if contains("DXQ") && member.DXCode != "" && member.DXCode != myDXCode {
+    if contains("DXQ") && member.DXCode != "" && isNumeric(member.DXCode) {
+        // Normalize DXCC codes for comparison
+        normalizedDXCode := normalizeDXCC(member.DXCode)
+        normalizedMyDXCode := normalizeDXCC(myDXCode)
+
         // DX QSOs - check if we've already worked this foreign member
-        if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsDXQ[memberNumber]; !exists {
-                goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
+        if normalizedDXCode != normalizedMyDXCode {
+            if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
+                if _, exists := contactsDXQ[memberNumber]; !exists {
+                    goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
+                }
             }
         }
     }
@@ -5533,6 +5553,32 @@ func calculateAwardLevel(value int, baseUnit int) int {
 		return 10 + (increments * 5)
 	}
 	return 10
+}
+
+// isNumeric checks if a string contains only digits (matches Python's str.isdigit())
+func isNumeric(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeDXCC normalizes a DXCC code to 3 digits (matches Python's str.zfill(3))
+// Examples: "1" -> "001", "291" -> "291"
+func normalizeDXCC(code string) string {
+	if !isNumeric(code) {
+		return code
+	}
+	// Pad with leading zeros to make it 3 digits
+	for len(code) < 3 {
+		code = "0" + code
+	}
+	return code
 }
 
 // formatCTSAwardLevel returns the display string for C/T/S awards in goal/target detection
