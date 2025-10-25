@@ -1,0 +1,11 @@
+#!/bin/sh
+# Create/update .venv without using pyproject.toml
+# This script manually installs dependencies needed by skcc_skimmer.py
+
+echo "Creating/updating .venv with Python 3.14..."
+uv venv .venv --python 3.14 --clear
+
+echo "Installing dependencies..."
+uv pip install --python .venv/bin/python aiohttp aiofiles
+
+echo "Done! Virtual environment ready at .venv"
