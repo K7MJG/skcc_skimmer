@@ -6018,6 +6018,7 @@ func showUsage() {
     fmt.Println("                   [--callsign <your-callsign>]")
     fmt.Println("                   [--config-file <full-path-to-config-file>]")
     fmt.Println("                   [--config-path <directory-containing-config>]")
+    fmt.Println("                   [--distance-units <mi|km>]")
     fmt.Println("                   [--goals <goals>]")
     fmt.Println("                   [--help]")
     fmt.Println("                   [--interactive]")
@@ -6025,6 +6026,7 @@ func showUsage() {
     fmt.Println("                   [--maidenhead <grid-square>]")
     fmt.Println("                   [--notification <on|off>]")
     fmt.Println("                   [--radius <distance-in-miles>]")
+    fmt.Println("                   [--sked <on|off>]")
     fmt.Println("                   [--targets <targets>]")
     fmt.Println("                   [--verbose]")
     fmt.Println(" or...")
@@ -6033,6 +6035,7 @@ func showUsage() {
     fmt.Println("                   [-a <adi-file>]")
     fmt.Println("                   [-b <comma-separated-bands>]")
     fmt.Println("                   [-c <your-callsign>]")
+    fmt.Println("                   [-d <mi|km>]")
     fmt.Println("                   [-f <full-path-to-config-file>]")
     fmt.Println("                   [-g <goals>]")
     fmt.Println("                   [-h]")
@@ -6042,6 +6045,7 @@ func showUsage() {
     fmt.Println("                   [-n <on|off>]")
     fmt.Println("                   [-p <directory-containing-config>]")
     fmt.Println("                   [-r <distance-in-miles>]")
+    fmt.Println("                   [-s <on|off>]")
     fmt.Println("                   [-t <targets>]")
     fmt.Println("                   [-v]")
     fmt.Println()
@@ -6074,6 +6078,10 @@ func main() {
     flag.StringVar(logfile, "logfile", "", "Logfile name")
     notification := flag.String("n", "", "Notification (on|off)")
     flag.StringVar(notification, "notification", "", "Notification (on|off)")
+    distanceUnits := flag.String("d", "", "Distance units (mi|km)")
+    flag.StringVar(distanceUnits, "distance-units", "", "Distance units (mi|km)")
+    sked := flag.String("s", "", "Enable sked monitoring (on|off)")
+    flag.StringVar(sked, "sked", "", "Enable sked monitoring (on|off)")
     bragMonths := flag.Int("brag-months", 0, "Number of months back for BRAG")
     awardsOnly := flag.Bool("awards-only", false, "Calculate awards only and exit")
     interactive := flag.Bool("i", false, "Interactive mode")
@@ -6171,6 +6179,19 @@ func main() {
             config.Notification.Enabled = true
         } else {
             config.Notification.Enabled = false
+        }
+    }
+    if *distanceUnits != "" {
+        units := strings.ToLower(*distanceUnits)
+        if units == "mi" || units == "km" {
+            config.DistanceUnits = units
+        }
+    }
+    if *sked != "" {
+        if strings.ToLower(*sked) == "on" {
+            config.Sked.Enabled = true
+        } else {
+            config.Sked.Enabled = false
         }
     }
     // Note: bragMonths not yet implemented in Go version
