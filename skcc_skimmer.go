@@ -2023,6 +2023,35 @@ func whichBand(freqKHz float64) int {
     return 0
 }
 
+// whichARRLBand determines the amateur band from a frequency in kHz using strict ARRL band limits
+// This matches Python's which_arrl_band function used for K3Y processing
+func whichARRLBand(freqKHz float64) int {
+    bands := []struct {
+        band  int
+        lower float64
+        upper float64
+    }{
+        {160, 1800, 2000},
+        {80, 3500, 3600},
+        {40, 7000, 7125},
+        {30, 10100, 10150},
+        {20, 14000, 14150},
+        {17, 18068, 18168},
+        {15, 21000, 21450},
+        {12, 24890, 24990},
+        {10, 28000, 29700},
+        {6, 50000, 54000},
+    }
+
+    for _, b := range bands {
+        if freqKHz > b.lower && freqKHz < b.upper {
+            return b.band
+        }
+    }
+
+    return 0
+}
+
 // DisplayLogins fetches and displays current sked logins
 func (sm *SkedMonitor) DisplayLogins() error {
     logins, err := sm.FetchLogins()
@@ -4133,6 +4162,43 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
     awards["TKA_BUG"] = contactsTKABUG
     awards["TKA_SS"] = contactsTKASS
 
+    // K3Y processing - matches Python's _process_k3y_qsos
+    // Process K3Y QSOs separately as they have special handling
+    k3yContacts := make(map[string]map[int]string)
+    if contains(config.Goals, "K3Y") {
+        // K3Y year range: Jan 2 to Feb 1 (8-digit date format to match QSO dates)
+        k3yStart := fmt.Sprintf("%d0102", config.K3YYear)
+        k3yEnd := fmt.Sprintf("%d0201", config.K3YYear)
+
+        // K3Y regex pattern - matches Python: r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
+        k3yRegex := regexp.MustCompile(`(?i)(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)`)
+
+        for _, qso := range adiOrder {
+            // K3Y processing - date filtering
+            if qso.QSODate >= k3yStart && qso.QSODate < k3yEnd {
+                if matches := k3yRegex.FindStringSubmatch(qso.Comment); matches != nil {
+                    suffix := strings.ToUpper(matches[1])
+
+                    // Use whichARRLBand to match Python's which_arrl_band
+                    // FREQ field is in MHz, need to convert to kHz
+                    if qso.Freq != "" {
+                        freqMHz, err := strconv.ParseFloat(qso.Freq, 64)
+                        if err == nil {
+                            freqKHz := freqMHz * 1000
+                            if band := whichARRLBand(freqKHz); band > 0 {
+                                if k3yContacts[suffix] == nil {
+                                    k3yContacts[suffix] = make(map[int]string)
+                                }
+                                k3yContacts[suffix][band] = qso.Call
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    awards["K3Y"] = k3yContacts
+
     return awards
 }
 
@@ -5254,7 +5320,77 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
         printBRAGProgress(ap)
     }
 
+    // K3Y - matches Python's print_k3y_contacts
+    if contains(config.Goals, "K3Y") {
+        if k3yData, ok := awards["K3Y"].(map[string]map[int]string); ok {
+            printK3YContacts(k3yData, config.K3YYear)
+        }
+    }
+
     fmt.Println()
+}
+
+// printK3YContacts prints the K3Y contacts table - matches Python's print_k3y_contacts
+func printK3YContacts(k3yData map[string]map[int]string, k3yYear int) {
+    fmt.Println()
+    fmt.Printf("K3Y %d\n", k3yYear)
+    fmt.Println("========")
+    fmt.Printf("%-8s|%-7s|%-7s|%-7s|%-7s|%-7s|%-7s|%-7s|%-7s|%-7s|%-7s|\n",
+        "Station", "160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m")
+    fmt.Println()
+
+    printStation := func(station string) {
+        // Split on / or - to get suffix
+        parts := strings.FieldsFunc(station, func(r rune) bool { return r == '/' || r == '-' })
+        if len(parts) < 2 {
+            return
+        }
+        suffix := parts[1]
+
+        printBand := func(band int) {
+            if bandData, exists := k3yData[suffix]; exists {
+                if callsign, bandExists := bandData[band]; bandExists {
+                    fmt.Printf(" %-6s|", callsign)
+                    return
+                }
+            }
+            fmt.Printf("%-7s|", "")
+        }
+
+        fmt.Printf("%-8s|", station)
+        printBand(160)
+        printBand(80)
+        printBand(40)
+        printBand(30)
+        printBand(20)
+        printBand(17)
+        printBand(15)
+        printBand(12)
+        printBand(10)
+        printBand(6)
+        fmt.Println()
+    }
+
+    // Print in same order as Python
+    printStation("K3Y/0")
+    printStation("K3Y/1")
+    printStation("K3Y/2")
+    printStation("K3Y/3")
+    printStation("K3Y/4")
+    printStation("K3Y/5")
+    printStation("K3Y/6")
+    printStation("K3Y/7")
+    printStation("K3Y/8")
+    printStation("K3Y/9")
+    printStation("K3Y/KH6")
+    printStation("K3Y/KL7")
+    printStation("K3Y/KP4")
+    printStation("SKM-AF")
+    printStation("SKM-AS")
+    printStation("SKM-EU")
+    printStation("SKM-NA")
+    printStation("SKM-OC")
+    printStation("SKM-SA")
 }
 
 // downloadRoster fetches a roster from the SKCC website

@@ -1326,7 +1326,6 @@ class cSPOTS:
         # Modify output to show MULTIPLE(n) instead of single spotter
         if spotter_count > 1:
             # Replace "by CALLSIGN(SNRdB)" or "by CALLSIGN(distance, SNRdB)" with "by MULTIPLE(n)"
-            import re
             output = re.sub(r'by [A-Z0-9-]+\([^)]+\)', f'by MULTIPLE({spotter_count})', output)
 
         # Display the aggregated spot
@@ -1352,7 +1351,7 @@ class cSPOTS:
         }
 
         # Schedule the flush after the configured window
-        async def flush_after_delay():
+        async def flush_after_delay() -> None:
             await asyncio.sleep(cConfig.SPOT_WINDOW.SECONDS)
             await cls._flush_pending_spot(spot_key)
 
@@ -4220,8 +4219,8 @@ class cAwards:
 
         # Process RC awards with Xojo's exact logic (ADI file order)
         # If same member as previous: only keep if longer than previous
-        last_rc_member = None
-        last_rc_key = None
+        last_rc_member: str | None = None
+        last_rc_key: str | None = None
         last_rc_mins = 0
 
         for qso in processed_qsos_adi_order:
@@ -4230,7 +4229,7 @@ class cAwards:
                 ragchew_mins = int(qso.ragchew_mins) if qso.ragchew_mins else 0
                 rc_key = f"{member_num}_{qso.log_qso_date}_{qso.log_time_on}"
 
-                if member_num != last_rc_member:
+                if last_rc_member is None or member_num != last_rc_member:
                     # Different member - add it
                     contacts['RC'][rc_key] = (
                         qso.log_qso_date,
