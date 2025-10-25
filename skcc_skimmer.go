@@ -62,6 +62,27 @@ func beep() {
     fmt.Print("\a")
 }
 
+// logToFile writes a line to the log file if logging is enabled
+func logToFile(config *Config, line string) {
+    if !config.LogFile.Enabled || config.LogFile.FileName == "" {
+        return
+    }
+
+    // Open file in append mode
+    file, err := os.OpenFile(config.LogFile.FileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+    if err != nil {
+        // Silently fail - don't disrupt operation for logging errors
+        return
+    }
+    defer file.Close()
+
+    // Write the line with newline
+    if _, err := file.WriteString(line + "\n"); err != nil {
+        // Silently fail
+        return
+    }
+}
+
 // Network constants
 const (
     RBNServer      = "telnet.reversebeacon.net"
@@ -977,6 +998,10 @@ func (sp *SpotProcessor) flushPendingSpot(spotKey string) {
 
     // Display the aggregated spot
     printWithDotClear(output)
+
+    // Log to file if enabled
+    zuluDate := time.Now().UTC().Format("2006-01-02")
+    logToFile(sp.config, zuluDate+" "+output)
 }
 
 // buildSpotKey creates a unique key for spot aggregation
@@ -2165,8 +2190,8 @@ func (sm *SkedMonitor) DisplayLogins() error {
             output := fmt.Sprintf("%s%s%-6s %s", zuluTime, newIndicator, callsign, strings.Join(skedHits[callsign], "; "))
             printWithDotClear(output)
 
-            // TODO: Log to file if enabled
-            _ = zuluDate // Will be used for logging
+            // Log to file if enabled
+            logToFile(sm.config, zuluDate+" "+output)
         }
 
         fmt.Println("=======================================")
@@ -2374,17 +2399,21 @@ func (fw *FileWatcher) refresh() error {
 // ============================================================================
 
 type InteractiveMode struct {
-    config  *Config
-    members map[string]*Member
-    rosters *Rosters
+    config         *Config
+    members        map[string]*Member
+    rosters        *Rosters
+    awardProcessor *AwardProcessor
+    awards         map[string]interface{}
 }
 
 // NewInteractiveMode creates a new interactive mode handler
-func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters) *InteractiveMode {
+func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters, ap *AwardProcessor, awards map[string]interface{}) *InteractiveMode {
     return &InteractiveMode{
-        config:  config,
-        members: members,
-        rosters: rosters,
+        config:         config,
+        members:        members,
+        rosters:        rosters,
+        awardProcessor: ap,
+        awards:         awards,
     }
 }
 
@@ -2415,8 +2444,11 @@ func (im *InteractiveMode) Run() {
 
         case "r", "refresh":
             fmt.Println("Refreshing awards...")
-            // TODO: Call refresh logic
-            fmt.Println("(Refresh implementation pending)")
+            if err := im.refresh(); err != nil {
+                fmt.Printf("Error refreshing: %v\n", err)
+            } else {
+                fmt.Println("Refresh complete!")
+            }
 
         default:
             // Treat as callsign lookup
@@ -2427,6 +2459,60 @@ func (im *InteractiveMode) Run() {
     if err := scanner.Err(); err != nil {
         fmt.Printf("Error reading input: %v\n", err)
     }
+}
+
+// refresh re-reads the ADI file and recalculates awards
+func (im *InteractiveMode) refresh() error {
+    fmt.Println("\nRe-reading QSOs from ADI file...")
+
+    // Re-read ADI file
+    qsos, err := parseADI(im.config.ADIFile)
+    if err != nil {
+        return fmt.Errorf("error reading ADI file: %w", err)
+    }
+
+    // Create new award processor
+    ap, err := NewAwardProcessor(im.members, im.config.MyCallsign)
+    if err != nil {
+        return fmt.Errorf("error creating award processor: %w", err)
+    }
+
+    // Process QSOs
+    processedQSOs := ap.ProcessQSOs(qsos)
+
+    // Save copy in ADI file order
+    processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
+    copy(processedQSOsADI, processedQSOs)
+
+    // Sort chronologically for C/T/S/DX awards
+    processedQSOsChrono := processedQSOs
+    sort.Slice(processedQSOsChrono, func(i, j int) bool {
+        if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
+            return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
+        }
+        return processedQSOsChrono[i].TimeOn < processedQSOsChrono[j].TimeOn
+    })
+
+    // Extract awards
+    awards := ExtractAwards(processedQSOsChrono, processedQSOsADI)
+
+    // Update stored state
+    im.awardProcessor = ap
+    im.awards = awards
+
+    // Display results
+    fmt.Println()
+    printProgress(awards, ap)
+    fmt.Println()
+    printFYIMessages(awards, im.rosters, im.config, im.members)
+
+    // Process K3Y if in goals
+    if slices.Contains(im.config.Goals, "K3Y") {
+        ap.processK3YQSOs(im.config.K3YYear)
+        ap.printK3YContacts(im.config.K3YYear)
+    }
+
+    return nil
 }
 
 // lookupCallsigns looks up one or more callsigns (space/comma separated)
@@ -6650,7 +6736,7 @@ func main() {
 
     // Handle interactive mode if requested
     if *interactive {
-        im := NewInteractiveMode(config, members, rosters)
+        im := NewInteractiveMode(config, members, rosters, ap, awards)
         im.Run()
         return
     }
@@ -6704,6 +6790,13 @@ func main() {
         fmt.Printf("\nSpot windowing enabled: aggregating duplicate spots within %d second window\n", config.SpotWindow.Seconds)
     }
 
+    // Clear log file if needed
+    if config.LogFile.DeleteOnStartup && config.LogFile.FileName != "" {
+        if _, err := os.Stat(config.LogFile.FileName); err == nil {
+            os.Remove(config.LogFile.FileName)
+        }
+    }
+
     // Launch RBN connection
     rbn := NewRBNConnection(config.MyCallsign)
     wg.Add(1)
@@ -6732,6 +6825,9 @@ func main() {
                     if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
                         if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
                             printWithDotClear(output)
+                            // Log to file if enabled
+                            zuluDate := time.Now().UTC().Format("2006-01-02")
+                            logToFile(config, zuluDate+" "+output)
                         }
                     }
                 }
