@@ -338,6 +338,9 @@ type AwardProcessor struct {
     qsosAutoMatched  []AutoMatchEntry
     processedQSOs    []ProcessedQSO
     dxcHomeUsed      bool
+
+    // K3Y tracking: contactsForK3Y[suffix][band] = callsign
+    contactsForK3Y   map[string]map[int]string
 }
 
 // NeedSKCCEntry tracks QSOs that need SKCC numbers
@@ -1643,6 +1646,7 @@ type SkedMonitor struct {
     spotProcessor   *SpotProcessor
     members         map[string]*Member
     rosters         *Rosters
+    awardProcessor  *AwardProcessor // For K3Y tracking
     previousLogins  map[string][]string
     firstPass       bool
     mu              sync.RWMutex
@@ -1652,12 +1656,13 @@ type SkedMonitor struct {
 }
 
 // NewSkedMonitor creates a new sked monitor
-func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor, members map[string]*Member, rosters *Rosters) *SkedMonitor {
+func NewSkedMonitor(config *Config, spotProcessor *SpotProcessor, members map[string]*Member, rosters *Rosters, awardProcessor *AwardProcessor) *SkedMonitor {
     return &SkedMonitor{
         config:         config,
         spotProcessor:  spotProcessor,
         members:        members,
         rosters:        rosters,
+        awardProcessor: awardProcessor,
         previousLogins: make(map[string][]string),
         firstPass:      true,
         k3yRegex:       regexp.MustCompile(`\b(K3Y)/([0-9]|KP4|KH6|KL7)\b`),
@@ -1977,12 +1982,23 @@ func (sm *SkedMonitor) processSpecialEvent(eventType, station, status string, go
                 // Determine band from frequency
                 band := whichBand(freqKHz)
                 if band > 0 {
-                    // TODO: Check if already worked (needs K3Y contacts tracking)
-                    // For now, always show as needed
-                    if eventType == "SKM" {
-                        *goalList = append(*goalList, fmt.Sprintf("SKM-%s (%dm)", station, band))
-                    } else {
-                        *goalList = append(*goalList, fmt.Sprintf("K3Y/%s (%dm)", station, band))
+                    // Check if already worked
+                    alreadyWorked := false
+                    if sm.awardProcessor != nil && sm.awardProcessor.contactsForK3Y != nil {
+                        if bandMap, exists := sm.awardProcessor.contactsForK3Y[station]; exists {
+                            if _, worked := bandMap[band]; worked {
+                                alreadyWorked = true
+                            }
+                        }
+                    }
+
+                    // Only add to goals if not already worked
+                    if !alreadyWorked {
+                        if eventType == "SKM" {
+                            *goalList = append(*goalList, fmt.Sprintf("SKM-%s (%dm)", station, band))
+                        } else {
+                            *goalList = append(*goalList, fmt.Sprintf("K3Y/%s (%dm)", station, band))
+                        }
                     }
                     return
                 }
@@ -3548,6 +3564,9 @@ func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardPr
     ap.myTX8Date = myMember.TX8Date
     ap.mySDate = myMember.SDate
     ap.myDXCode = myMember.DXCode
+
+    // Initialize K3Y tracking
+    ap.contactsForK3Y = make(map[string]map[int]string)
 
     return ap, nil
 }
@@ -6169,6 +6188,117 @@ func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
 }
 
 // ============================================================================
+// K3Y TRACKING AND DISPLAY
+// ============================================================================
+
+// processK3YQSOs processes K3Y QSOs and populates the contactsForK3Y map
+func (ap *AwardProcessor) processK3YQSOs(k3yYear int) {
+    // K3Y dates: Jan 2 to Feb 1
+    k3yStart := fmt.Sprintf("%d010200", k3yYear)
+    k3yEnd := fmt.Sprintf("%d020100", k3yYear)
+
+    // K3Y/SKM pattern: matches K3Y or SKM followed by / or - and then the suffix
+    k3yPattern := regexp.MustCompile(`(?i)(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)`)
+
+    for _, qso := range ap.processedQSOs {
+        // Check if QSO is during K3Y period
+        qsoDate := qso.QSODate
+        if len(qsoDate) < 8 {
+            continue
+        }
+        qsoDatePrefix := qsoDate[:8] + "00" // YYYYMMDD00
+
+        if qsoDatePrefix < k3yStart || qsoDatePrefix >= k3yEnd {
+            continue
+        }
+
+        // Look for K3Y/SKM in comment
+        matches := k3yPattern.FindStringSubmatch(qso.Comment)
+        if len(matches) < 2 {
+            continue
+        }
+
+        suffix := strings.ToUpper(matches[1])
+
+        // Parse frequency to determine band
+        if qso.Freq == "" {
+            continue
+        }
+
+        freqMHz, err := strconv.ParseFloat(qso.Freq, 64)
+        if err != nil {
+            continue
+        }
+
+        freqKHz := freqMHz * 1000.0
+        band := whichARRLBand(freqKHz)
+        if band == 0 {
+            continue
+        }
+
+        // Store the contact
+        if ap.contactsForK3Y[suffix] == nil {
+            ap.contactsForK3Y[suffix] = make(map[int]string)
+        }
+        ap.contactsForK3Y[suffix][band] = qso.Call
+    }
+}
+
+// printK3YContacts prints a grid showing K3Y contacts worked
+func (ap *AwardProcessor) printK3YContacts(k3yYear int) {
+    fmt.Println()
+    fmt.Printf("K3Y %d\n", k3yYear)
+    fmt.Println("========")
+
+    // Header
+    fmt.Printf("%-8s|", "Station")
+    bands := []int{160, 80, 40, 30, 20, 17, 15, 12, 10, 6}
+    bandNames := []string{"160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"}
+    for _, bandName := range bandNames {
+        fmt.Printf(" %-7s|", bandName)
+    }
+    fmt.Println()
+
+    // Helper to print one station row
+    printStation := func(stationName, suffix string) {
+        fmt.Printf("%-8s|", stationName)
+        for _, band := range bands {
+            if contacts, exists := ap.contactsForK3Y[suffix]; exists {
+                if callsign, worked := contacts[band]; worked {
+                    fmt.Printf(" %-7s|", callsign)
+                } else {
+                    fmt.Printf(" %-7s|", "")
+                }
+            } else {
+                fmt.Printf(" %-7s|", "")
+            }
+        }
+        fmt.Println()
+    }
+
+    // Print all stations in order
+    printStation("K3Y/0", "0")
+    printStation("K3Y/1", "1")
+    printStation("K3Y/2", "2")
+    printStation("K3Y/3", "3")
+    printStation("K3Y/4", "4")
+    printStation("K3Y/5", "5")
+    printStation("K3Y/6", "6")
+    printStation("K3Y/7", "7")
+    printStation("K3Y/8", "8")
+    printStation("K3Y/9", "9")
+    printStation("K3Y/KH6", "KH6")
+    printStation("K3Y/KL7", "KL7")
+    printStation("K3Y/KP4", "KP4")
+    printStation("SKM-AF", "AF")
+    printStation("SKM-AS", "AS")
+    printStation("SKM-EU", "EU")
+    printStation("SKM-NA", "NA")
+    printStation("SKM-OC", "OC")
+    printStation("SKM-SA", "SA")
+}
+
+// ============================================================================
 // MAIN
 // ============================================================================
 //
@@ -6504,6 +6634,12 @@ func main() {
     // Print FYI messages
     printFYIMessages(awards, rosters, config, members)
 
+    // Process and print K3Y contacts if K3Y is in goals
+    if slices.Contains(config.Goals, "K3Y") {
+        ap.processK3YQSOs(config.K3YYear)
+        ap.printK3YContacts(config.K3YYear)
+    }
+
     // Write award files
     writeAwardFiles(awards, ap)
 
@@ -6609,7 +6745,7 @@ func main() {
 
     // Launch Sked monitoring if enabled
     if config.Sked.Enabled {
-        sked := NewSkedMonitor(config, spotProcessor, members, rosters)
+        sked := NewSkedMonitor(config, spotProcessor, members, rosters, ap)
         wg.Add(1)
         go sked.MonitorTask(ctx, &wg)
     }
