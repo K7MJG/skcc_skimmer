@@ -356,17 +356,18 @@ class cConfig:
             DELETE_ON_STARTUP = bool(log_file_config.get("DELETE_ON_STARTUP", cConfig.cLogFile.DELETE_ON_STARTUP))
         )
 
+    T_HIGH_WPM_ACTION = Literal['suppress', 'warn', 'always-display']
+
     @dataclass
     class cHighWpm:
-        t_action = Literal['suppress', 'warn', 'always-display']
-        ACTION: t_action = 'always-display'
+        ACTION: 'cConfig.T_HIGH_WPM_ACTION' = 'always-display'
         THRESHOLD: int = 15
     @classmethod
     def init_high_wpm(cls) -> None:
         high_wpm_config = cls.config_file.get("HIGH_WPM", {})
-        action: cConfig.cHighWpm.t_action = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
-        if action not in get_args(cConfig.cHighWpm.t_action):
-            print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.cHighWpm.t_action)}.")
+        action: cConfig.T_HIGH_WPM_ACTION = high_wpm_config.get("ACTION", cConfig.cHighWpm.ACTION)
+        if action not in get_args(cConfig.T_HIGH_WPM_ACTION):
+            print(f"Invalid ACTION: {action}. Must be one of {get_args(cConfig.T_HIGH_WPM_ACTION)}.")
             action = cConfig.cHighWpm.ACTION
 
         cls.HIGH_WPM = cConfig.cHighWpm(
@@ -5363,12 +5364,14 @@ async def get_version_async() -> str:
         if proc.returncode != 0:
             raise RuntimeError(f"GenerateVersionStamp.py failed:\n{stderr.decode()}")
 
-    VERSION = "<development>"
-
-    with suppress(ImportError):
+    version: str
+    try:
         from cVersion import VERSION  # noqa: PLC0415
+        version = VERSION
+    except ImportError:
+        version = "<development>"
 
-    return VERSION
+    return version
 
 async def main_loop() -> None:
     global config  # noqa: PLW0603
