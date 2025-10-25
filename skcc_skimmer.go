@@ -5908,6 +5908,130 @@ func getRCRequired(level int) int {
     return level * 300
 }
 
+// ============================================================================
+// SPRINT AND WARC BAND CHECKING (for BRAG)
+// ============================================================================
+
+// firstWeekdayFromDate returns the first occurrence of the given weekday on or after the given date
+func firstWeekdayFromDate(t time.Time, weekday time.Weekday) time.Time {
+    for t.Weekday() != weekday {
+        t = t.AddDate(0, 0, 1)
+    }
+    return t
+}
+
+// firstWeekdayAfterDate returns the first occurrence of the given weekday strictly after the given date
+func firstWeekdayAfterDate(t time.Time, weekday time.Weekday) time.Time {
+    t = t.AddDate(0, 0, 1) // Move to next day first
+    return firstWeekdayFromDate(t, weekday)
+}
+
+// wes calculates Weekend Sprint times (12:00 Saturday to 23:59 Sunday, second full weekend)
+func wes(year, month int) (time.Time, time.Time) {
+    start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+    // First Saturday
+    start = firstWeekdayFromDate(start, time.Saturday)
+    // Second Saturday
+    start = firstWeekdayAfterDate(start, time.Saturday)
+    // Add 12 hours for 12:00 start
+    start = start.Add(12 * time.Hour)
+    // End is 35 hours 59 minutes later (through Sunday 23:59)
+    end := start.Add(35*time.Hour + 59*time.Minute)
+    return start, end
+}
+
+// sks calculates Straight Key Sprint times (4th Wednesday 00:00-02:00 UTC)
+func sks(year, month int) (time.Time, time.Time) {
+    start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+    // Loop exactly 4 times to get 4th Wednesday
+    for i := 0; i < 4; i++ {
+        start = firstWeekdayAfterDate(start, time.Wednesday)
+    }
+    end := start.Add(2 * time.Hour)
+    return start, end
+}
+
+// sksa calculates Asia Sprint times (2nd Friday 22:00 to Saturday 00:00 UTC)
+func sksa(year, month int) (time.Time, time.Time) {
+    start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+    // First Friday
+    start = firstWeekdayFromDate(start, time.Friday)
+    // Second Friday
+    start = firstWeekdayAfterDate(start, time.Friday)
+    // Add 22 hours for 22:00 start
+    start = start.Add(22 * time.Hour)
+    // 2 hour duration
+    end := start.Add(2 * time.Hour)
+    return start, end
+}
+
+// skse calculates European Sprint times (1st Thursday)
+// Summer (Apr-Oct): 18:45-21:15, Winter: 19:45-22:15 (includes QRS extension)
+func skse(year, month int) (time.Time, time.Time) {
+    isSummer := month >= 4 && month <= 10
+    startHour := 19
+    if isSummer {
+        startHour = 18
+    }
+
+    start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+    // Get 1st Thursday
+    start = firstWeekdayFromDate(start, time.Thursday)
+    // Add start time
+    start = start.Add(time.Duration(startHour)*time.Hour + 45*time.Minute)
+    // 2.5 hour duration
+    end := start.Add(2*time.Hour + 30*time.Minute)
+    return start, end
+}
+
+// isDuringSprint checks if a given time falls during any SKCC sprint
+func isDuringSprint(t time.Time) bool {
+    year := t.Year()
+    month := int(t.Month())
+
+    // Check all sprint types
+    wesStart, wesEnd := wes(year, month)
+    sksStart, sksEnd := sks(year, month)
+    skseStart, skseEnd := skse(year, month)
+    sksaStart, sksaEnd := sksa(year, month)
+
+    sprints := []struct {
+        start, end time.Time
+    }{
+        {start: wesStart, end: wesEnd},
+        {start: sksStart, end: sksEnd},
+        {start: skseStart, end: skseEnd},
+        {start: sksaStart, end: sksaEnd},
+    }
+
+    for _, sprint := range sprints {
+        if (t.Equal(sprint.start) || t.After(sprint.start)) && (t.Equal(sprint.end) || t.Before(sprint.end)) {
+            return true
+        }
+    }
+    return false
+}
+
+// isOnWARCFrequency checks if a frequency is on a WARC band (30m, 17m, or 12m)
+// WARC bands always count toward BRAG, even during sprints
+func isOnWARCFrequency(freqKHz float64) bool {
+    // WARC calling frequencies with tolerance
+    const tolerance = 10.0
+
+    warcFreqs := []float64{
+        10120, // 30m
+        18080, // 17m
+        24910, // 12m
+    }
+
+    for _, freq := range warcFreqs {
+        if freqKHz >= freq-tolerance && freqKHz <= freq+tolerance {
+            return true
+        }
+    }
+    return false
+}
+
 func getBragContactsForMonth(ap *AwardProcessor, year, month int) map[string]bool {
     bragContacts := make(map[string]bool)
 
@@ -5949,9 +6073,51 @@ func getBragContactsForMonth(ap *AwardProcessor, year, month int) map[string]boo
             continue
         }
 
-        // TODO: Implement sprint and WARC checking
-        // For now, just count all contacts (matches AC2C test case with 0 contacts in Sept/Oct)
-        bragContacts[qso.SKCCNr] = true
+        // BRAG sprint and WARC checking
+        // Parse QSO time including hour/minute for sprint checking
+        var qsoDateTime time.Time
+        if qso.TimeOn != "" {
+            // Try to parse full datetime: YYYYMMDDHHMMSS format
+            if len(qso.QSODate) >= 8 && len(qso.TimeOn) >= 4 {
+                dateTimeStr := qso.QSODate[:8] + qso.TimeOn[:4] + "00"
+                var err error
+                qsoDateTime, err = time.Parse("20060102150405", dateTimeStr)
+                if err != nil {
+                    // If parsing fails, use date only (will be treated as no frequency data)
+                    qsoDateTime = qsoTime
+                }
+            } else {
+                qsoDateTime = qsoTime
+            }
+        } else {
+            qsoDateTime = qsoTime
+        }
+
+        // Check if during sprint
+        duringSprint := isDuringSprint(qsoDateTime)
+
+        // Check frequency and WARC band status
+        var bragOkay bool
+        if qso.Freq != "" {
+            // Has frequency data - parse it
+            freqMHz, err := strconv.ParseFloat(qso.Freq, 64)
+            if err == nil {
+                // Convert MHz to kHz
+                freqKHz := freqMHz * 1000.0
+                onWARCFreq := isOnWARCFrequency(freqKHz)
+                bragOkay = onWARCFreq || !duringSprint
+            } else {
+                // Parse error - treat as no frequency data
+                bragOkay = !duringSprint
+            }
+        } else {
+            // No frequency data - only counts if not during sprint
+            bragOkay = !duringSprint
+        }
+
+        if bragOkay {
+            bragContacts[qso.SKCCNr] = true
+        }
     }
 
     return bragContacts
