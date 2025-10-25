@@ -57,6 +57,11 @@ func printWithDotClear(text string) {
     dotsOnLine = 0
 }
 
+// beep prints an ASCII bell character to produce an audible notification
+func beep() {
+    fmt.Print("\a")
+}
+
 // Network constants
 const (
     RBNServer      = "telnet.reversebeacon.net"
@@ -997,8 +1002,7 @@ func (sp *SpotProcessor) handleNotification(callsign string, goalList, targetLis
     // Check if we should notify
     if _, exists := sp.notified[callsign]; !exists {
         if sp.shouldNotify(callsign, goalList, targetList) {
-            // TODO: Implement beep sound
-            // beep()
+            beep()
         }
 
         sp.notified[callsign] = now + float64(sp.config.Notification.RenotificationDelaySeconds)
@@ -2136,8 +2140,7 @@ func (sm *SkedMonitor) DisplayLogins() error {
             newIndicator := " "
             if isNew {
                 if shouldNotifyLogin(sm.config, goalList, targetList) {
-                    // TODO: Implement beep sound
-                    // beep()
+                    beep()
                 }
                 newIndicator = "+"
             }
