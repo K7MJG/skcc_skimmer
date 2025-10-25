@@ -1,1 +1,1 @@
-uv run --python 3.13 --no-project skcc_skimmer.py %*
+uv run --python 3.14 --no-project skcc_skimmer.py %*
