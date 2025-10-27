@@ -5,8 +5,10 @@ Automatically detects version from Git and embeds it in the binary
 """
 
 import asyncio
+import os
+import platform
 import re
-import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -87,24 +89,47 @@ async def build_for_current_platform() -> bool:
         tmp_path = tmp.name
 
     try:
-        # Build using the temporary file
+        # Detect platform and set GOOS/GOARCH
+        system = platform.system()
+        machine = platform.machine().lower()
+
+        # Map platform to GOOS
+        goos_map = {"Windows": "windows", "Linux": "linux", "Darwin": "darwin"}
+        goos = goos_map.get(system, "linux")
+
+        # Map machine to GOARCH
+        goarch = "arm64" if machine in ("arm64", "aarch64") else "amd64"
+
+        # Set environment for Go build
+        env = os.environ.copy()
+        env['GOOS'] = goos
+        env['GOARCH'] = goarch
+
+        # Build using the temporary file (Go will add .exe automatically on Windows)
         proc = await asyncio.create_subprocess_exec(
             'go', 'build', '-o', str(output_file), tmp_path,
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await proc.communicate()
 
         if proc.returncode == 0:
-            print(f"Build complete: ./{output_file}")
+            # Find the actual file that was created (Go adds .exe on Windows)
+            if output_file.with_suffix('.exe').exists():
+                actual_file = output_file.with_suffix('.exe')
+            else:
+                actual_file = output_file
+
+            print(f"Build complete: ./{actual_file.name}")
             print()
             print("Usage:")
-            print("  Awards only:    ./skcc_skimmer -c CALLSIGN -a logfile.adi -g ALL -m GRID --awards-only")
-            print("  Interactive:    ./skcc_skimmer -c CALLSIGN -a logfile.adi -g ALL -m GRID -i")
+            print(f"  Awards only:    ./{actual_file.name} -c CALLSIGN -a logfile.adi -g ALL -m GRID --awards-only")
+            print(f"  Interactive:    ./{actual_file.name} -c CALLSIGN -a logfile.adi -g ALL -m GRID -i")
             print()
             return True
         else:
-            print(f"Build failed:")
+            print("Build failed:")
             print(stderr.decode())
             return False
     finally:
@@ -115,7 +140,7 @@ async def build_for_current_platform() -> bool:
 async def main() -> None:
     """Main entry point"""
     success = await build_for_current_platform()
-    exit(0 if success else 1)
+    sys.exit(0 if success else 1)
 
 
 if __name__ == "__main__":
