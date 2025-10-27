@@ -6,7 +6,7 @@ package main
  * Copyright (c) 2015-2025 Mark J Glenn
  *
  * SKCC Skimmer - Go Edition
- * Complete rewrite maintaining 100% behavioral parity with Python version
+ * Award calculation maintains 100% parity with Xojo SKCCLogger reference
  */
 
 import (
@@ -1176,8 +1176,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         return false
     }
 
-    // Process awards in Python's exact order to match output formatting
-    // This matches Python's get_goal_hits() function order (lines 2488-2600)
+    // Process awards in specific order to match reference implementation
 
     // 1. BRAG (line 2488)
     if contains("BRAG") {
@@ -1307,10 +1306,10 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // 10. DX (line 2535)
     if contains("DX") {
         // DX award - check both DXC (countries) and DXQ (foreign member QSOs)
-        // This matches Python's single 'DX' goal that encompasses both
-        // Python requires: dxcc_code and dxcc_code.isdigit()
+        // Single 'DX' goal encompasses both
+        // Requires: dxcc_code and dxcc_code.isdigit()
         if member.DXCode != "" && isNumeric(member.DXCode) {
-            // Normalize DXCC code to 3 digits (Python uses zfill(3))
+            // Normalize DXCC code to 3 digits (zero-padded)
             // "1" -> "001", "291" -> "291"
             normalizedDXCode := normalizeDXCC(member.DXCode)
 
@@ -1322,7 +1321,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
             }
 
             // Check DXQ (foreign member QSOs) - only for foreign members
-            // Use normalized codes for comparison (Python normalizes both with zfill(3))
+            // Use normalized codes for comparison (both zero-padded to 3 digits)
             normalizedMyDXCode := normalizeDXCC(myDXCode)
             if normalizedDXCode != normalizedMyDXCode {
                 if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
@@ -1366,7 +1365,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // Can't determine power levels from spot alone
 
     // 12. TKA (line 2583)
-    // Python logic: Only show TKA if user hasn't completed it (needs SK < 100 OR BUG < 100 OR SS < 100)
+    // Only show TKA if user hasn't completed it (needs SK < 100 OR BUG < 100 OR SS < 100)
     if contains("TKA") {
         contactsTKASK, _ := awards["TKA_SK"].(map[string]ProcessedQSO)
         contactsTKABUG, _ := awards["TKA_BUG"].(map[string]ProcessedQSO)
@@ -1376,7 +1375,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         bugCount := len(contactsTKABUG)
         ssCount := len(contactsTKASS)
 
-        // Only show TKA if requirements not yet met (Python line 2591)
+        // Only show TKA if requirements not yet met
         if skCount < 100 || bugCount < 100 || ssCount < 100 {
             // Check if we've already worked this member for TKA (any key type)
             _, inSK := contactsTKASK[memberNumber]
@@ -1414,7 +1413,7 @@ func (sp *SpotProcessor) buildAwardTargets(memberNumber string, member *Member, 
 
         case "T":
             // T target: requires both have C, check against their C date and my C date
-            // Python: if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
+            // Check if 'T' in TARGETS and both have C award dates
             // Use simple truthiness check (non-empty string), not effectiveDate
             if member.CDate != "" && sp.myCDate != "" {
                 targetLevel := checkCTSTarget("T", memberNumber, member.TDate,
@@ -1426,7 +1425,7 @@ func (sp *SpotProcessor) buildAwardTargets(memberNumber string, member *Member, 
 
         case "S":
             // S target: requires they have Tx8 and I have T, check against their Tx8 date and my T date
-            // Python: if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
+            // Check if 'S' in TARGETS and both have T award dates
             // Use simple truthiness check (non-empty string), not effectiveDate
             if member.TX8Date != "" && sp.myTDate != "" {
                 targetLevel := checkCTSTarget("S", memberNumber, member.SDate,
@@ -1668,12 +1667,12 @@ func (sm *SpotterManager) DiscoverSpotters(myGrid string) error {
 
     html := string(body)
 
-    // Parse HTML to extract spotter information using Python's regex patterns
-    // Match Python: r'<tr.*?online24h online7d total">(.*?)</tr>'
+    // Parse HTML to extract spotter information using regex patterns
+    // Match: r'<tr.*?online24h online7d total">(.*?)</tr>'
     rowRegex := regexp.MustCompile(`(?s)<tr.*?online24h online7d total">(.*?)</tr>`)
     rows := rowRegex.FindAllString(html, -1)
 
-    // Match Python: r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>'
+    // Match: r'<td.*?><a href="/dxsd1.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>'
     columnsRegex := regexp.MustCompile(`(?s)<td.*?><a href="/dxsd1\.php\?f=.*?>\s*(.*?)\s*</a>.*?</td>\s*<td.*?>\s*(.*?)</a></td>\s*<td.*?>(.*?)</td>`)
 
     for _, row := range rows {
@@ -2168,7 +2167,7 @@ func whichBand(freqKHz float64) int {
 }
 
 // whichARRLBand determines the amateur band from a frequency in kHz using strict ARRL band limits
-// This matches Python's which_arrl_band function used for K3Y processing
+// Maps frequency to ARRL band name for K3Y processing
 func whichARRLBand(freqKHz float64) int {
     bands := []struct {
         band  int
@@ -3294,7 +3293,7 @@ func parseGoalsTargets(value string, validList []string, typeStr string) []strin
 
 // parseHighWPM parses HIGH_WPM dict from config
 func parseHighWPM(value string, cfg *Config) {
-    // Value is a Python dict string like "{'ACTION': 'warn', 'THRESHOLD': 35}"
+    // Value is a dict string like "{'ACTION': 'warn', 'THRESHOLD': 35}"
     // Simple extraction - look for ACTION and THRESHOLD values
     if strings.Contains(value, "ACTION") {
         if strings.Contains(value, "'suppress'") || strings.Contains(value, "\"suppress\"") {
@@ -3494,7 +3493,7 @@ func downloadSKCCData() error {
         members[member.Callsign] = member
 
         // Index by old callsigns - DON'T overwrite existing entries
-        // This matches Python logic: old calls don't replace current calls
+        // Old calls don't replace current calls
         for _, oldCall := range member.OldCalls {
             if oldCall != "" {
                 oldCallClean := strings.ToUpper(strings.TrimSpace(oldCall))
@@ -3502,7 +3501,7 @@ func downloadSKCCData() error {
                 if _, exists := members[oldCallClean]; !exists {
                     members[oldCallClean] = member
                 }
-                // Note: Python also has logic for inactive->active upgrades, but we can skip for now
+                // Note: Logic for inactive->active upgrades can be added if needed
             }
         }
 
@@ -3594,7 +3593,7 @@ func parseADI(filename string) ([]QSO, error) {
                     qso.State = strings.ToUpper(value)
                 case "SKCC":
                     qso.SKCC = value
-                    // Parse SKCC number like Python does - detect corruption
+                    // Parse SKCC number - detect corruption
                     if len(value) == 0 {
                         qso.SKCCPre = ""
                     } else if isAllDigits(value) {
@@ -3811,7 +3810,7 @@ func (ap *AwardProcessor) GetSKCCFromCall(logCall, logSKCC string) (string, bool
     return returnSKCC, autoMatched
 }
 
-// ProcessQSOs - Main processing loop (direct translation from Python)
+// ProcessQSOs - Main processing loop for QSO validation and member matching
 func (ap *AwardProcessor) ProcessQSOs(qsos []QSO) []ProcessedQSO {
     ap.processedQSOs = []ProcessedQSO{}
     ap.qsosSkipped = []string{}
@@ -4087,15 +4086,15 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
     }
 
     // Prefix Award - started on 20130101
-    // Python logic (line 3816-3826): Split by /, try each segment, use the one that has valid SKCC
+    // Split by /, try each segment, use the one that has valid SKCC
     if qsoDate >= "20130101" {
         callSegments := strings.Split(processed.Call, "/")
         for _, pfxCall := range callSegments {
-            // Check if this segment has a valid SKCC member (matches Python line 3819)
+            // Check if this segment has a valid SKCC member
             pfxSKCCNr, _ := ap.GetSKCCFromCall(pfxCall, mbr.PlainNumber)
             if pfxSKCCNr != "" {
                 processed.PfxCall = pfxCall
-                // Extract prefix from the segment that matched (Python line 3823-3826)
+                // Extract prefix from the segment that matched
                 if len(pfxCall) >= 3 && pfxCall[2] >= '0' && pfxCall[2] <= '9' {
                     processed.Pfx = pfxCall[:3]
                 } else if len(pfxCall) >= 2 {
@@ -4141,7 +4140,7 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
 }
 
 func calculateDuration(timeOn, timeOff string) int {
-    // Parse HHMMSS to seconds, then convert to minutes (matching Python logic)
+    // Parse HHMMSS to seconds, then convert to minutes
     getSeconds := func(t string) int {
         if len(t) < 4 {
             return 0
@@ -4163,7 +4162,7 @@ func calculateDuration(timeOn, timeOff string) int {
         durationSecs += 24 * 3600 // Handle midnight rollover
     }
 
-    // Return duration in minutes (floor division, matching Python's // 60)
+    // Return duration in minutes (integer division)
     return durationSecs / 60
 }
 
@@ -4263,7 +4262,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
     awards["P"] = contactsP
 
     // QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found - use ADI file order
-    // Python logic (line 4157-4162): Keep first QSO, upgrade 1x to 2x if 2x found later
+    // Keep first QSO, upgrade 1x to 2x if 2x found later
     contactsQRP := make(map[string]ProcessedQSO)
     for _, qso := range adiOrder {
         if qso.QRPx1QSO {
@@ -4300,7 +4299,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
     awards["DXQ"] = contactsDXQ
 
     // RC - Process in ADI file order with back-to-back duplicate handling
-    // Python logic (line 4084-4118): Allow multiple QSOs with same member
+    // Allow multiple QSOs with same member
     // BUT if same member appears consecutively in ADI file, keep only longest
     contactsRC := make(map[string]ProcessedQSO)
     var lastRCMember string
@@ -4309,7 +4308,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
 
     for _, qso := range adiOrder {
         if qso.RagChewQSO {
-            // Use unique key: member_date_time (matches Python line 4088)
+            // Use unique key: member_date_time
             rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
 
             if qso.SKCCNr != lastRCMember {
@@ -4321,7 +4320,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
             } else {
                 // Same member as previous - only keep if longer
                 if qso.RagChewMins > lastRCMins {
-                    // Remove previous and add this one (Python line 4107-4109)
+                    // Remove previous and add this one
                     delete(contactsRC, lastRCKey)
                     contactsRC[rcKey] = qso
                     lastRCKey = rcKey
@@ -4365,7 +4364,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
     awards["TKA_BUG"] = contactsTKABUG
     awards["TKA_SS"] = contactsTKASS
 
-    // K3Y processing - matches Python's _process_k3y_qsos
+    // K3Y processing
     // Process K3Y QSOs separately as they have special handling
     k3yContacts := make(map[string]map[int]string)
     if contains(config.Goals, "K3Y") {
@@ -4373,7 +4372,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
         k3yStart := fmt.Sprintf("%d0102", config.K3YYear)
         k3yEnd := fmt.Sprintf("%d0201", config.K3YYear)
 
-        // K3Y regex pattern - matches Python: r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
+        // K3Y regex pattern: r'.*?(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)'
         k3yRegex := regexp.MustCompile(`(?i)(?:K3Y|SKM)[\/-]([0-9]|KH6|KL7|KP4|AF|AS|EU|NA|OC|SA)`)
 
         for _, qso := range adiOrder {
@@ -4382,7 +4381,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
                 if matches := k3yRegex.FindStringSubmatch(qso.Comment); matches != nil {
                     suffix := strings.ToUpper(matches[1])
 
-                    // Use whichARRLBand to match Python's which_arrl_band
+                    // Use whichARRLBand to determine band name
                     // FREQ field is in MHz, need to convert to kHz
                     if qso.Freq != "" {
                         freqMHz, err := strconv.ParseFloat(qso.Freq, 64)
@@ -4689,7 +4688,7 @@ func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
 }
 
 // getWASDisplayData returns the callsign and SKCC number with suffix for WAS award display
-// This matches Xojo/Python behavior of substituting primary callsign and adding suffix
+// This matches Xojo behavior of substituting primary callsign and adding suffix
 func getWASDisplayData(qso ProcessedQSO, members map[string]*Member) (string, string) {
     // Look up the member to get their award dates and primary callsign
     member, exists := members[qso.SKCCNr]
@@ -4743,7 +4742,7 @@ func writeWASAward(name string, contacts map[string]ProcessedQSO, members map[st
     }
     defer file.Close()
 
-    // Write states in alphabetical order (matching Xojo/Python behavior)
+    // Write states in alphabetical order (matching Xojo behavior)
     for _, state := range usStates {
         if qso, exists := contacts[state]; exists {
             // Get display callsign and SKCC number with suffix
@@ -5035,7 +5034,7 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
         for i, qso := range sorted {
             dateStr := formatDate(qso.QSODate)
             // Use CallPri (member's current primary callsign) not Call (ADI callsign)
-            // This matches Python/Xojo which uses log_call_pri from member database
+            // This matches Xojo which uses log_call_pri from member database
             fmt.Fprintf(file, "%-6d %s  %-13s %-8s %-12s %-12s %s\n",
                 i+1, dateStr, qso.CallPri, qso.SKCCNr, qso.Name, qso.State, name)
         }
@@ -5523,7 +5522,7 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
         printBRAGProgress(ap)
     }
 
-    // K3Y - matches Python's print_k3y_contacts
+    // K3Y contact display
     if contains(config.Goals, "K3Y") {
         if k3yData, ok := awards["K3Y"].(map[string]map[int]string); ok {
             printK3YContacts(k3yData, config.K3YYear)
@@ -5533,7 +5532,7 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     fmt.Println()
 }
 
-// printK3YContacts prints the K3Y contacts table - matches Python's print_k3y_contacts
+// printK3YContacts prints the K3Y contacts table
 func printK3YContacts(k3yData map[string]map[int]string, k3yYear int) {
     fmt.Println()
     fmt.Printf("K3Y %d\n", k3yYear)
@@ -5574,7 +5573,7 @@ func printK3YContacts(k3yData map[string]map[int]string, k3yYear int) {
         fmt.Println()
     }
 
-    // Print in same order as Python
+    // Print in standard order
     printStation("K3Y/0")
     printStation("K3Y/1")
     printStation("K3Y/2")
@@ -5913,7 +5912,7 @@ func calculateAwardLevel(value int, baseUnit int) int {
 	return 10
 }
 
-// isNumeric checks if a string contains only digits (matches Python's str.isdigit())
+// isNumeric checks if a string contains only digits
 func isNumeric(s string) bool {
 	if s == "" {
 		return false
@@ -5926,7 +5925,7 @@ func isNumeric(s string) bool {
 	return true
 }
 
-// normalizeDXCC normalizes a DXCC code to 3 digits (matches Python's str.zfill(3))
+// normalizeDXCC normalizes a DXCC code to 3 digits (zero-padded)
 // Examples: "1" -> "001", "291" -> "291"
 func normalizeDXCC(code string) string {
 	if !isNumeric(code) {
@@ -6788,7 +6787,7 @@ func main() {
     fmt.Printf("\nProcessed %s %s: %s %s for awards\n",
         formatComma(ap.qsosProcessed), qsoPlural, formatComma(ap.qsosAdded), qualifyWord)
 
-    // Dual-pass processing to match Python/Xojo behavior:
+    // Dual-pass processing to match Xojo behavior:
     // - C/T/S/DX awards use chronological order (oldest QSO first)
     // - WAS/P/QRP/TKA/BRAG/RC awards use ADI file order
 
@@ -6985,7 +6984,7 @@ func main() {
             spotProcessor.qsosByMemberNumber = newQSOsByMemberNumber
             spotProcessor.mu.Unlock()
 
-            // Display updated progress and FYI messages (like Python does)
+            // Display updated progress and FYI messages
             printProgress(newAwards, ap)
             fmt.Println()
             printFYIMessages(newAwards, rosters, config, members)
