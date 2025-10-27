@@ -980,19 +980,7 @@ func (sp *SpotProcessor) HandleSpot(spot *Spot) (shouldDisplay bool, output stri
         // Build member info string
         memberInfo := ""
         if member, exists := sp.members[callsign]; exists {
-            memberData := MemberData{
-                PlainNumber: member.PlainNumber,
-                Name:        member.Name,
-                SPC:         member.SPC,
-                MbrStatus:   member.Status,
-                CDate:       member.CDate,
-                TDate:       member.TDate,
-                Tx8Date:     member.TX8Date,
-                SDate:       member.SDate,
-                JoinDate:    member.JoinDate,
-                DXCode:      member.DXCode,
-            }
-            memberInfo = buildMemberInfo(callsign, map[string]MemberData{callsign: memberData}, sp.rosters)
+            memberInfo = buildMemberInfo(callsign, member, sp.rosters)
         }
         output = fmt.Sprintf("%s%s%-6s %s on %8s %s",
             spot.Zulu, notificationFlag, callsign, memberInfo, freqStr, strings.Join(report, "; "))
@@ -2385,13 +2373,15 @@ type FileWatcher struct {
     lastModTime    time.Time
     lastSize       int64
     mu             sync.RWMutex
+    refreshFunc    func() error  // Callback to trigger award refresh
 }
 
 // NewFileWatcher creates a new file watcher
-func NewFileWatcher(config *Config, adiFile string) *FileWatcher {
+func NewFileWatcher(config *Config, adiFile string, refreshFunc func() error) *FileWatcher {
     fw := &FileWatcher{
-        config:  config,
-        adiFile: adiFile,
+        config:      config,
+        adiFile:     adiFile,
+        refreshFunc: refreshFunc,
     }
 
     // Initialize with current file stats to avoid false change on first check
@@ -2493,10 +2483,17 @@ func (fw *FileWatcher) waitForStableSize() error {
 
 // refresh reprocesses the ADI file and recalculates awards
 func (fw *FileWatcher) refresh() error {
-    // TODO: This needs to call the award processing pipeline
-    // For now, just print a message
-    fmt.Println("Award refresh would happen here")
-    fmt.Println("(Full refresh implementation pending - needs award processor refactoring)")
+    if fw.refreshFunc == nil {
+        fmt.Println("Warning: refresh callback not configured")
+        return nil
+    }
+
+    fmt.Println("\nADI file changed - recalculating awards...")
+    if err := fw.refreshFunc(); err != nil {
+        fmt.Printf("Error refreshing awards: %v\n", err)
+        return err
+    }
+    fmt.Println("Awards updated successfully")
     return nil
 }
 
@@ -2515,16 +2512,18 @@ type InteractiveMode struct {
     rosters        *Rosters
     awardProcessor *AwardProcessor
     awards         map[string]interface{}
+    spotProcessor  *SpotProcessor
 }
 
 // NewInteractiveMode creates a new interactive mode handler
-func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters, ap *AwardProcessor, awards map[string]interface{}) *InteractiveMode {
+func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters, ap *AwardProcessor, awards map[string]interface{}, spotProcessor *SpotProcessor) *InteractiveMode {
     return &InteractiveMode{
         config:         config,
         members:        members,
         rosters:        rosters,
         awardProcessor: ap,
         awards:         awards,
+        spotProcessor:  spotProcessor,
     }
 }
 
@@ -2724,10 +2723,8 @@ func (im *InteractiveMode) lookupByCallsign(callsign string) {
 
 // printMemberInfo displays member information with goal/target analysis
 func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
-    // Build member info string  - create a map with one entry
-    memberData := im.convertToMemberData(member)
-    membersMap := map[string]MemberData{callsign: memberData}
-    memberInfo := buildMemberInfo(callsign, membersMap, im.rosters)
+    // Build member info string
+    memberInfo := buildMemberInfo(callsign, member, im.rosters)
 
     var report []string
     report = append(report, memberInfo)
@@ -2740,11 +2737,13 @@ func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
         return
     }
 
-    // Get goal and target lists
-    // TODO: This needs the full award state to work properly
-    // For now, just show basic info
-    goalList := []string{}
-    targetList := []string{}
+    // Get goal and target lists using spot processor
+    memberNumber := member.PlainNumber
+    state := member.SPC
+    goalList := buildAwardGoals(callsign, memberNumber, state, member, im.spotProcessor.awards,
+        im.spotProcessor.myCDate, im.spotProcessor.myTDate, im.spotProcessor.mySDate,
+        im.spotProcessor.myDXCode, im.config.Goals)
+    targetList := im.spotProcessor.buildAwardTargets(memberNumber, member, im.config.Targets)
 
     // Check friend status
     isFriend := slices.ContainsFunc(im.config.Friends, func(friend string) bool {
@@ -2770,47 +2769,15 @@ func (im *InteractiveMode) printMemberInfo(callsign string, member *Member) {
     fmt.Printf("  %s - %s\n", callsign, strings.Join(report, "; "))
 }
 
-// convertToMemberData converts Member to MemberData for display
-func (im *InteractiveMode) convertToMemberData(m *Member) MemberData {
-    return MemberData{
-        PlainNumber: m.PlainNumber,
-        Name:        m.Name,
-        SPC:         m.SPC,
-        MbrStatus:   m.Status,
-        CDate:       m.CDate,
-        TDate:       m.TDate,
-        Tx8Date:     m.TX8Date,
-        SDate:       m.SDate,
-        JoinDate:    m.JoinDate,
-        DXCode:      m.DXCode,
-    }
-}
-
 // ============================================================================
 // MEMBER INFO & GOAL/TARGET MATCHING
 // ============================================================================
 
-// MemberData represents SKCC member information (simplified for now)
-// TODO: This should match the full member structure when member database is implemented
-type MemberData struct {
-    PlainNumber string
-    Name        string
-    SPC         string // State/Province/Country
-    MbrStatus   string // A=Active, IA=Inactive, SK=Silent Key
-    CDate       string
-    TDate       string
-    Tx8Date     string
-    SDate       string
-    JoinDate    string
-    DXCode      string
-}
-
 // buildMemberInfo formats member information for display
 // Format: (NUMBER SUFFIX NAME SPC)
 // Example: (12345 Cx3  John      WA)
-func buildMemberInfo(callsign string, members map[string]MemberData, rosters *Rosters) string {
-    member, exists := members[callsign]
-    if !exists {
+func buildMemberInfo(callsign string, member *Member, rosters *Rosters) string {
+    if member == nil {
         return ""
     }
 
@@ -2827,7 +2794,7 @@ func buildMemberInfo(callsign string, members map[string]MemberData, rosters *Ro
 
 // getFullMemberNumber returns the member number and award suffix
 // Suffix examples: "C", "Cx5", "T", "Tx3", "S", "Sx2"
-func getFullMemberNumber(_ string, member MemberData, rosters *Rosters) (string, string) {
+func getFullMemberNumber(_ string, member *Member, rosters *Rosters) (string, string) {
     number := member.PlainNumber
     suffix := ""
     level := 1
@@ -2836,7 +2803,7 @@ func getFullMemberNumber(_ string, member MemberData, rosters *Rosters) (string,
     sDate := effectiveDate(member.SDate)
     tDate := effectiveDate(member.TDate)
     cDate := effectiveDate(member.CDate)
-    tx8Date := effectiveDate(member.Tx8Date)
+    tx8Date := effectiveDate(member.TX8Date)
 
     if sDate != "" {
         suffix = "S"
@@ -6867,9 +6834,22 @@ func main() {
         return
     }
 
+    // Get user's award dates and DXCC code for goal/target display
+    myMember := members[config.MyCallsign]
+    var myCDate, myTDate, mySDate, myDXCode string
+    if myMember != nil {
+        myCDate = myMember.CDate
+        myTDate = myMember.TDate
+        mySDate = myMember.SDate
+        myDXCode = myMember.DXCode
+    }
+
+    // Create spot processor (used by both interactive and real-time monitoring)
+    spotProcessor := NewSpotProcessor(config, members, rosters, awards, qsosByMemberNumber, myCDate, myTDate, mySDate, myDXCode)
+
     // Handle interactive mode if requested
     if *interactive {
-        im := NewInteractiveMode(config, members, rosters, ap, awards)
+        im := NewInteractiveMode(config, members, rosters, ap, awards, spotProcessor)
         im.Run()
         return
     }
@@ -6904,19 +6884,6 @@ func main() {
 
     // Create WaitGroup for all goroutines
     var wg sync.WaitGroup
-
-    // Get user's award dates and DXCC code for detailed goal/target display
-    myMember := members[config.MyCallsign]
-    var myCDate, myTDate, mySDate, myDXCode string
-    if myMember != nil {
-        myCDate = myMember.CDate
-        myTDate = myMember.TDate
-        mySDate = myMember.SDate
-        myDXCode = myMember.DXCode
-    }
-
-    // Create spot processor for RBN spots
-    spotProcessor := NewSpotProcessor(config, members, rosters, awards, qsosByMemberNumber, myCDate, myTDate, mySDate, myDXCode)
 
     // Display spot windowing configuration
     if config.SpotWindow.Enabled {
@@ -6981,7 +6948,47 @@ func main() {
 
     // Launch file watching if ADI file provided
     if config.ADIFile != "" {
-        fw := NewFileWatcher(config, config.ADIFile)
+        // Create refresh callback that reprocesses awards
+        refreshCallback := func() error {
+            // Re-read ADI file
+            qsos, err := parseADI(config.ADIFile)
+            if err != nil {
+                return fmt.Errorf("failed to read ADI file: %w", err)
+            }
+
+            // Process QSOs
+            processedQSOs := ap.ProcessQSOs(qsos)
+
+            // Sort chronologically
+            processedQSOsChrono := make([]ProcessedQSO, len(processedQSOs))
+            copy(processedQSOsChrono, processedQSOs)
+            sort.Slice(processedQSOsChrono, func(i, j int) bool {
+                if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
+                    return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
+                }
+                return processedQSOsChrono[i].TimeOn < processedQSOsChrono[j].TimeOn
+            })
+
+            // ADI order copy
+            processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
+            copy(processedQSOsADI, processedQSOs)
+
+            // Extract awards
+            newAwards := ExtractAwards(processedQSOsChrono, processedQSOsADI)
+
+            // Build QSO index
+            newQSOsByMemberNumber := buildQSOsByMemberNumber(processedQSOsChrono)
+
+            // Update spot processor (thread-safe)
+            spotProcessor.mu.Lock()
+            spotProcessor.awards = newAwards
+            spotProcessor.qsosByMemberNumber = newQSOsByMemberNumber
+            spotProcessor.mu.Unlock()
+
+            return nil
+        }
+
+        fw := NewFileWatcher(config, config.ADIFile, refreshCallback)
         wg.Add(1)
         go fw.WatchTask(ctx, &wg)
     }
