@@ -6985,6 +6985,11 @@ func main() {
             spotProcessor.qsosByMemberNumber = newQSOsByMemberNumber
             spotProcessor.mu.Unlock()
 
+            // Display updated progress and FYI messages (like Python does)
+            printProgress(newAwards, ap)
+            fmt.Println()
+            printFYIMessages(newAwards, rosters, config, members)
+
             return nil
         }
 
