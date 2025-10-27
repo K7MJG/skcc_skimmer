@@ -586,13 +586,15 @@ class cConfig:
         parser.add_argument("-r", "--radius", type=int, help="Distance radius in miles")
         parser.add_argument("-s", "--sked", type=str, choices=["on", "off"], help="Enable scheduled mode (on/off)")
         parser.add_argument("-t", "--targets", type=str, help="Targets")
-        parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose mode")
+        parser.add_argument("-v", "--verbose", action="store_true", default=None, help="Enable verbose mode")
         parser.add_argument("--awards-only", action="store_true", help="Exit after displaying awards progress")
 
         args = parser.parse_args(arg_v)
 
         cls.INTERACTIVE = args.interactive
-        cls.VERBOSE = args.verbose
+        # Only override VERBOSE if explicitly set on command line
+        if args.verbose is not None:
+            cls.VERBOSE = args.verbose
         cls.AWARDS_ONLY = args.awards_only
 
         if args.adi:
