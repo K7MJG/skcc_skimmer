@@ -737,7 +737,7 @@ func checkCTSTarget(awardType, memberNumber, theirAwardDate string, qsosByMember
     if hasQSOs {
         canUseMe = true
         for _, qsoDate := range qsoDates {
-            if qsoDate > date1 && qsoDate > date2 {
+            if qsoDate > date1 || qsoDate > date2 {
                 canUseMe = false
                 break
             }

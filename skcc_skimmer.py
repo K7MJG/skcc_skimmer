@@ -2453,7 +2453,7 @@ class cQSO:
 
         # Check if they can use me (all my QSOs with them are before cutoff dates)
         can_use_me = (member_number not in cls.QSOsByMemberNumber or all(
-            qso_date <= date1 or qso_date <= date2
+            qso_date <= date1 and qso_date <= date2
             for qso_date in cls.QSOsByMemberNumber[member_number]
         ))
 
