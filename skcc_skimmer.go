@@ -1368,9 +1368,16 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
     memberNumber := member.PlainNumber
     state := member.SPC
 
-    // Use shared function to build goals list
+    // Build goals list
     goals = buildAwardGoals(callsign, memberNumber, state, member, sp.awards, sp.myCDate, sp.myTDate, sp.mySDate, sp.myDXCode, sp.config.Goals)
-    targets = buildAwardGoals(callsign, memberNumber, state, member, sp.awards, sp.myCDate, sp.myTDate, sp.mySDate, sp.myDXCode, sp.config.Targets)
+
+    // TODO: Implement proper target calculation
+    // The Python version uses QSOsByMemberNumber to track all QSO dates with each member
+    // and checks if "all my QSOs with this member are before cutoff dates".
+    // The Go version lacks this data structure and would need significant refactoring
+    // to build/maintain this index during award processing.
+    // For now, return empty targets to avoid showing incorrect information.
+    // targets = buildAwardTargets(callsign, memberNumber, member, sp.awards, sp.myCDate, sp.myTDate, sp.config.Targets)
 
     return goals, targets
 }
@@ -2895,10 +2902,12 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 		cfg.ADIFile = getString(val)
 	}
 	if val, ok := tomlData["GOALS"]; ok {
-		cfg.Goals = parseGoalsTargets(getString(val))
+		validGoals := []string{"C", "T", "S", "WAS", "WAS-C", "WAS-T", "WAS-S", "P", "BRAG", "K3Y", "QRP", "DX", "TKA", "RC"}
+		cfg.Goals = parseGoalsTargets(getString(val), validGoals, "goal")
 	}
 	if val, ok := tomlData["TARGETS"]; ok {
-		cfg.Targets = parseGoalsTargets(getString(val))
+		validTargets := []string{"C", "T", "S"}
+		cfg.Targets = parseGoalsTargets(getString(val), validTargets, "target")
 	}
 	if val, ok := tomlData["BANDS"]; ok {
 		cfg.Bands = parseBands(getString(val))
@@ -3116,9 +3125,11 @@ func parseConfig(filename string) (*Config, error) {
             case "ADI_FILE":
                 cfg.ADIFile = value
             case "GOALS":
-                cfg.Goals = parseGoalsTargets(value)
+                validGoals := []string{"C", "T", "S", "WAS", "WAS-C", "WAS-T", "WAS-S", "P", "BRAG", "K3Y", "QRP", "DX", "TKA", "RC"}
+                cfg.Goals = parseGoalsTargets(value, validGoals, "goal")
             case "TARGETS":
-                cfg.Targets = parseGoalsTargets(value)
+                validTargets := []string{"C", "T", "S"}
+                cfg.Targets = parseGoalsTargets(value, validTargets, "target")
             case "BANDS":
                 cfg.Bands = parseBands(value)
             case "EXCLUSIONS":
@@ -3160,12 +3171,18 @@ func parseConfig(filename string) (*Config, error) {
 // GOALS/TARGETS PARSING
 // ============================================================================
 
-func parseGoalsTargets(value string) []string {
+func parseGoalsTargets(value string, validList []string, typeStr string) []string {
     value = strings.ToUpper(value)
     parts := strings.Split(value, ",")
     var result []string
     hasAll := false
     var exclusions []string
+
+    // Create a map for quick validation lookup
+    validMap := make(map[string]bool)
+    for _, v := range validList {
+        validMap[v] = true
+    }
 
     for _, p := range parts {
         p = strings.TrimSpace(p)
@@ -3174,13 +3191,20 @@ func parseGoalsTargets(value string) []string {
         } else if strings.HasPrefix(p, "-") {
             exclusions = append(exclusions, strings.TrimPrefix(p, "-"))
         } else if p != "" && p != "NONE" {
+            // Validate against allowed list
+            if !validMap[p] {
+                fmt.Printf("Unrecognized %s '%s'.\n", typeStr, p)
+                fmt.Println("Program will close in 10 seconds...")
+                time.Sleep(10 * time.Second)
+                os.Exit(1)
+            }
             result = append(result, p)
         }
     }
 
     if hasAll {
-        allAwards := []string{"C", "T", "S", "P", "WAS", "WAS-C", "WAS-T", "WAS-S", "DX", "QRP", "RC", "BRAG", "K3Y", "TKA"}
-        for _, award := range allAwards {
+        // Use the provided valid list for ALL expansion
+        for _, award := range validList {
             isExcluded := false
             for _, ex := range exclusions {
                 if award == ex {
@@ -6538,10 +6562,12 @@ func main() {
         config.ADIFile = *adiFile
     }
     if *goals != "" {
-        config.Goals = parseGoalsTargets(*goals)
+        validGoals := []string{"C", "T", "S", "WAS", "WAS-C", "WAS-T", "WAS-S", "P", "BRAG", "K3Y", "QRP", "DX", "TKA", "RC"}
+        config.Goals = parseGoalsTargets(*goals, validGoals, "goal")
     }
     if *targets != "" {
-        config.Targets = parseGoalsTargets(*targets)
+        validTargets := []string{"C", "T", "S"}
+        config.Targets = parseGoalsTargets(*targets, validTargets, "target")
     }
     if *maidenhead != "" {
         config.MyGridsquare = strings.ToUpper(*maidenhead)

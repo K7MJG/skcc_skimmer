@@ -2449,24 +2449,31 @@ class cQSO:
     def _check_cts_target(cls, award_type: str, member_number: str, their_award_date: str,
                           level_dict: dict[str, int], date1: str, date2: str) -> str | None:
 
+        # Check if they can use me (all my QSOs with them are before cutoff dates)
+        can_use_me = (member_number not in cls.QSOsByMemberNumber or all(
+            qso_date <= date1 or qso_date <= date2
+            for qso_date in cls.QSOsByMemberNumber[member_number]
+        ))
+
+        if not can_use_me:
+            return None
+
         if not their_award_date:
             # They're working toward initial award
-            if member_number not in cls.QSOsByMemberNumber or all(
-                qso_date <= date1 or qso_date <= date2
-                for qso_date in cls.QSOsByMemberNumber[member_number]
-            ):
-                return award_type
+            return award_type
         else:
-            # They already have award, working toward multipliers
-            next_level = level_dict[member_number] + 1
-            if next_level <= 10 and (
-                member_number not in cls.QSOsByMemberNumber or all(
-                    qso_date <= date1 or qso_date <= date2
-                    for qso_date in cls.QSOsByMemberNumber[member_number]
+            # They already have award - count how many valid QSOs they have with me
+            # Valid QSOs are those AFTER the cutoff dates (can't be used again)
+            qsos_with_me = 0
+            if member_number in cls.QSOsByMemberNumber:
+                qsos_with_me = sum(
+                    1 for qso_date in cls.QSOsByMemberNumber[member_number]
+                    if qso_date > date1 and qso_date > date2
                 )
-            ):
-                return f'{award_type}x{next_level}'
-        return None
+
+            # Calculate what level they're working toward based on QSO count
+            _, x_factor = cQSO.calculate_numerics(award_type, qsos_with_me)
+            return cUtil.abbreviate_class(award_type, x_factor)
 
     @classmethod
     def get_goal_hits(cls, TheirCallSign: str, fFrequency: float | None = None) -> list[str]:
