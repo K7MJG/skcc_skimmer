@@ -4775,10 +4775,10 @@ class cSKCC:
 
     @staticmethod
     def sks(Year: int, Month: int) -> tuple[cFastDateTime, cFastDateTime]:
-        start_date = cFastDateTime((Year, Month, 1))
-
-        for _ in range(4):  # Loop exactly 4 times
-            start_date = start_date.first_weekday_after_date('Wed')
+        # SKS: 4th Wednesday 00:00-02:00 UTC
+        # Find the 1st Wednesday, then add 3 weeks to get 4th Wednesday
+        start_date = cFastDateTime((Year, Month, 1)).first_weekday_from_date('Wed')
+        start_date = start_date + timedelta(weeks=3)
 
         return start_date, start_date + timedelta(hours=2)
 

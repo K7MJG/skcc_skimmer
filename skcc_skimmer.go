@@ -6141,11 +6141,11 @@ func wes(year, month int) (time.Time, time.Time) {
 
 // sks calculates Straight Key Sprint times (4th Wednesday 00:00-02:00 UTC)
 func sks(year, month int) (time.Time, time.Time) {
+    // SKS: 4th Wednesday 00:00-02:00 UTC
+    // Find the 1st Wednesday, then add 3 weeks to get 4th Wednesday
     start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
-    // Loop exactly 4 times to get 4th Wednesday
-    for i := 0; i < 4; i++ {
-        start = firstWeekdayAfterDate(start, time.Wednesday)
-    }
+    start = firstWeekdayFromDate(start, time.Wednesday)
+    start = start.AddDate(0, 0, 21) // Add 3 weeks
     end := start.Add(2 * time.Hour)
     return start, end
 }
