@@ -688,8 +688,9 @@ type SpotProcessor struct {
     config       *Config
     members      map[string]*Member
     rosters      *Rosters
-    awards       map[string]interface{} // Contact lists from award processing
-    myCDate      string                 // User's Centurion award date
+    awards             map[string]interface{} // Contact lists from award processing
+    qsosByMemberNumber map[string][]string    // QSO dates by member number (for target calculation)
+    myCDate            string                 // User's Centurion award date
     myTDate      string                 // User's Tribune award date
     mySDate      string                 // User's Senator award date
     myDXCode     string                 // User's DXCC code (for DXQ foreign check)
@@ -715,22 +716,81 @@ type PendingSpot struct {
     Timer         *time.Timer
 }
 
+// buildQSOsByMemberNumber creates an index of QSO dates by member number for target calculation
+func buildQSOsByMemberNumber(qsos []ProcessedQSO) map[string][]string {
+    result := make(map[string][]string)
+    for _, qso := range qsos {
+        memberNum := qso.SKCCNr
+        if memberNum != "" {
+            result[memberNum] = append(result[memberNum], qso.QSODate)
+        }
+    }
+    return result
+}
+
+// checkCTSTarget checks if the user can help a member achieve a C, T, or S award level
+// Returns the target level string (e.g., "C", "Tx5", "Sx2") or empty string if they cannot use the user
+func checkCTSTarget(awardType, memberNumber, theirAwardDate string, qsosByMemberNumber map[string][]string, date1, date2 string) string {
+    // Check if they can use me (all my QSOs with them are before cutoff dates)
+    qsoDates, hasQSOs := qsosByMemberNumber[memberNumber]
+    canUseMe := !hasQSOs
+    if hasQSOs {
+        canUseMe = true
+        for _, qsoDate := range qsoDates {
+            if qsoDate > date1 && qsoDate > date2 {
+                canUseMe = false
+                break
+            }
+        }
+    }
+
+    if !canUseMe {
+        return ""
+    }
+
+    // If they don't have the award yet, they need the initial award
+    if theirAwardDate == "" {
+        return awardType
+    }
+
+    // Count QSOs after cutoff dates
+    qsosAfterCutoff := 0
+    if hasQSOs {
+        for _, qsoDate := range qsoDates {
+            if qsoDate > date1 && qsoDate > date2 {
+                qsosAfterCutoff++
+            }
+        }
+    }
+
+    // Calculate target level based on QSO count
+    if qsosAfterCutoff == 0 {
+        return awardType
+    } else if qsosAfterCutoff <= 9 {
+        return fmt.Sprintf("%sx%d", awardType, qsosAfterCutoff+1)
+    } else {
+        level := ((qsosAfterCutoff - 10) / 5 + 3) * 5
+        return fmt.Sprintf("%sx%d", awardType, level)
+    }
+}
+
 // NewSpotProcessor creates a new spot processor
-func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters, awards map[string]interface{}, myCDate, myTDate, mySDate, myDXCode string) *SpotProcessor {
+func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters, awards map[string]interface{}, qsosByMemberNumber map[string][]string, myCDate, myTDate, mySDate, myDXCode string) *SpotProcessor {
     return &SpotProcessor{
-        config:       config,
-        members:      members,
-        rosters:      rosters,
-        awards:       awards,
-        myCDate:      myCDate,
-        myTDate:      myTDate,
-        mySDate:      mySDate,
-        myDXCode:     myDXCode,
-        lastSpotted:  make(map[string]SpotTime),
-        notified:     make(map[string]float64),
-        pendingSpots: make(map[string]*PendingSpot),
-        zuluRegex:    regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
-        dbRegex:      regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
+        config:             config,
+        members:            members,
+        rosters:            rosters,
+        awards:             awards,
+        qsosByMemberNumber: qsosByMemberNumber,
+        myCDate:            myCDate,
+        myTDate:            myTDate,
+        mySDate:            mySDate,
+        myDXCode:           myDXCode,
+        lastSpotted:        make(map[string]SpotTime),
+        notified:           make(map[string]float64),
+        pendingSpots:       make(map[string]*PendingSpot),
+        zuluRegex:          regexp.MustCompile(`^([01]?[0-9]|2[0-3])[0-5][0-9]Z$`),
+        dbRegex:            regexp.MustCompile(`^\s{0,1}\d{1,2} dB$`),
     }
 }
 
@@ -1344,6 +1404,55 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     return goals
 }
 
+// buildAwardTargets builds list of targets (what they need you for)
+func (sp *SpotProcessor) buildAwardTargets(memberNumber string, member *Member, targets []string) []string {
+    var result []string
+
+    // Only C, T, S are valid targets
+    for _, target := range targets {
+        switch target {
+        case "C":
+            // C target: check against their join date and my join date
+            myMember := sp.members[sp.config.MyCallsign]
+            myJoinDate := ""
+            if myMember != nil {
+                myJoinDate = myMember.JoinDate
+            }
+            targetLevel := checkCTSTarget("C", memberNumber, member.CDate,
+                sp.qsosByMemberNumber, member.JoinDate, myJoinDate)
+            if targetLevel != "" {
+                result = append(result, targetLevel)
+            }
+
+        case "T":
+            // T target: requires both have C, check against their C date and my C date
+            // Python: if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
+            // Use simple truthiness check (non-empty string), not effectiveDate
+            if member.CDate != "" && sp.myCDate != "" {
+                targetLevel := checkCTSTarget("T", memberNumber, member.TDate,
+                    sp.qsosByMemberNumber, member.CDate, sp.myCDate)
+                if targetLevel != "" {
+                    result = append(result, targetLevel)
+                }
+            }
+
+        case "S":
+            // S target: requires they have Tx8 and I have T, check against their Tx8 date and my T date
+            // Python: if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
+            // Use simple truthiness check (non-empty string), not effectiveDate
+            if member.TX8Date != "" && sp.myTDate != "" {
+                targetLevel := checkCTSTarget("S", memberNumber, member.SDate,
+                    sp.qsosByMemberNumber, member.TX8Date, sp.myTDate)
+                if targetLevel != "" {
+                    result = append(result, targetLevel)
+                }
+            }
+        }
+    }
+
+    return result
+}
+
 // buildGoalTargetReport builds lists of goals and targets for a spotted callsign
 func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ string) ([]string, []string) {
     var goals []string
@@ -1371,13 +1480,8 @@ func (sp *SpotProcessor) buildGoalTargetReport(callsign string, _ float64, _ str
     // Build goals list
     goals = buildAwardGoals(callsign, memberNumber, state, member, sp.awards, sp.myCDate, sp.myTDate, sp.mySDate, sp.myDXCode, sp.config.Goals)
 
-    // TODO: Implement proper target calculation
-    // The Python version uses QSOsByMemberNumber to track all QSO dates with each member
-    // and checks if "all my QSOs with this member are before cutoff dates".
-    // The Go version lacks this data structure and would need significant refactoring
-    // to build/maintain this index during award processing.
-    // For now, return empty targets to avoid showing incorrect information.
-    // targets = buildAwardTargets(callsign, memberNumber, member, sp.awards, sp.myCDate, sp.myTDate, sp.config.Targets)
+    // Build targets list
+    targets = sp.buildAwardTargets(memberNumber, member, sp.config.Targets)
 
     return goals, targets
 }
@@ -1852,8 +1956,8 @@ func (sm *SkedMonitor) processLogin(callsign, status string) []string {
         regularGoals := buildAwardGoals(callsign, memberNumber, state, member, sm.spotProcessor.awards, sm.spotProcessor.myCDate, sm.spotProcessor.myTDate, sm.spotProcessor.mySDate, sm.spotProcessor.myDXCode, sm.config.Goals)
         goalList = append(goalList, regularGoals...)
 
-        // Add targets similarly
-        regularTargets := buildAwardGoals(callsign, memberNumber, state, member, sm.spotProcessor.awards, sm.spotProcessor.myCDate, sm.spotProcessor.myTDate, sm.spotProcessor.mySDate, sm.spotProcessor.myDXCode, sm.config.Targets)
+        // Add targets using correct function (DRY - shares logic with RBN spot processing)
+        regularTargets := sm.spotProcessor.buildAwardTargets(memberNumber, member, sm.config.Targets)
         targetList = append(targetList, regularTargets...)
     }
 
@@ -6737,6 +6841,9 @@ func main() {
     // Extract awards using dual-pass
     awards := ExtractAwards(processedQSOsChrono, processedQSOsADI)
 
+    // Build QSO index by member number for target calculation
+    qsosByMemberNumber := buildQSOsByMemberNumber(processedQSOsChrono)
+
     // Display configuration summary
     printConfigSummary(config)
 
@@ -6809,7 +6916,7 @@ func main() {
     }
 
     // Create spot processor for RBN spots
-    spotProcessor := NewSpotProcessor(config, members, rosters, awards, myCDate, myTDate, mySDate, myDXCode)
+    spotProcessor := NewSpotProcessor(config, members, rosters, awards, qsosByMemberNumber, myCDate, myTDate, mySDate, myDXCode)
 
     // Display spot windowing configuration
     if config.SpotWindow.Enabled {
