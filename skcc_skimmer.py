@@ -2449,7 +2449,7 @@ class cQSO:
 
     @classmethod
     def _check_cts_target(cls, award_type: str, member_number: str, their_award_date: str,
-                          level_dict: dict[str, int], date1: str, date2: str) -> str | None:
+                          date1: str, date2: str) -> str | None:
 
         # Check if they can use me (all my QSOs with them are before cutoff dates)
         can_use_me = (member_number not in cls.QSOsByMemberNumber or all(
@@ -2632,21 +2632,21 @@ class cQSO:
         # C target processing - handles both initial C and multipliers intelligently
         if 'C' in cConfig.TARGETS:
             result = cls._check_cts_target('C', TheirMemberNumber, TheirC_Date,
-                                         cSKCC.centurion_level, TheirJoin_Date, cls.MyJoin_Date)
+                                         TheirJoin_Date, cls.MyJoin_Date)
             if result:
                 TargetHitList.append(result)
 
         # T target processing - handles both initial T and multipliers intelligently
         if 'T' in cConfig.TARGETS and TheirC_Date and cls.MyC_Date:
             result = cls._check_cts_target('T', TheirMemberNumber, TheirT_Date,
-                                         cSKCC.tribune_level, TheirC_Date, cls.MyC_Date)
+                                         TheirC_Date, cls.MyC_Date)
             if result:
                 TargetHitList.append(result)
 
         # S target processing - handles both initial S and multipliers intelligently
         if 'S' in cConfig.TARGETS and TheirTX8_Date and cls.MyT_Date:
             result = cls._check_cts_target('S', TheirMemberNumber, TheirS_Date,
-                                         cSKCC.senator_level, TheirTX8_Date, cls.MyT_Date)
+                                         TheirTX8_Date, cls.MyT_Date)
             if result:
                 TargetHitList.append(result)
 
