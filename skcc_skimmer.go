@@ -87,6 +87,34 @@ func printWithDotClear(text string) {
     dotsOnLine = 0
 }
 
+// runProgressDotsTask displays progress dots at regular intervals
+func runProgressDotsTask(ctx context.Context, wg *sync.WaitGroup, config *Config) {
+    defer wg.Done()
+
+    ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            dotsMutex.Lock()
+            if dotsOnLine > 0 {
+                fmt.Println()
+            }
+            dotsMutex.Unlock()
+            return
+        case <-ticker.C:
+            dotsMutex.Lock()
+            fmt.Print(".")
+            dotsOnLine++
+            if dotsOnLine >= config.ProgressDots.DotsPerLine {
+                fmt.Println()
+                dotsOnLine = 0
+            }
+            dotsMutex.Unlock()
+        }
+    }
+}
+
 // beep prints an ASCII bell character to produce an audible notification
 func beep() {
     fmt.Print("\a")
@@ -670,6 +698,47 @@ func (rbn *RBNConnection) Spots() <-chan string {
 // Close terminates the RBN connection
 func (rbn *RBNConnection) Close() {
     rbn.cancel()
+}
+
+// ConnectAndProcessTask runs the RBN connection loop in a goroutine-safe manner
+func (rbn *RBNConnection) ConnectAndProcessTask(ctx context.Context, wg *sync.WaitGroup, config *Config, spotProcessor *SpotProcessor) {
+    defer wg.Done()
+
+    // Run RBN connection and process spots
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        default:
+            if err := rbn.Connect(); err != nil {
+                fmt.Printf("RBN connection error: %v\n", err)
+                // Retry after delay
+                time.Sleep(30 * time.Second)
+                continue
+            }
+
+            // Connected successfully, now process spots from the channel
+            for spotLine := range rbn.spotChan {
+                // Verbose mode: print every RBN line
+                if config.Verbose {
+                    fmt.Printf("   %s\n", spotLine)
+                }
+
+                if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
+                    if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
+                        printWithDotClear(output)
+                        // Log to file if enabled
+                        zuluDate := time.Now().UTC().Format("2006-01-02")
+                        logToFile(config, zuluDate+" "+output)
+                    }
+                }
+            }
+
+            // Connection closed, retry after delay
+            fmt.Println("RBN connection closed, reconnecting in 30 seconds...")
+            time.Sleep(30 * time.Second)
+        }
+    }
 }
 
 // ============================================================================
@@ -6934,44 +7003,7 @@ func main() {
     // Launch RBN connection
     rbn := NewRBNConnection(config.MyCallsign)
     wg.Add(1)
-    go func() {
-        defer wg.Done()
-        // Run RBN connection and process spots
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            default:
-                if err := rbn.Connect(); err != nil {
-                    fmt.Printf("RBN connection error: %v\n", err)
-                    // Retry after delay
-                    time.Sleep(30 * time.Second)
-                    continue
-                }
-
-                // Connected successfully, now process spots from the channel
-                for spotLine := range rbn.spotChan {
-                    // Verbose mode: print every RBN line
-                    if config.Verbose {
-                        fmt.Printf("   %s\n", spotLine)
-                    }
-
-                    if spot := spotProcessor.ParseSpot(spotLine); spot != nil {
-                        if shouldDisplay, output := spotProcessor.HandleSpot(spot); shouldDisplay {
-                            printWithDotClear(output)
-                            // Log to file if enabled
-                            zuluDate := time.Now().UTC().Format("2006-01-02")
-                            logToFile(config, zuluDate+" "+output)
-                        }
-                    }
-                }
-
-                // Connection closed, retry after delay
-                fmt.Println("RBN connection closed, reconnecting in 30 seconds...")
-                time.Sleep(30 * time.Second)
-            }
-        }
-    }()
+    go rbn.ConnectAndProcessTask(ctx, &wg, config, spotProcessor)
 
     // Launch Sked monitoring if enabled
     if config.Sked.Enabled {
@@ -7035,31 +7067,7 @@ func main() {
     // Launch progress dots if enabled (but not in verbose mode)
     if config.ProgressDots.Enabled && !config.Verbose {
         wg.Add(1)
-        go func() {
-            defer wg.Done()
-            ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
-            defer ticker.Stop()
-            for {
-                select {
-                case <-ctx.Done():
-                    dotsMutex.Lock()
-                    if dotsOnLine > 0 {
-                        fmt.Println()
-                    }
-                    dotsMutex.Unlock()
-                    return
-                case <-ticker.C:
-                    dotsMutex.Lock()
-                    fmt.Print(".")
-                    dotsOnLine++
-                    if dotsOnLine >= config.ProgressDots.DotsPerLine {
-                        fmt.Println()
-                        dotsOnLine = 0
-                    }
-                    dotsMutex.Unlock()
-                }
-            }
-        }()
+        go runProgressDotsTask(ctx, &wg, config)
     }
 
     // Handle Ctrl+C - exit immediately (OS will clean up)
