@@ -1,3 +1,0 @@
-#!/bin/sh
-exec uv run --python 3.14 --no-project python -u "$(basename "$0" .sh).py" "$@"
-

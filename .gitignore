@@ -2,6 +2,7 @@ QSOs
 __pycache__
 cVersion.py
 skcc_skimmer
+skcc_skimmer.exe
 skcc_skimmer_*/**
 skcc_skimmer*.zip
 skcc_skimmer*.tar.gz
