@@ -556,7 +556,7 @@ func (rbn *RBNConnection) Connect() error {
     }
 
     // Sort addresses - prefer IPv6
-    sort.Slice(addrs, func(i, j int) bool {
+    sort.SliceStable(addrs, func(i, j int) bool {
         return addrs[i].To4() == nil && addrs[j].To4() != nil
     })
 
@@ -1258,8 +1258,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // No prerequisites for C
     if contains("C") {
         // Check if we've already worked this member for Centurion
-        if contactsC, ok := awards["C"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsC[memberNumber]; !exists {
+        if contactsC, ok := awards["C"].([]ProcessedQSO); ok {
+            alreadyWorked := false
+            for _, qso := range contactsC {
+                if qso.SKCCNr == memberNumber {
+                    alreadyWorked = true
+                    break
+                }
+            }
+            if !alreadyWorked {
                 goals = append(goals, formatCTSAwardLevel("C", len(contactsC), myCDate, 100))
             }
         }
@@ -1269,8 +1276,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // Requires: User has C AND Member has C
     if contains("T") && effectiveDate(myCDate) != "" && effectiveDate(member.CDate) != "" {
         // Check if we've already worked this member for Tribune
-        if contactsT, ok := awards["T"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsT[memberNumber]; !exists {
+        if contactsT, ok := awards["T"].([]ProcessedQSO); ok {
+            alreadyWorked := false
+            for _, qso := range contactsT {
+                if qso.SKCCNr == memberNumber {
+                    alreadyWorked = true
+                    break
+                }
+            }
+            if !alreadyWorked {
                 goals = append(goals, formatCTSAwardLevel("T", len(contactsT), myTDate, 50))
             }
         }
@@ -1281,8 +1295,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // Simplified: User has T award AND Member has T
     if contains("S") && effectiveDate(myTDate) != "" && effectiveDate(member.TDate) != "" {
         // Check if we've already worked this member for Senator
-        if contactsS, ok := awards["S"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsS[memberNumber]; !exists {
+        if contactsS, ok := awards["S"].([]ProcessedQSO); ok {
+            alreadyWorked := false
+            for _, qso := range contactsS {
+                if qso.SKCCNr == memberNumber {
+                    alreadyWorked = true
+                    break
+                }
+            }
+            if !alreadyWorked {
                 goals = append(goals, formatCTSAwardLevel("S", len(contactsS), mySDate, 200))
             }
         }
@@ -1292,8 +1313,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     if contains("WAS") {
         // Check if we've already worked this state for WAS (US states only)
         if isUSState(state) {
-            if contactsWAS, ok := awards["WAS"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsWAS[state]; !exists {
+            if contactsWAS, ok := awards["WAS"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsWAS {
+                    if qso.State == state {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, "WAS")
                 }
             }
@@ -1304,8 +1332,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     if contains("WAS-C") {
         // Check if we've already worked this state for WAS-C (US states only, member must have Centurion)
         if isUSState(state) && effectiveDate(member.CDate) != "" {
-            if contactsWASC, ok := awards["WAS-C"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsWASC[state]; !exists {
+            if contactsWASC, ok := awards["WAS-C"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsWASC {
+                    if qso.State == state {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, "WAS-C")
                 }
             }
@@ -1316,8 +1351,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     if contains("WAS-T") {
         // Check if we've already worked this state for WAS-T (US states only, member must have Tribune)
         if isUSState(state) && effectiveDate(member.TDate) != "" {
-            if contactsWAST, ok := awards["WAS-T"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsWAST[state]; !exists {
+            if contactsWAST, ok := awards["WAS-T"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsWAST {
+                    if qso.State == state {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, "WAS-T")
                 }
             }
@@ -1328,8 +1370,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     if contains("WAS-S") {
         // Check if we've already worked this state for WAS-S (US states only, member must have Senator)
         if isUSState(state) && effectiveDate(member.SDate) != "" {
-            if contactsWASS, ok := awards["WAS-S"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsWASS[state]; !exists {
+            if contactsWASS, ok := awards["WAS-S"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsWASS {
+                    if qso.State == state {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, "WAS-S")
                 }
             }
@@ -1339,7 +1388,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // 9. P (line 2524)
     if contains("P") {
         // Prefix award - check if we need this prefix or a higher number
-        if contactsP, ok := awards["P"].(map[string]ProcessedQSO); ok {
+        if contactsP, ok := awards["P"].([]ProcessedQSO); ok {
             // Extract prefix from call (2 or 3 character prefix)
             call := member.Callsign
             var prefix string
@@ -1358,8 +1407,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
                 }
 
                 // Check if we have this prefix already
-                existingQSO, exists := contactsP[prefix]
-                if !exists {
+                var existingQSO *ProcessedQSO
+                for _, qso := range contactsP {
+                    if qso.Pfx == prefix {
+                        existingQSO = &qso
+                        break
+                    }
+                }
+
+                if existingQSO == nil {
                     // New prefix
                     goals = append(goals, formatPrefixAwardLevel(totalPoints, memberNumber, nil))
                 } else {
@@ -1367,7 +1423,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
                     existingNum, _ := strconv.Atoi(existingQSO.PfxPts)
                     newNum, _ := strconv.Atoi(memberNumber)
                     if newNum > existingNum {
-                        goals = append(goals, formatPrefixAwardLevel(totalPoints, memberNumber, &existingQSO))
+                        goals = append(goals, formatPrefixAwardLevel(totalPoints, memberNumber, existingQSO))
                     }
                 }
             }
@@ -1385,8 +1441,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
             normalizedDXCode := normalizeDXCC(member.DXCode)
 
             // Check DXC (unique countries)
-            if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsDXC[normalizedDXCode]; !exists {
+            if contactsDXC, ok := awards["DXC"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsDXC {
+                    if qso.DXCode == normalizedDXCode {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
                 }
             }
@@ -1395,8 +1458,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
             // Use normalized codes for comparison (both zero-padded to 3 digits)
             normalizedMyDXCode := normalizeDXCC(myDXCode)
             if normalizedDXCode != normalizedMyDXCode {
-                if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
-                    if _, exists := contactsDXQ[memberNumber]; !exists {
+                if contactsDXQ, ok := awards["DXQ"].([]ProcessedQSO); ok {
+                    alreadyWorked := false
+                    for _, qso := range contactsDXQ {
+                        if qso.SKCCNr == memberNumber {
+                            alreadyWorked = true
+                            break
+                        }
+                    }
+                    if !alreadyWorked {
                         goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
                     }
                 }
@@ -1410,8 +1480,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         normalizedDXCode := normalizeDXCC(member.DXCode)
 
         // DX Countries - check if we've worked this country
-        if contactsDXC, ok := awards["DXC"].(map[string]ProcessedQSO); ok {
-            if _, exists := contactsDXC[normalizedDXCode]; !exists {
+        if contactsDXC, ok := awards["DXC"].([]ProcessedQSO); ok {
+            alreadyWorked := false
+            for _, qso := range contactsDXC {
+                if qso.DXCode == normalizedDXCode {
+                    alreadyWorked = true
+                    break
+                }
+            }
+            if !alreadyWorked {
                 goals = append(goals, formatDXAwardLevel("DXC", len(contactsDXC)))
             }
         }
@@ -1424,8 +1501,15 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
 
         // DX QSOs - check if we've already worked this foreign member
         if normalizedDXCode != normalizedMyDXCode {
-            if contactsDXQ, ok := awards["DXQ"].(map[string]ProcessedQSO); ok {
-                if _, exists := contactsDXQ[memberNumber]; !exists {
+            if contactsDXQ, ok := awards["DXQ"].([]ProcessedQSO); ok {
+                alreadyWorked := false
+                for _, qso := range contactsDXQ {
+                    if qso.SKCCNr == memberNumber {
+                        alreadyWorked = true
+                        break
+                    }
+                }
+                if !alreadyWorked {
                     goals = append(goals, formatDXAwardLevel("DXQ", len(contactsDXQ)))
                 }
             }
@@ -1438,9 +1522,9 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     // 12. TKA (line 2583)
     // Only show TKA if user hasn't completed it (needs SK < 100 OR BUG < 100 OR SS < 100)
     if contains("TKA") {
-        contactsTKASK, _ := awards["TKA_SK"].(map[string]ProcessedQSO)
-        contactsTKABUG, _ := awards["TKA_BUG"].(map[string]ProcessedQSO)
-        contactsTKASS, _ := awards["TKA_SS"].(map[string]ProcessedQSO)
+        contactsTKASK, _ := awards["TKA_SK"].( []ProcessedQSO)
+        contactsTKABUG, _ := awards["TKA_BUG"].( []ProcessedQSO)
+        contactsTKASS, _ := awards["TKA_SS"].( []ProcessedQSO)
 
         skCount := len(contactsTKASK)
         bugCount := len(contactsTKABUG)
@@ -1449,9 +1533,27 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         // Only show TKA if requirements not yet met
         if skCount < 100 || bugCount < 100 || ssCount < 100 {
             // Check if we've already worked this member for TKA (any key type)
-            _, inSK := contactsTKASK[memberNumber]
-            _, inBUG := contactsTKABUG[memberNumber]
-            _, inSS := contactsTKASS[memberNumber]
+            inSK := false
+            for _, qso := range contactsTKASK {
+                if qso.SKCCNr == memberNumber {
+                    inSK = true
+                    break
+                }
+            }
+            inBUG := false
+            for _, qso := range contactsTKABUG {
+                if qso.SKCCNr == memberNumber {
+                    inBUG = true
+                    break
+                }
+            }
+            inSS := false
+            for _, qso := range contactsTKASS {
+                if qso.SKCCNr == memberNumber {
+                    inSS = true
+                    break
+                }
+            }
 
             if !inSK && !inBUG && !inSS {
                 goals = append(goals, "TKA")
@@ -1708,7 +1810,7 @@ func (sm *SpotterManager) GetNearbySpotters(radiusMiles int) []SpotterDistance {
     }
 
     // Sort by distance
-    sort.Slice(nearby, func(i, j int) bool {
+    sort.SliceStable(nearby, func(i, j int) bool {
         return nearby[i].Miles < nearby[j].Miles
     })
 
@@ -2637,7 +2739,7 @@ func (im *InteractiveMode) refresh() error {
 
     // Sort chronologically for C/T/S/DX awards
     processedQSOsChrono := processedQSOs
-    sort.Slice(processedQSOsChrono, func(i, j int) bool {
+    sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
         if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
             return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
         }
@@ -3734,6 +3836,11 @@ func NewAwardProcessor(memberDB map[string]*Member, myCallsign string) (*AwardPr
         }
     }
 
+    // Sort unique members by SKCC number for deterministic callsignDB building
+    sort.Slice(uniqueMembers, func(i, j int) bool {
+        return uniqueMembers[i].PlainNumber < uniqueMembers[j].PlainNumber
+    })
+
     // Now index all callsigns for each unique member
     for _, member := range uniqueMembers {
         // Index current callsign
@@ -4188,29 +4295,36 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     awards := make(map[string]any)
 
     // C, T, S awards - use chronological order (oldest QSO first)
-    contactsC := make(map[string]ProcessedQSO)
-    contactsT := make(map[string]ProcessedQSO)
-    contactsS := make(map[string]ProcessedQSO)
+    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
+    contactsC := []ProcessedQSO{}
+    contactsT := []ProcessedQSO{}
+    contactsS := []ProcessedQSO{}
+    seenC := make(map[string]bool)
+    seenT := make(map[string]bool)
+    seenS := make(map[string]bool)
 
     for _, qso := range chrono {
         key := qso.SKCCNr
 
         // Centurion - all members
-        if _, exists := contactsC[key]; !exists {
-            contactsC[key] = qso
+        if !seenC[key] {
+            contactsC = append(contactsC, qso)
+            seenC[key] = true
         }
 
         // Tribune - both Centurion
         if qso.TribAwardQSO {
-            if _, exists := contactsT[key]; !exists {
-                contactsT[key] = qso
+            if !seenT[key] {
+                contactsT = append(contactsT, qso)
+                seenT[key] = true
             }
         }
 
         // Senator - I have Tx8, they have T/S
         if qso.SenAwardQSO {
-            if _, exists := contactsS[key]; !exists {
-                contactsS[key] = qso
+            if !seenS[key] {
+                contactsS = append(contactsS, qso)
+                seenS[key] = true
             }
         }
     }
@@ -4220,30 +4334,39 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     awards["S"] = contactsS
 
     // WAS variants - use ADI file order
-    contactsWAS := make(map[string]ProcessedQSO)
-    contactsWASC := make(map[string]ProcessedQSO)
-    contactsWAST := make(map[string]ProcessedQSO)
-    contactsWASS := make(map[string]ProcessedQSO)
+    // Store as SLICES to maintain order, use separate maps only for uniqueness checking by state
+    contactsWAS := []ProcessedQSO{}
+    contactsWASC := []ProcessedQSO{}
+    contactsWAST := []ProcessedQSO{}
+    contactsWASS := []ProcessedQSO{}
+    seenWAS := make(map[string]bool)
+    seenWASC := make(map[string]bool)
+    seenWAST := make(map[string]bool)
+    seenWASS := make(map[string]bool)
 
     for _, qso := range adiOrder {
         if qso.WasQSO {
-            if _, exists := contactsWAS[qso.State]; !exists {
-                contactsWAS[qso.State] = qso
+            if !seenWAS[qso.State] {
+                contactsWAS = append(contactsWAS, qso)
+                seenWAS[qso.State] = true
             }
         }
         if qso.WasCQSO {
-            if _, exists := contactsWASC[qso.State]; !exists {
-                contactsWASC[qso.State] = qso
+            if !seenWASC[qso.State] {
+                contactsWASC = append(contactsWASC, qso)
+                seenWASC[qso.State] = true
             }
         }
         if qso.WasTQSO {
-            if _, exists := contactsWAST[qso.State]; !exists {
-                contactsWAST[qso.State] = qso
+            if !seenWAST[qso.State] {
+                contactsWAST = append(contactsWAST, qso)
+                seenWAST[qso.State] = true
             }
         }
         if qso.WasSQSO {
-            if _, exists := contactsWASS[qso.State]; !exists {
-                contactsWASS[qso.State] = qso
+            if !seenWASS[qso.State] {
+                contactsWASS = append(contactsWASS, qso)
+                seenWASS[qso.State] = true
             }
         }
     }
@@ -4255,55 +4378,88 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
 
     // Prefix - ONE entry per prefix (NOT per prefix+band combination)
     // Keep QSO with HIGHEST member number for each prefix - use ADI file order
-    contactsP := make(map[string]ProcessedQSO)
+    // Use temporary map to find best QSO per prefix, then convert to sorted slice
+    prefixMap := make(map[string]ProcessedQSO)
     for _, qso := range adiOrder {
         if qso.Pfx != "" && qso.PfxPts != "" {
-            existing, exists := contactsP[qso.Pfx]
+            existing, exists := prefixMap[qso.Pfx]
             if !exists {
-                contactsP[qso.Pfx] = qso
+                prefixMap[qso.Pfx] = qso
             } else {
                 // Compare member numbers - keep higher
                 existingNum, _ := strconv.Atoi(existing.PfxPts)
                 newNum, _ := strconv.Atoi(qso.PfxPts)
                 if newNum > existingNum {
-                    contactsP[qso.Pfx] = qso
+                    prefixMap[qso.Pfx] = qso
                 }
             }
         }
     }
+    // Convert to slice and sort by prefix, then callsign for deterministic ordering
+    contactsP := []ProcessedQSO{}
+    for _, qso := range prefixMap {
+        contactsP = append(contactsP, qso)
+    }
+    sort.SliceStable(contactsP, func(i, j int) bool {
+        if contactsP[i].Pfx != contactsP[j].Pfx {
+            return contactsP[i].Pfx < contactsP[j].Pfx
+        }
+        return contactsP[i].Call < contactsP[j].Call
+    })
     awards["P"] = contactsP
 
     // QRP - Keep first QSO per member/band, but upgrade to QRP 2x if found - use ADI file order
     // Keep first QSO, upgrade 1x to 2x if 2x found later
-    contactsQRP := make(map[string]ProcessedQSO)
+    // Use temporary map to handle upgrades, then convert to slice maintaining ADI order
+    qrpMap := make(map[string]ProcessedQSO)
     for _, qso := range adiOrder {
         if qso.QRPx1QSO {
             key := qso.SKCCNr + "_" + qso.Band
-            existing, exists := contactsQRP[key]
+            existing, exists := qrpMap[key]
             if !exists {
                 // First QSO for this member/band combination
-                contactsQRP[key] = qso
+                qrpMap[key] = qso
             } else if qso.QRPx2QSO && !existing.QRPx2QSO {
                 // Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
-                contactsQRP[key] = qso
+                qrpMap[key] = qso
             }
             // Otherwise keep the first QSO (don't overwrite)
         }
     }
+    // Convert to slice maintaining chronological order (by date, time, call)
+    contactsQRP := []ProcessedQSO{}
+    for _, qso := range qrpMap {
+        contactsQRP = append(contactsQRP, qso)
+    }
+    sort.SliceStable(contactsQRP, func(i, j int) bool {
+        if contactsQRP[i].QSODate != contactsQRP[j].QSODate {
+            return contactsQRP[i].QSODate < contactsQRP[j].QSODate
+        }
+        if contactsQRP[i].TimeOn != contactsQRP[j].TimeOn {
+            return contactsQRP[i].TimeOn < contactsQRP[j].TimeOn
+        }
+        return contactsQRP[i].Call < contactsQRP[j].Call
+    })
     awards["QRP"] = contactsQRP
 
     // DX - use chronological order (oldest QSO first)
-    contactsDXC := make(map[string]ProcessedQSO)
-    contactsDXQ := make(map[string]ProcessedQSO)
+    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
+    contactsDXC := []ProcessedQSO{}
+    contactsDXQ := []ProcessedQSO{}
+    seenDXC := make(map[string]bool)
+    seenDXQ := make(map[string]bool)
+
     for _, qso := range chrono {
         if qso.DXCQSO {
-            if _, exists := contactsDXC[qso.DXCode]; !exists {
-                contactsDXC[qso.DXCode] = qso
+            if !seenDXC[qso.DXCode] {
+                contactsDXC = append(contactsDXC, qso)
+                seenDXC[qso.DXCode] = true
             }
         }
         if qso.DXQQSO {
-            if _, exists := contactsDXQ[qso.SKCCNr]; !exists {
-                contactsDXQ[qso.SKCCNr] = qso
+            if !seenDXQ[qso.SKCCNr] {
+                contactsDXQ = append(contactsDXQ, qso)
+                seenDXQ[qso.SKCCNr] = true
             }
         }
     }
@@ -4313,29 +4469,23 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     // RC - Process in ADI file order with back-to-back duplicate handling
     // Allow multiple QSOs with same member
     // BUT if same member appears consecutively in ADI file, keep only longest
-    contactsRC := make(map[string]ProcessedQSO)
+    // Store as SLICE to maintain ADI order
+    contactsRC := []ProcessedQSO{}
     var lastRCMember string
-    var lastRCKey string
     var lastRCMins int
 
     for _, qso := range adiOrder {
         if qso.RagChewQSO {
-            // Use unique key: member_date_time
-            rcKey := qso.SKCCNr + "_" + qso.QSODate + "_" + qso.TimeOn
-
             if qso.SKCCNr != lastRCMember {
                 // Different member - always add
-                contactsRC[rcKey] = qso
+                contactsRC = append(contactsRC, qso)
                 lastRCMember = qso.SKCCNr
-                lastRCKey = rcKey
                 lastRCMins = qso.RagChewMins
             } else {
                 // Same member as previous - only keep if longer
                 if qso.RagChewMins > lastRCMins {
-                    // Remove previous and add this one
-                    delete(contactsRC, lastRCKey)
-                    contactsRC[rcKey] = qso
-                    lastRCKey = rcKey
+                    // Replace previous with this longer one
+                    contactsRC[len(contactsRC)-1] = qso
                     lastRCMins = qso.RagChewMins
                 }
                 // If not longer, skip this QSO (keep the previous one)
@@ -4345,32 +4495,39 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     awards["RC"] = contactsRC
 
     // TKA - use ADI file order
-    contactsTKASK := make(map[string]ProcessedQSO)
-    contactsTKABUG := make(map[string]ProcessedQSO)
-    contactsTKASS := make(map[string]ProcessedQSO)
+    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
+    contactsTKASK := []ProcessedQSO{}
+    contactsTKABUG := []ProcessedQSO{}
+    contactsTKASS := []ProcessedQSO{}
+    seenTKASK := make(map[string]bool)
+    seenTKABUG := make(map[string]bool)
+    seenTKASS := make(map[string]bool)
 
     for _, qso := range adiOrder {
         if qso.TKAQSO {
             kt := strings.ToUpper(qso.KeyType)
             switch kt {
             case "SK", "S":
-                if _, exists := contactsTKASK[qso.SKCCNr]; !exists {
-                    contactsTKASK[qso.SKCCNr] = qso
+                if !seenTKASK[qso.SKCCNr] {
+                    contactsTKASK = append(contactsTKASK, qso)
+                    seenTKASK[qso.SKCCNr] = true
                 }
             case "BUG", "B":
-                if _, exists := contactsTKABUG[qso.SKCCNr]; !exists {
-                    contactsTKABUG[qso.SKCCNr] = qso
+                if !seenTKABUG[qso.SKCCNr] {
+                    contactsTKABUG = append(contactsTKABUG, qso)
+                    seenTKABUG[qso.SKCCNr] = true
                 }
             case "SS":
-                if _, exists := contactsTKASS[qso.SKCCNr]; !exists {
-                    contactsTKASS[qso.SKCCNr] = qso
+                if !seenTKASS[qso.SKCCNr] {
+                    contactsTKASS = append(contactsTKASS, qso)
+                    seenTKASS[qso.SKCCNr] = true
                 }
             }
         }
     }
 
-    // TKA duplicate removal (Xojo logic)
-    removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS)
+    // TKA duplicate removal (Xojo logic) - now operates on slices
+    contactsTKASK, contactsTKABUG, contactsTKASS = removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS)
 
     awards["TKA_SK"] = contactsTKASK
     awards["TKA_BUG"] = contactsTKABUG
@@ -4416,18 +4573,38 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     return awards
 }
 
-func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
-    // Find members in multiple dictionaries
+func removeTKADuplicates(sk, bug, ss []ProcessedQSO) ([]ProcessedQSO, []ProcessedQSO, []ProcessedQSO) {
+    // Build temporary maps to identify which members are in which categories
+    skMap := make(map[string]bool)
+    bugMap := make(map[string]bool)
+    ssMap := make(map[string]bool)
+
+    for _, qso := range sk {
+        skMap[qso.SKCCNr] = true
+    }
+    for _, qso := range bug {
+        bugMap[qso.SKCCNr] = true
+    }
+    for _, qso := range ss {
+        ssMap[qso.SKCCNr] = true
+    }
+
+    // Find members in multiple categories
     allMembers := make(map[string]int)
-    for k := range sk {
+    for k := range skMap {
         allMembers[k]++
     }
-    for k := range bug {
+    for k := range bugMap {
         allMembers[k]++
     }
-    for k := range ss {
+    for k := range ssMap {
         allMembers[k]++
     }
+
+    // Build set of members to remove from each category
+    removeFromSK := make(map[string]bool)
+    removeFromBUG := make(map[string]bool)
+    removeFromSS := make(map[string]bool)
 
     // Extract duplicates and sort in ascending order to match Xojo's
     // database iteration (no ORDER BY = insertion/chronological order)
@@ -4445,34 +4622,42 @@ func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
 
         // Member in multiple dicts - remove from largest
         for count > 1 {
-            _, inSK := sk[member]
-            _, inBUG := bug[member]
-            _, inSS := ss[member]
+            inSK := skMap[member] && !removeFromSK[member]
+            inBUG := bugMap[member] && !removeFromBUG[member]
+            inSS := ssMap[member] && !removeFromSS[member]
+
+            // Calculate effective sizes (current length - queued removals)
+            skSize := len(sk) - len(removeFromSK)
+            bugSize := len(bug) - len(removeFromBUG)
+            ssSize := len(ss) - len(removeFromSS)
 
             // Determine which to remove from
+            // Match Xojo's two-step comparison logic exactly
             var removeFrom string
             if inSK && inBUG && inSS {
-                if len(bug) >= len(sk) && len(bug) >= len(ss) {
+                // Xojo: Compare BUG vs SK first, then compare winner vs SS
+                if bugSize >= skSize {
                     removeFrom = "BUG"
-                } else if len(sk) >= len(ss) {
-                    removeFrom = "SK"
                 } else {
+                    removeFrom = "SK"
+                }
+                if ssSize >= skSize && removeFrom == "SK" || ssSize >= bugSize && removeFrom == "BUG" {
                     removeFrom = "SS"
                 }
             } else if inSK && inBUG {
-                if len(bug) >= len(sk) {
+                if bugSize >= skSize {
                     removeFrom = "BUG"
                 } else {
                     removeFrom = "SK"
                 }
             } else if inSK && inSS {
-                if len(sk) > len(ss) {
+                if skSize >= ssSize {
                     removeFrom = "SK"
                 } else {
                     removeFrom = "SS"
                 }
             } else if inBUG && inSS {
-                if len(bug) >= len(ss) {
+                if bugSize >= ssSize {
                     removeFrom = "BUG"
                 } else {
                     removeFrom = "SS"
@@ -4481,15 +4666,39 @@ func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
 
             switch removeFrom {
             case "SK":
-                delete(sk, member)
+                removeFromSK[member] = true
             case "BUG":
-                delete(bug, member)
+                removeFromBUG[member] = true
             case "SS":
-                delete(ss, member)
+                removeFromSS[member] = true
             }
             count--
         }
     }
+
+    // Rebuild slices excluding removed members
+    newSK := []ProcessedQSO{}
+    for _, qso := range sk {
+        if !removeFromSK[qso.SKCCNr] {
+            newSK = append(newSK, qso)
+        }
+    }
+
+    newBUG := []ProcessedQSO{}
+    for _, qso := range bug {
+        if !removeFromBUG[qso.SKCCNr] {
+            newBUG = append(newBUG, qso)
+        }
+    }
+
+    newSS := []ProcessedQSO{}
+    for _, qso := range ss {
+        if !removeFromSS[qso.SKCCNr] {
+            newSS = append(newSS, qso)
+        }
+    }
+
+    return newSK, newBUG, newSS
 }
 
 // ============================================================================
@@ -4515,33 +4724,33 @@ func writeAwardFiles(awards map[string]any, ap *AwardProcessor) {
     }
 
     // C, T, S awards
-    writeCTSAward("C", awards["C"].(map[string]ProcessedQSO))
-    writeCTSAward("T", awards["T"].(map[string]ProcessedQSO))
-    writeCTSAward("S", awards["S"].(map[string]ProcessedQSO))
+    writeCTSAward("C", awards["C"].([]ProcessedQSO))
+    writeCTSAward("T", awards["T"].([]ProcessedQSO))
+    writeCTSAward("S", awards["S"].([]ProcessedQSO))
 
     // WAS awards - states output in alphabetical order with suffix and callsign substitution
-    writeWASAward("WAS", awards["WAS"].(map[string]ProcessedQSO), ap.memberDB)
-    writeWASAward("WAS-C", awards["WAS-C"].(map[string]ProcessedQSO), ap.memberDB)
-    writeWASAward("WAS-T", awards["WAS-T"].(map[string]ProcessedQSO), ap.memberDB)
-    writeWASAward("WAS-S", awards["WAS-S"].(map[string]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS", awards["WAS"].([]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-C", awards["WAS-C"].([]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-T", awards["WAS-T"].([]ProcessedQSO), ap.memberDB)
+    writeWASAward("WAS-S", awards["WAS-S"].([]ProcessedQSO), ap.memberDB)
 
     // Prefix award
-    writePrefixAward(awards["P"].(map[string]ProcessedQSO))
+    writePrefixAward(awards["P"].([]ProcessedQSO))
 
     // QRP award
-    writeQRPAward(awards["QRP"].(map[string]ProcessedQSO))
+    writeQRPAward(awards["QRP"].([]ProcessedQSO))
 
     // DX awards
-    writeDXAwards(awards["DXC"].(map[string]ProcessedQSO), awards["DXQ"].(map[string]ProcessedQSO))
+    writeDXAwards(awards["DXC"].([]ProcessedQSO), awards["DXQ"].([]ProcessedQSO))
 
     // RC award
-    writeRCAward(awards["RC"].(map[string]ProcessedQSO))
+    writeRCAward(awards["RC"].([]ProcessedQSO))
 
     // TKA award
     writeTKAAward(
-        awards["TKA_SK"].(map[string]ProcessedQSO),
-        awards["TKA_BUG"].(map[string]ProcessedQSO),
-        awards["TKA_SS"].(map[string]ProcessedQSO),
+        awards["TKA_SK"].([]ProcessedQSO),
+        awards["TKA_BUG"].([]ProcessedQSO),
+        awards["TKA_SS"].([]ProcessedQSO),
     )
 }
 
@@ -4584,7 +4793,7 @@ func writeNeedSKCCFile(entries []NeedSKCCEntry) {
     fmt.Fprintln(file)
 
     // Sort by date descending
-    sort.Slice(entries, func(i, j int) bool {
+    sort.SliceStable(entries, func(i, j int) bool {
         if entries[i].Date != entries[j].Date {
             return entries[i].Date > entries[j].Date
         }
@@ -4621,9 +4830,9 @@ func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]any) {
     fmt.Fprintln(file, strings.Repeat("=", 70))
     fmt.Fprintln(file)
 
-    contactsC := awards["C"].(map[string]ProcessedQSO)
-    contactsT := awards["T"].(map[string]ProcessedQSO)
-    contactsS := awards["S"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].([]ProcessedQSO)
+    contactsT := awards["T"].([]ProcessedQSO)
+    contactsS := awards["S"].([]ProcessedQSO)
 
     for _, am := range autoMatched {
         dateStr := formatDate(am.QSO.QSODate)
@@ -4643,14 +4852,23 @@ func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]any) {
 
         // Show which awards
         var awardsAffected []string
-        if _, exists := contactsC[am.SKCCNr]; exists {
-            awardsAffected = append(awardsAffected, "C")
+        for _, qso := range contactsC {
+            if qso.SKCCNr == am.SKCCNr {
+                awardsAffected = append(awardsAffected, "C")
+                break
+            }
         }
-        if _, exists := contactsT[am.SKCCNr]; exists {
-            awardsAffected = append(awardsAffected, "T")
+        for _, qso := range contactsT {
+            if qso.SKCCNr == am.SKCCNr {
+                awardsAffected = append(awardsAffected, "T")
+                break
+            }
         }
-        if _, exists := contactsS[am.SKCCNr]; exists {
-            awardsAffected = append(awardsAffected, "S")
+        for _, qso := range contactsS {
+            if qso.SKCCNr == am.SKCCNr {
+                awardsAffected = append(awardsAffected, "S")
+                break
+            }
         }
         if len(awardsAffected) > 0 {
             fmt.Fprintf(file, "  Counting toward: %s\n", strings.Join(awardsAffected, ", "))
@@ -4662,7 +4880,7 @@ func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]any) {
     fmt.Fprintln(file, "Future versions may require SKCC numbers to be explicitly logged.")
 }
 
-func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
+func writeCTSAward(name string, contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         return
     }
@@ -4674,16 +4892,18 @@ func writeCTSAward(name string, contacts map[string]ProcessedQSO) {
     }
     defer file.Close()
 
-    // Sort by date, then time (matching Xojo: ORDER BY Log_QSO_DATE, Log_TIME_ON)
-    var sorted []ProcessedQSO
-    for _, c := range contacts {
-        sorted = append(sorted, c)
-    }
-    sort.Slice(sorted, func(i, j int) bool {
+    // Contacts already in chronological order from ExtractAwards
+    // Sort again per Xojo SQL: ORDER BY Log_QSO_DATE, Log_TIME_ON
+    sorted := make([]ProcessedQSO, len(contacts))
+    copy(sorted, contacts)
+    sort.SliceStable(sorted, func(i, j int) bool {
         if sorted[i].QSODate != sorted[j].QSODate {
             return sorted[i].QSODate < sorted[j].QSODate
         }
-        return sorted[i].TimeOn < sorted[j].TimeOn
+        if sorted[i].TimeOn != sorted[j].TimeOn {
+            return sorted[i].TimeOn < sorted[j].TimeOn
+        }
+        return sorted[i].Call < sorted[j].Call
     })
 
     for i, qso := range sorted {
@@ -4746,7 +4966,7 @@ func getWASDisplayData(qso ProcessedQSO, members map[string]*Member) (string, st
     return displayCall, skccWithSuffix
 }
 
-func writeWASAward(name string, contacts map[string]ProcessedQSO, members map[string]*Member) {
+func writeWASAward(name string, contacts []ProcessedQSO, members map[string]*Member) {
     filename := filepath.Join("QSOs", config.MyCallsign+"-"+name+".txt")
     file, err := os.Create(filename)
     if err != nil {
@@ -4754,9 +4974,15 @@ func writeWASAward(name string, contacts map[string]ProcessedQSO, members map[st
     }
     defer file.Close()
 
+    // Build temporary map for state lookup
+    contactsByState := make(map[string]ProcessedQSO)
+    for _, qso := range contacts {
+        contactsByState[qso.State] = qso
+    }
+
     // Write states in alphabetical order (matching Xojo behavior)
     for _, state := range usStates {
-        if qso, exists := contacts[state]; exists {
+        if qso, exists := contactsByState[state]; exists {
             // Get display callsign and SKCC number with suffix
             displayCall, skccWithSuffix := getWASDisplayData(qso, members)
 
@@ -4791,7 +5017,7 @@ func formatWithCommas(n int) string {
     return result.String()
 }
 
-func writePrefixAward(contacts map[string]ProcessedQSO) {
+func writePrefixAward(contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         return
     }
@@ -4803,17 +5029,9 @@ func writePrefixAward(contacts map[string]ProcessedQSO) {
     }
     defer file.Close()
 
-    // Sort by prefix
-    var sorted []ProcessedQSO
-    for _, c := range contacts {
-        sorted = append(sorted, c)
-    }
-    sort.Slice(sorted, func(i, j int) bool {
-        return sorted[i].Pfx < sorted[j].Pfx
-    })
-
+    // Contacts slice is already sorted by prefix, then callsign
     totalPoints := 0
-    for i, qso := range sorted {
+    for i, qso := range contacts {
         pts, _ := strconv.Atoi(qso.PfxPts)
         totalPoints += pts
         dateStr := formatDate(qso.QSODate)
@@ -4831,12 +5049,13 @@ func writePrefixAward(contacts map[string]ProcessedQSO) {
     }
 }
 
-func writeQRPAward(contacts map[string]ProcessedQSO) {
+func writeQRPAward(contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         return
     }
 
-    // Separate 1x and 2x
+    // Contacts slice is already sorted chronologically
+    // Separate 1x and 2x for output
     var qrp1x, qrp2x []ProcessedQSO
     for _, qso := range contacts {
         qrp1x = append(qrp1x, qso)
@@ -4845,19 +5064,8 @@ func writeQRPAward(contacts map[string]ProcessedQSO) {
         }
     }
 
-    // Sort by date, then time (matching Xojo: ORDER BY Log_QSO_DATE, Log_TIME_ON)
-    sort.Slice(qrp1x, func(i, j int) bool {
-        if qrp1x[i].QSODate != qrp1x[j].QSODate {
-            return qrp1x[i].QSODate < qrp1x[j].QSODate
-        }
-        return qrp1x[i].TimeOn < qrp1x[j].TimeOn
-    })
-    sort.Slice(qrp2x, func(i, j int) bool {
-        if qrp2x[i].QSODate != qrp2x[j].QSODate {
-            return qrp2x[i].QSODate < qrp2x[j].QSODate
-        }
-        return qrp2x[i].TimeOn < qrp2x[j].TimeOn
-    })
+    // qrp1x and qrp2x inherit the chronological ordering from contacts
+    // No need to sort again since filtering preserves order
 
     // Write 1x file
     if len(qrp1x) > 0 {
@@ -4894,7 +5102,7 @@ func writeQRPAward(contacts map[string]ProcessedQSO) {
     }
 }
 
-func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
+func writeDXAwards(dxc, dxq []ProcessedQSO) {
     // DXC file
     if len(dxc) > 0 {
         filename := filepath.Join("QSOs", config.MyCallsign+"-DXC.txt")
@@ -4904,12 +5112,14 @@ func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
         fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
         fmt.Fprintln(file, strings.Repeat("-", 85))
 
-        var sorted []ProcessedQSO
-        for _, qso := range dxc {
-            sorted = append(sorted, qso)
-        }
-        sort.Slice(sorted, func(i, j int) bool {
-            return sorted[i].DXCode < sorted[j].DXCode
+        // dxc slice is in chronological order, but need to output by DXCode
+        sorted := make([]ProcessedQSO, len(dxc))
+        copy(sorted, dxc)
+        sort.SliceStable(sorted, func(i, j int) bool {
+            if sorted[i].DXCode != sorted[j].DXCode {
+                return sorted[i].DXCode < sorted[j].DXCode
+            }
+            return sorted[i].Call < sorted[j].Call
         })
 
         for i, qso := range sorted {
@@ -4937,18 +5147,9 @@ func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
         fmt.Fprintln(file, "  #  QSO Date    Callsign     Name        SKCC#   DXCC  Country              Band")
         fmt.Fprintln(file, strings.Repeat("-", 85))
 
-        var sorted []ProcessedQSO
-        for _, qso := range dxq {
-            sorted = append(sorted, qso)
-        }
-        sort.Slice(sorted, func(i, j int) bool {
-            if sorted[i].QSODate != sorted[j].QSODate {
-                return sorted[i].QSODate < sorted[j].QSODate
-            }
-            return sorted[i].TimeOn < sorted[j].TimeOn
-        })
+        // dxq slice is already in chronological order - use as-is
 
-        for i, qso := range sorted {
+        for i, qso := range dxq {
             dateStr := formatDate(qso.QSODate)
             nameStr := qso.Name
             if len(nameStr) > 10 {
@@ -4965,7 +5166,7 @@ func writeDXAwards(dxc, dxq map[string]ProcessedQSO) {
     }
 }
 
-func writeRCAward(contacts map[string]ProcessedQSO) {
+func writeRCAward(contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         return
     }
@@ -4989,11 +5190,14 @@ func writeRCAward(contacts map[string]ProcessedQSO) {
     for _, qso := range contacts {
         sorted = append(sorted, qso)
     }
-    sort.Slice(sorted, func(i, j int) bool {
+    sort.SliceStable(sorted, func(i, j int) bool {
         if sorted[i].QSODate != sorted[j].QSODate {
             return sorted[i].QSODate < sorted[j].QSODate
         }
-        return sorted[i].TimeOn < sorted[j].TimeOn
+        if sorted[i].TimeOn != sorted[j].TimeOn {
+            return sorted[i].TimeOn < sorted[j].TimeOn
+        }
+        return sorted[i].Call < sorted[j].Call
     })
 
     for _, qso := range sorted {
@@ -5012,7 +5216,7 @@ func writeRCAward(contacts map[string]ProcessedQSO) {
     fmt.Fprintf(file, "TOTAL MINUTES: %d\n", totalMins)
 }
 
-func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
+func writeTKAAward(sk, bug, ss []ProcessedQSO) {
     if len(sk) == 0 && len(bug) == 0 && len(ss) == 0 {
         return
     }
@@ -5024,7 +5228,7 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
     fmt.Fprintln(file, "Triple Key Award - Need 100 each of SK, BUG, SS from 300 unique members")
     fmt.Fprintln(file)
 
-    writeKeyType := func(name string, contacts map[string]ProcessedQSO) {
+    writeKeyType := func(name string, contacts []ProcessedQSO) {
         if len(contacts) == 0 {
             return
         }
@@ -5035,12 +5239,15 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
         for _, qso := range contacts {
             sorted = append(sorted, qso)
         }
-        // Sort by date, then time (matching standard chronological order)
-        sort.Slice(sorted, func(i, j int) bool {
+        // Sort by date, then time, then callsign for deterministic ordering
+        sort.SliceStable(sorted, func(i, j int) bool {
             if sorted[i].QSODate != sorted[j].QSODate {
                 return sorted[i].QSODate < sorted[j].QSODate
             }
-            return sorted[i].TimeOn < sorted[j].TimeOn
+            if sorted[i].TimeOn != sorted[j].TimeOn {
+                return sorted[i].TimeOn < sorted[j].TimeOn
+            }
+            return sorted[i].Call < sorted[j].Call
         })
 
         for i, qso := range sorted {
@@ -5059,14 +5266,14 @@ func writeTKAAward(sk, bug, ss map[string]ProcessedQSO) {
 
     // Calculate unique
     allMembers := make(map[string]bool)
-    for k := range sk {
-        allMembers[k] = true
+    for _, qso := range sk {
+        allMembers[qso.SKCCNr] = true
     }
-    for k := range bug {
-        allMembers[k] = true
+    for _, qso := range bug {
+        allMembers[qso.SKCCNr] = true
     }
-    for k := range ss {
-        allMembers[k] = true
+    for _, qso := range ss {
+        allMembers[qso.SKCCNr] = true
     }
 
     fmt.Fprintln(file, strings.Repeat("=", 70))
@@ -5106,21 +5313,21 @@ func printFYIMessages(awards map[string]any, rosters *Rosters, config *Config, m
 
     myNumber := myMember.PlainNumber
 
-    contactsC := awards["C"].(map[string]ProcessedQSO)
-    contactsT := awards["T"].(map[string]ProcessedQSO)
-    contactsS := awards["S"].(map[string]ProcessedQSO)
-    contactsP := awards["P"].(map[string]ProcessedQSO)
-    contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
-    contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
-    contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
-    contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
-    contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
-    contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
-    contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
-    contactsRC := awards["RC"].(map[string]ProcessedQSO)
-    contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
-    contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
-    contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].([]ProcessedQSO)
+    contactsT := awards["T"].([]ProcessedQSO)
+    contactsS := awards["S"].([]ProcessedQSO)
+    contactsP := awards["P"].([]ProcessedQSO)
+    contactsWAS := awards["WAS"].([]ProcessedQSO)
+    contactsWASC := awards["WAS-C"].([]ProcessedQSO)
+    contactsWAST := awards["WAS-T"].([]ProcessedQSO)
+    contactsWASS := awards["WAS-S"].([]ProcessedQSO)
+    contactsQRP := awards["QRP"].( []ProcessedQSO)
+    contactsDXC := awards["DXC"].( []ProcessedQSO)
+    contactsDXQ := awards["DXQ"].( []ProcessedQSO)
+    contactsRC := awards["RC"].( []ProcessedQSO)
+    contactsTKASK := awards["TKA_SK"].([]ProcessedQSO)
+    contactsTKABUG := awards["TKA_BUG"].([]ProcessedQSO)
+    contactsTKASS := awards["TKA_SS"].([]ProcessedQSO)
 
     // C award FYI
     if slices.Contains(config.Goals, "C") {
@@ -5334,14 +5541,14 @@ func printFYIMessages(awards map[string]any, rosters *Rosters, config *Config, m
         ssCount := len(contactsTKASS)
 
         allMembers := make(map[string]bool)
-        for k := range contactsTKASK {
-            allMembers[k] = true
+        for _, qso := range contactsTKASK {
+            allMembers[qso.SKCCNr] = true
         }
-        for k := range contactsTKABUG {
-            allMembers[k] = true
+        for _, qso := range contactsTKABUG {
+            allMembers[qso.SKCCNr] = true
         }
-        for k := range contactsTKASS {
-            allMembers[k] = true
+        for _, qso := range contactsTKASS {
+            allMembers[qso.SKCCNr] = true
         }
         uniqueTotal := len(allMembers)
 
@@ -5388,21 +5595,21 @@ func printProgress(awards map[string]any, ap *AwardProcessor) {
     fmt.Println()
     fmt.Println("*** Awards Progress ***")
 
-    contactsC := awards["C"].(map[string]ProcessedQSO)
-    contactsT := awards["T"].(map[string]ProcessedQSO)
-    contactsS := awards["S"].(map[string]ProcessedQSO)
-    contactsP := awards["P"].(map[string]ProcessedQSO)
-    contactsWAS := awards["WAS"].(map[string]ProcessedQSO)
-    contactsWASC := awards["WAS-C"].(map[string]ProcessedQSO)
-    contactsWAST := awards["WAS-T"].(map[string]ProcessedQSO)
-    contactsWASS := awards["WAS-S"].(map[string]ProcessedQSO)
-    contactsQRP := awards["QRP"].(map[string]ProcessedQSO)
-    contactsDXC := awards["DXC"].(map[string]ProcessedQSO)
-    contactsDXQ := awards["DXQ"].(map[string]ProcessedQSO)
-    contactsRC := awards["RC"].(map[string]ProcessedQSO)
-    contactsTKASK := awards["TKA_SK"].(map[string]ProcessedQSO)
-    contactsTKABUG := awards["TKA_BUG"].(map[string]ProcessedQSO)
-    contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
+    contactsC := awards["C"].([]ProcessedQSO)
+    contactsT := awards["T"].([]ProcessedQSO)
+    contactsS := awards["S"].([]ProcessedQSO)
+    contactsP := awards["P"].([]ProcessedQSO)
+    contactsWAS := awards["WAS"].([]ProcessedQSO)
+    contactsWASC := awards["WAS-C"].([]ProcessedQSO)
+    contactsWAST := awards["WAS-T"].([]ProcessedQSO)
+    contactsWASS := awards["WAS-S"].([]ProcessedQSO)
+    contactsQRP := awards["QRP"].([]ProcessedQSO)
+    contactsDXC := awards["DXC"].([]ProcessedQSO)
+    contactsDXQ := awards["DXQ"].([]ProcessedQSO)
+    contactsRC := awards["RC"].([]ProcessedQSO)
+    contactsTKASK := awards["TKA_SK"].([]ProcessedQSO)
+    contactsTKABUG := awards["TKA_BUG"].([]ProcessedQSO)
+    contactsTKASS := awards["TKA_SS"].([]ProcessedQSO)
 
     // C award
     cCount := len(contactsC)
@@ -5772,14 +5979,20 @@ func formatComma(n int) string {
     return result.String()
 }
 
-func printWASProgress(name string, contacts map[string]ProcessedQSO) {
+func printWASProgress(name string, contacts []ProcessedQSO) {
     count := len(contacts)
     if count == len(usStates) {
         fmt.Printf("%s: Have %d, none needed\n", name, count)
     } else {
+        // Build temporary map for state lookup
+        contactsByState := make(map[string]bool)
+        for _, qso := range contacts {
+            contactsByState[qso.State] = true
+        }
+
         var missing []string
         for _, state := range usStates {
-            if _, exists := contacts[state]; !exists {
+            if !contactsByState[state] {
                 missing = append(missing, state)
             }
         }
@@ -5791,7 +6004,7 @@ func printWASProgress(name string, contacts map[string]ProcessedQSO) {
     }
 }
 
-func printQRPProgress(contacts map[string]ProcessedQSO) {
+func printQRPProgress(contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         fmt.Println("QRP: Have 0 contacts. Need QRP power (≤5W) logged in ADI file.")
         return
@@ -5859,7 +6072,7 @@ func printQRPProgress(contacts map[string]ProcessedQSO) {
     }
 }
 
-func printDXProgress(dxc, dxq map[string]ProcessedQSO) {
+func printDXProgress(dxc, dxq []ProcessedQSO) {
     // DXC
     count := len(dxc)
     if count == 0 {
@@ -6029,7 +6242,7 @@ func getDXLevel(count int) (current, next, target int) {
     return current, next, next
 }
 
-func printRCProgress(contacts map[string]ProcessedQSO) {
+func printRCProgress(contacts []ProcessedQSO) {
     if len(contacts) == 0 {
         fmt.Println("RC: Have 0 qualifying QSOs. Need 30+ minute QSOs with TIME_ON and TIME_OFF logged")
         return
@@ -6350,16 +6563,16 @@ func printBRAGProgress(ap *AwardProcessor) {
         monthNames[currentMonth], len(currentMonthContacts))
 }
 
-func printTKAProgress(sk, bug, ss map[string]ProcessedQSO) {
+func printTKAProgress(sk, bug, ss []ProcessedQSO) {
     allMembers := make(map[string]bool)
-    for k := range sk {
-        allMembers[k] = true
+    for _, qso := range sk {
+        allMembers[qso.SKCCNr] = true
     }
-    for k := range bug {
-        allMembers[k] = true
+    for _, qso := range bug {
+        allMembers[qso.SKCCNr] = true
     }
-    for k := range ss {
-        allMembers[k] = true
+    for _, qso := range ss {
+        allMembers[qso.SKCCNr] = true
     }
 
     fmt.Printf("TKA: SK:%d/100 BUG:%d/100 SS:%d/100. Unique:%d/300\n",
@@ -6813,7 +7026,7 @@ func main() {
 
     // Sort chronologically for C/T/S/DX awards
     processedQSOsChrono := processedQSOs
-    sort.Slice(processedQSOsChrono, func(i, j int) bool {
+    sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
         if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
             return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
         }
@@ -6942,7 +7155,7 @@ func main() {
             // Sort chronologically
             processedQSOsChrono := make([]ProcessedQSO, len(processedQSOs))
             copy(processedQSOsChrono, processedQSOs)
-            sort.Slice(processedQSOsChrono, func(i, j int) bool {
+            sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
                 if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
                     return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
                 }
