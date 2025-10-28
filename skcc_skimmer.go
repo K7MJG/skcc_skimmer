@@ -200,7 +200,6 @@ var (
     eohPattern         = regexp.MustCompile(`(?i)<eoh>`)
     eorPattern         = regexp.MustCompile(`(?i)<eor>`)
     fieldPattern       = regexp.MustCompile(`(?i)<(\w+?):\d+[^>]*>([^<\r\n]*)`)
-    slashedCallPattern = regexp.MustCompile(`^([^/]+)/(.+)$|^(.+)/([^/]+)$`)
 )
 
 // ============================================================================
@@ -465,13 +464,12 @@ func formatTime(timeStr string) string {
 }
 
 func cleanSKCCNumber(skcc string) string {
-    var result strings.Builder
-    for _, r := range skcc {
+    return strings.Map(func(r rune) rune {
         if r >= '0' && r <= '9' {
-            result.WriteRune(r)
+            return r
         }
-    }
-    return result.String()
+        return -1
+    }, skcc)
 }
 
 func isAllDigits(s string) bool {
@@ -490,27 +488,23 @@ func extractCallsign(call string) string {
         return ""
     }
 
-    // Check for slashed callsign
-    matches := slashedCallPattern.FindStringSubmatch(call)
-    if matches != nil {
-        // Pattern 1: prefix/call (e.g., KH6/W6XX, VE3/K7MJG)
-        if matches[1] != "" && matches[2] != "" {
-            prefix := matches[1]
-            suffix := matches[2]
-            // If prefix looks like a location indicator (short), use suffix
-            if len(prefix) <= 3 || strings.Contains("KH6 KL7 KP4", prefix) {
-                return suffix
-            }
-            // Otherwise use prefix
-            return prefix
-        }
-        // Pattern 2: call/suffix (e.g., W1AW/4, AC2C/M)
-        if matches[3] != "" && matches[4] != "" {
-            return matches[3]
-        }
+    prefix, suffix, found := strings.Cut(call, "/")
+    if !found {
+        return call
     }
 
-    return call
+    // Heuristic to determine which part is the callsign.
+    // If the part before the slash is short (e.g., "VE3") or a known long prefix
+    // (e.g., "KH6"), then the part after the slash is the callsign.
+    // Otherwise, the part before the slash is the callsign.
+    specialPrefixes := []string{"KH6", "KL7", "KP4"}
+    isSpecialPrefix := slices.Contains(specialPrefixes, prefix)
+
+    if len(prefix) <= 3 || isSpecialPrefix {
+        return suffix
+    }
+
+    return prefix
 }
 
 func normalizeDate(date string) string {
@@ -3276,11 +3270,11 @@ func parseConfig(filename string) (*Config, error) {
 func parseGoalsTargets(value string, validList []string, typeStr string) []string {
     value = strings.ToUpper(value)
     parts := strings.Split(value, ",")
-    var result []string
+
+    goalSet := make(map[string]bool)
     hasAll := false
     var exclusions []string
 
-    // Create a map for quick validation lookup
     validMap := make(map[string]bool)
     for _, v := range validList {
         validMap[v] = true
@@ -3288,31 +3282,40 @@ func parseGoalsTargets(value string, validList []string, typeStr string) []strin
 
     for _, p := range parts {
         p = strings.TrimSpace(p)
+        if p == "" || p == "NONE" {
+            continue
+        }
         if p == "ALL" {
             hasAll = true
-        } else if exclusion, found := strings.CutPrefix(p, "-"); found {
-            exclusions = append(exclusions, exclusion)
-        } else if p != "" && p != "NONE" {
-            // Validate against allowed list
-            if !validMap[p] {
-                fmt.Printf("Unrecognized %s '%s'.\n", typeStr, p)
-                fmt.Println("Program will close in 10 seconds...")
-                time.Sleep(10 * time.Second)
-                delayedExit(1)
-            }
-            result = append(result, p)
+            continue
         }
+        if exclusion, found := strings.CutPrefix(p, "-"); found {
+            exclusions = append(exclusions, exclusion)
+            continue
+        }
+
+        if !validMap[p] {
+            fmt.Printf("Unrecognized %s '%s'.\n", typeStr, p)
+            delayedExit(1)
+        }
+        goalSet[p] = true
     }
 
     if hasAll {
-        // Use the provided valid list for ALL expansion
-        for _, award := range validList {
-            if !slices.Contains(exclusions, award) {
-                result = append(result, award)
-            }
+        for _, validGoal := range validList {
+            goalSet[validGoal] = true
         }
     }
 
+    for _, exclusion := range exclusions {
+        delete(goalSet, exclusion)
+    }
+
+    var result []string
+    for goal := range goalSet {
+        result = append(result, goal)
+    }
+    sort.Strings(result)
     return result
 }
 
@@ -6702,9 +6705,26 @@ func main() {
         showUsage(1)
     }
 
-    // Download SKCC data
-    if err := downloadSKCCData(); err != nil {
-        fmt.Printf("Error downloading SKCC data: %v\n", err)
+    // Download SKCC data and rosters concurrently
+    var downloadWg sync.WaitGroup
+    var skccDataErr error
+    var rosters *Rosters
+
+    downloadWg.Go(func() {
+        if err := downloadSKCCData(); err != nil {
+            skccDataErr = err
+        }
+    })
+
+    downloadWg.Go(func() {
+        fmt.Println("\nDownloading award rosters...")
+        rosters = downloadRosters(config)
+    })
+
+    downloadWg.Wait()
+
+    if skccDataErr != nil {
+        fmt.Printf("Error downloading SKCC data: %v\n", skccDataErr)
         delayedExit(1)
     }
 
@@ -6713,11 +6733,6 @@ func main() {
         fmt.Printf("'%s' is not a member of SKCC.\n", config.MyCallsign)
         delayedExit(1)
     }
-
-    // Parse ADI file
-    // Download rosters before processing (needed for FYI messages)
-    fmt.Println("\nDownloading award rosters...")
-    rosters := downloadRosters(config)
 
     fmt.Printf("\nReading QSOs for %s from '%s'...\n", config.MyCallsign, config.ADIFile)
     qsos, err := parseADI(config.ADIFile)
