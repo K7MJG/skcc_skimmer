@@ -88,9 +88,7 @@ func printWithDotClear(text string) {
 }
 
 // runProgressDotsTask displays progress dots at regular intervals
-func runProgressDotsTask(ctx context.Context, wg *sync.WaitGroup, config *Config) {
-    defer wg.Done()
-
+func runProgressDotsTask(ctx context.Context, config *Config) {
     ticker := time.NewTicker(time.Duration(config.ProgressDots.DisplaySeconds) * time.Second)
     defer ticker.Stop()
     for {
@@ -688,9 +686,7 @@ func (rbn *RBNConnection) Close() {
 }
 
 // ConnectAndProcessTask runs the RBN connection loop in a goroutine-safe manner
-func (rbn *RBNConnection) ConnectAndProcessTask(ctx context.Context, wg *sync.WaitGroup, config *Config, spotProcessor *SpotProcessor) {
-    defer wg.Done()
-
+func (rbn *RBNConnection) ConnectAndProcessTask(ctx context.Context, config *Config, spotProcessor *SpotProcessor) {
     // Run RBN connection and process spots
     for {
         select {
@@ -2390,9 +2386,7 @@ func shouldNotifyLogin(config *Config, goalList, targetList []string) bool {
 }
 
 // MonitorTask runs the sked monitoring loop
-func (sm *SkedMonitor) MonitorTask(ctx context.Context, wg *sync.WaitGroup) {
-    defer wg.Done()
-
+func (sm *SkedMonitor) MonitorTask(ctx context.Context) {
     // Do initial check immediately
     if err := sm.DisplayLogins(); err != nil {
         fmt.Printf("Problem retrieving information from the Sked Page: %v. Skipping...\n", err)
@@ -2449,9 +2443,7 @@ func NewFileWatcher(config *Config, adiFile string, refreshFunc func() error) *F
 }
 
 // WatchTask monitors the ADI file for changes
-func (fw *FileWatcher) WatchTask(ctx context.Context, wg *sync.WaitGroup) {
-    defer wg.Done()
-
+func (fw *FileWatcher) WatchTask(ctx context.Context) {
     ticker := time.NewTicker(3 * time.Second)
     defer ticker.Stop()
 
@@ -6907,14 +6899,16 @@ func main() {
 
     // Launch RBN connection
     rbn := NewRBNConnection(config.MyCallsign)
-    wg.Add(1)
-    go rbn.ConnectAndProcessTask(ctx, &wg, config, spotProcessor)
+    wg.Go(func() {
+        rbn.ConnectAndProcessTask(ctx, config, spotProcessor)
+    })
 
     // Launch Sked monitoring if enabled
     if config.Sked.Enabled {
         sked := NewSkedMonitor(config, spotProcessor, members, rosters, ap)
-        wg.Add(1)
-        go sked.MonitorTask(ctx, &wg)
+        wg.Go(func() {
+            sked.MonitorTask(ctx)
+        })
     }
 
     // Launch file watching if ADI file provided
@@ -6965,14 +6959,16 @@ func main() {
         }
 
         fw := NewFileWatcher(config, config.ADIFile, refreshCallback)
-        wg.Add(1)
-        go fw.WatchTask(ctx, &wg)
+        wg.Go(func() {
+            fw.WatchTask(ctx)
+        })
     }
 
     // Launch progress dots if enabled (but not in verbose mode)
     if config.ProgressDots.Enabled && !config.Verbose {
-        wg.Add(1)
-        go runProgressDotsTask(ctx, &wg, config)
+        wg.Go(func() {
+            runProgressDotsTask(ctx, config)
+        })
     }
 
     // Handle Ctrl+C - exit immediately (OS will clean up)
