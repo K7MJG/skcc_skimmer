@@ -477,15 +477,11 @@ func cleanSKCCNumber(skcc string) string {
 }
 
 func isAllDigits(s string) bool {
-    if len(s) == 0 {
+    if s == "" {
         return false
     }
-    for _, r := range s {
-        if r < '0' || r > '9' {
-            return false
-        }
-    }
-    return true
+    _, err := strconv.Atoi(s)
+    return err == nil
 }
 
 // extractCallsign extracts the base callsign from a slashed call
@@ -1393,7 +1389,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         // DX award - check both DXC (countries) and DXQ (foreign member QSOs)
         // Single 'DX' goal encompasses both
         // Requires: dxcc_code and dxcc_code.isdigit()
-        if member.DXCode != "" && isNumeric(member.DXCode) {
+        if member.DXCode != "" && isAllDigits(member.DXCode) {
             // Normalize DXCC code to 3 digits (zero-padded)
             // "1" -> "001", "291" -> "291"
             normalizedDXCode := normalizeDXCC(member.DXCode)
@@ -1419,7 +1415,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
     }
 
     // Also handle separate DXC/DXQ for backward compatibility
-    if contains("DXC") && member.DXCode != "" && isNumeric(member.DXCode) {
+    if contains("DXC") && member.DXCode != "" && isAllDigits(member.DXCode) {
         // Normalize DXCC code to 3 digits
         normalizedDXCode := normalizeDXCC(member.DXCode)
 
@@ -1431,7 +1427,7 @@ func buildAwardGoals(_ string, memberNumber string, state string, member *Member
         }
     }
 
-    if contains("DXQ") && member.DXCode != "" && isNumeric(member.DXCode) {
+    if contains("DXQ") && member.DXCode != "" && isAllDigits(member.DXCode) {
         // Normalize DXCC codes for comparison
         normalizedDXCode := normalizeDXCC(member.DXCode)
         normalizedMyDXCode := normalizeDXCC(myDXCode)
@@ -2711,12 +2707,9 @@ func (im *InteractiveMode) lookupCallsigns(input string) {
 
 // isNumericLookup checks if the input is a numeric member lookup
 func (im *InteractiveMode) isNumericLookup(s string) bool {
-    // Check if it's all digits or digits followed by C/T/S
     if len(s) == 0 {
         return false
     }
-
-    // Strip off C/T/S suffix if present
     cleaned := s
     if len(s) > 1 {
         lastChar := s[len(s)-1]
@@ -2724,15 +2717,7 @@ func (im *InteractiveMode) isNumericLookup(s string) bool {
             cleaned = s[:len(s)-1]
         }
     }
-
-    // Check if remaining is all digits
-    for _, ch := range cleaned {
-        if ch < '0' || ch > '9' {
-            return false
-        }
-    }
-
-    return true
+    return isAllDigits(cleaned)
 }
 
 // lookupByNumber looks up a member by SKCC number
@@ -3560,34 +3545,15 @@ func downloadSKCCData() error {
 }
 
 func normalizeADIDate(dateStr string) string {
-    // Convert "DD Mon YYYY" to "YYYYMMDD"
-    if dateStr == "" {
-        return ""
-    }
-
-    parts := strings.Fields(dateStr)
-    if len(parts) != 3 {
-        return ""
-    }
-
-    monthMap := map[string]string{
-        "Jan": "01", "Feb": "02", "Mar": "03", "Apr": "04",
-        "May": "05", "Jun": "06", "Jul": "07", "Aug": "08",
-        "Sep": "09", "Oct": "10", "Nov": "11", "Dec": "12",
-    }
-
-    day := parts[0]
-    if len(day) == 1 {
-        day = "0" + day
-    }
-    month := monthMap[parts[1]]
-    year := parts[2]
-
-    if month == "" {
-        return ""
-    }
-
-    return year + month + day
+	// Convert "DD Mon YYYY" to "YYYYMMDD"
+	if dateStr == "" {
+		return ""
+	}
+	t, err := time.Parse("2 Jan 2006", dateStr)
+	if err != nil {
+		return ""
+	}
+	return t.Format("20060102")
 }
 
 // ============================================================================
@@ -4188,30 +4154,35 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
 }
 
 func calculateDuration(timeOn, timeOff string) int {
-    // Parse HHMMSS to seconds, then convert to minutes
-    getSeconds := func(t string) int {
-        if len(t) < 4 {
-            return 0
-        }
-        hh, _ := strconv.Atoi(t[0:2])
-        mm, _ := strconv.Atoi(t[2:4])
-        ss := 0
-        if len(t) >= 6 {
-            ss, _ = strconv.Atoi(t[4:6])
-        }
-        return hh*3600 + mm*60 + ss
-    }
+	parseToTime := func(t string) (time.Time, error) {
+		var layout string
+		if len(t) >= 6 {
+			layout = "150405"
+			t = t[:6]
+		} else if len(t) >= 4 {
+			layout = "1504"
+			t = t[:4]
+		} else {
+			return time.Time{}, fmt.Errorf("invalid time format")
+		}
+		return time.Parse(layout, t)
+	}
 
-    onSecs := getSeconds(timeOn)
-    offSecs := getSeconds(timeOff)
+	t1, err := parseToTime(timeOn)
+	if err != nil {
+		return 0
+	}
+	t2, err := parseToTime(timeOff)
+	if err != nil {
+		return 0
+	}
 
-    durationSecs := offSecs - onSecs
-    if durationSecs < 0 {
-        durationSecs += 24 * 3600 // Handle midnight rollover
-    }
+	duration := t2.Sub(t1)
+	if duration < 0 {
+		duration += 24 * time.Hour
+	}
 
-    // Return duration in minutes (integer division)
-    return durationSecs / 60
+	return int(duration.Minutes())
 }
 
 // ============================================================================
@@ -5960,23 +5931,10 @@ func calculateAwardLevel(value int, baseUnit int) int {
 	return 10
 }
 
-// isNumeric checks if a string contains only digits
-func isNumeric(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return false
-		}
-	}
-	return true
-}
-
 // normalizeDXCC normalizes a DXCC code to 3 digits (zero-padded)
 // Examples: "1" -> "001", "291" -> "291"
 func normalizeDXCC(code string) string {
-	if !isNumeric(code) {
+	if !isAllDigits(code) {
 		return code
 	}
 	// Pad with leading zeros to make it 3 digits
