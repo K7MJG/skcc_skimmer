@@ -45,6 +45,36 @@ var (
 // UTILITY FUNCTIONS
 // ============================================================================
 
+// delayedExit provides a 10-second countdown before exiting
+// Allows users to see error messages when launched from shortcuts
+func delayedExit(exitCode int) {
+    fmt.Println() // Blank line for spacing
+    done := make(chan bool, 1)
+
+    go func() {
+        for i := 10; i > 0; i-- {
+            fmt.Printf("\rProgram will close in %d seconds...  ", i)
+            time.Sleep(1 * time.Second)
+        }
+        fmt.Println()
+        done <- true
+    }()
+
+    // Allow Ctrl+C to skip countdown
+    sigChan := make(chan os.Signal, 1)
+    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+    select {
+    case <-done:
+        // Countdown finished normally
+    case <-sigChan:
+        // User pressed Ctrl+C
+        fmt.Println("\n\nExiting...")
+    }
+
+    os.Exit(exitCode)
+}
+
 // printWithDotClear prints text, clearing any progress dots on the current line first
 func printWithDotClear(text string) {
     dotsMutex.Lock()
@@ -3266,7 +3296,7 @@ func parseGoalsTargets(value string, validList []string, typeStr string) []strin
                 fmt.Printf("Unrecognized %s '%s'.\n", typeStr, p)
                 fmt.Println("Program will close in 10 seconds...")
                 time.Sleep(10 * time.Second)
-                os.Exit(1)
+                delayedExit(1)
             }
             result = append(result, p)
         }
@@ -6486,7 +6516,7 @@ func (ap *AwardProcessor) printK3YContacts(k3yYear int) {
 // progress dots, file watching) are implemented but not yet integrated into
 // the main loop. Current functionality focuses on award calculation from ADI files.
 
-func showUsage() {
+func showUsage(exitCode int) {
     fmt.Println("Usage:")
     fmt.Println()
     fmt.Println("   skcc_skimmer")
@@ -6528,7 +6558,12 @@ func showUsage() {
     fmt.Println("                   [-t <targets>]")
     fmt.Println("                   [-v]")
     fmt.Println()
-    os.Exit(0)
+
+    if exitCode == 0 {
+        os.Exit(0)
+    } else {
+        delayedExit(exitCode)
+    }
 }
 
 // ============================================================================
@@ -6575,7 +6610,7 @@ func main() {
 
     // Show help if requested
     if *showHelp {
-        showUsage()
+        showUsage(0)
     }
 
     fmt.Printf("SKCC Skimmer version %s\n\n", Version)
@@ -6684,33 +6719,33 @@ func main() {
     if config.MyCallsign == "" {
         fmt.Println("You must specify your callsign, either on the command line or in 'skcc_skimmer.cfg'.")
         fmt.Println()
-        showUsage()
+        showUsage(1)
     }
 
     // ADI file is always required
     if config.ADIFile == "" {
         fmt.Println("You must specify an ADI file, either on the command line or in 'skcc_skimmer.cfg'.")
         fmt.Println()
-        showUsage()
+        showUsage(1)
     }
 
     // For real-time monitoring (not awards-only), maidenhead is required
     if !config.AwardsOnly && config.MyGridsquare == "" {
         fmt.Println("Real-time monitoring requires your grid square. Use --maidenhead or -m to specify it.")
         fmt.Println()
-        showUsage()
+        showUsage(1)
     }
 
     // Download SKCC data
     if err := downloadSKCCData(); err != nil {
         fmt.Printf("Error downloading SKCC data: %v\n", err)
-        os.Exit(1)
+        delayedExit(1)
     }
 
     // Check if user is SKCC member
     if members[config.MyCallsign] == nil {
         fmt.Printf("'%s' is not a member of SKCC.\n", config.MyCallsign)
-        os.Exit(1)
+        delayedExit(1)
     }
 
     // Parse ADI file
@@ -6722,14 +6757,14 @@ func main() {
     qsos, err := parseADI(config.ADIFile)
     if err != nil {
         fmt.Printf("Error reading ADI file: %v\n", err)
-        os.Exit(1)
+        delayedExit(1)
     }
 
     // Process QSOs through award processor
     ap, err := NewAwardProcessor(members, config.MyCallsign)
     if err != nil {
         fmt.Printf("Error creating award processor: %v\n", err)
-        os.Exit(1)
+        delayedExit(1)
     }
 
     processedQSOs := ap.ProcessQSOs(qsos)
