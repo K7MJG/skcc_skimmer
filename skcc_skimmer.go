@@ -1662,7 +1662,7 @@ func (sm *SpotterManager) AddSpotter(callsign string, myGrid, spotterGrid string
     }
 
     var bands []int
-    for _, bandStr := range strings.Split(csvBands, ",") {
+    for bandStr := range strings.SplitSeq(csvBands, ",") {
         bandStr = strings.TrimSpace(bandStr)
         if validBands[bandStr] {
             // Extract numeric part (e.g., "40m" -> 40)
@@ -3069,7 +3069,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 		if val, ok := section["CONDITION"]; ok {
 			condStr := getString(val)
 			cfg.Notification.Condition = []string{}
-			for _, c := range strings.Split(condStr, ",") {
+			for c := range strings.SplitSeq(condStr, ",") {
 				c = strings.TrimSpace(c)
 				if c != "" {
 					cfg.Notification.Condition = append(cfg.Notification.Condition, c)
@@ -3788,8 +3788,7 @@ func (ap *AwardProcessor) GetSKCCFromCall(logCall, logSKCC string) (string, bool
             }
         } else {
             // Split and try segments
-            segments := strings.Split(logCallUpper, "/")
-            for _, segment := range segments {
+            for segment := range strings.SplitSeq(logCallUpper, "/") {
                 segmentMembers := ap.callsignDB[segment]
                 for _, mbr := range segmentMembers {
                     skccList[mbr.PlainNumber] = true
@@ -4102,8 +4101,7 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
     // Prefix Award - started on 20130101
     // Split by /, try each segment, use the one that has valid SKCC
     if qsoDate >= "20130101" {
-        callSegments := strings.Split(processed.Call, "/")
-        for _, pfxCall := range callSegments {
+        for pfxCall := range strings.SplitSeq(processed.Call, "/") {
             // Check if this segment has a valid SKCC member
             pfxSKCCNr, _ := ap.GetSKCCFromCall(pfxCall, mbr.PlainNumber)
             if pfxSKCCNr != "" {
