@@ -519,15 +519,6 @@ func extractCallsign(call string) string {
     return call
 }
 
-func contains(slice []string, item string) bool {
-    for _, s := range slice {
-        if s == item {
-            return true
-        }
-    }
-    return false
-}
-
 func normalizeDate(date string) string {
     if len(date) > 8 {
         return date[:8]
@@ -787,7 +778,7 @@ type SpotProcessor struct {
     config       *Config
     members      map[string]*Member
     rosters      *Rosters
-    awards             map[string]interface{} // Contact lists from award processing
+    awards             map[string]any // Contact lists from award processing
     qsosByMemberNumber map[string][]string    // QSO dates by member number (for target calculation)
     myCDate            string                 // User's Centurion award date
     myTDate      string                 // User's Tribune award date
@@ -874,7 +865,7 @@ func checkCTSTarget(awardType, memberNumber, theirAwardDate string, qsosByMember
 }
 
 // NewSpotProcessor creates a new spot processor
-func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters, awards map[string]interface{}, qsosByMemberNumber map[string][]string, myCDate, myTDate, mySDate, myDXCode string) *SpotProcessor {
+func NewSpotProcessor(config *Config, members map[string]*Member, rosters *Rosters, awards map[string]any, qsosByMemberNumber map[string][]string, myCDate, myTDate, mySDate, myDXCode string) *SpotProcessor {
     return &SpotProcessor{
         config:             config,
         members:            members,
@@ -1262,17 +1253,12 @@ func getBandEdges(band int) (float64, float64) {
 
 // buildAwardGoals checks which awards a spotted member helps with (based on contacts already worked)
 // Used by both RBN spot processor and Sked monitor
-func buildAwardGoals(_ string, memberNumber string, state string, member *Member, awards map[string]interface{}, myCDate, myTDate, mySDate, myDXCode string, goalList []string) []string {
+func buildAwardGoals(_ string, memberNumber string, state string, member *Member, awards map[string]any, myCDate, myTDate, mySDate, myDXCode string, goalList []string) []string {
     var goals []string
 
     // Helper to check if a goal is in the list
     contains := func(goal string) bool {
-        for _, g := range goalList {
-            if g == goal {
-                return true
-            }
-        }
-        return false
+        return slices.Contains(goalList, goal)
     }
 
     // Process awards in specific order to match reference implementation
@@ -1953,14 +1939,7 @@ func (sm *SkedMonitor) ProcessLogins(logins []SkedLogin) map[string][]string {
         }
 
         // Check exclusion list
-        excluded := false
-        for _, ex := range sm.config.Exclusions {
-            if callsign == ex {
-                excluded = true
-                break
-            }
-        }
-        if excluded {
+        if slices.Contains(sm.config.Exclusions, callsign) {
             continue
         }
 
@@ -2149,15 +2128,7 @@ func (sm *SkedMonitor) getFullMemberNumberForSked(_ string, member *Member) (str
 // processSpecialEvent processes K3Y or SKM special events from status
 func (sm *SkedMonitor) processSpecialEvent(eventType, station, status string, goalList *[]string) {
     // Check if K3Y is in goals
-    hasK3YGoal := false
-    for _, goal := range sm.config.Goals {
-        if goal == "K3Y" {
-            hasK3YGoal = true
-            break
-        }
-    }
-
-    if !hasK3YGoal {
+    if !slices.Contains(sm.config.Goals, "K3Y") {
         return
     }
 
@@ -2354,25 +2325,15 @@ func (sm *SkedMonitor) DisplayLogins() error {
 
             // Parse report to find goals and targets
             for _, item := range skedHits[callsign] {
-                if strings.HasPrefix(item, "YOU need them for ") {
-                    goals := strings.TrimPrefix(item, "YOU need them for ")
+                if goals, found := strings.CutPrefix(item, "YOU need them for "); found {
                     goalList = strings.Split(goals, ",")
-                } else if strings.HasPrefix(item, "THEY need you for ") {
-                    targets := strings.TrimPrefix(item, "THEY need you for ")
+                } else if targets, found := strings.CutPrefix(item, "THEY need you for "); found {
                     targetList = strings.Split(targets, ",")
                 }
             }
 
             // Check if this is a new login
-            isNew := false
-            if !firstPass {
-                for _, newCall := range newLogins {
-                    if callsign == newCall {
-                        isNew = true
-                        break
-                    }
-                }
-            }
+            isNew := !firstPass && slices.Contains(newLogins, callsign)
 
             // Handle notification
             newIndicator := " "
@@ -2609,12 +2570,12 @@ type InteractiveMode struct {
     members        map[string]*Member
     rosters        *Rosters
     awardProcessor *AwardProcessor
-    awards         map[string]interface{}
+    awards         map[string]any
     spotProcessor  *SpotProcessor
 }
 
 // NewInteractiveMode creates a new interactive mode handler
-func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters, ap *AwardProcessor, awards map[string]interface{}, spotProcessor *SpotProcessor) *InteractiveMode {
+func NewInteractiveMode(config *Config, members map[string]*Member, rosters *Rosters, ap *AwardProcessor, awards map[string]any, spotProcessor *SpotProcessor) *InteractiveMode {
     return &InteractiveMode{
         config:         config,
         members:        members,
@@ -2941,12 +2902,7 @@ func effectiveDate(date string) string {
 
 // isUSState checks if SPC is a US state
 func isUSState(spc string) bool {
-    for _, state := range usStates {
-        if spc == state {
-            return true
-        }
-    }
-    return false
+    return slices.Contains(usStates, spc)
 }
 
 // ============================================================================
@@ -2954,14 +2910,14 @@ func isUSState(spc string) bool {
 // ============================================================================
 
 // parseTOML parses a simple TOML file without external dependencies
-func parseTOML(filename string) (map[string]interface{}, error) {
+func parseTOML(filename string) (map[string]any, error) {
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	config := make(map[string]interface{})
+	config := make(map[string]any)
 	var currentSection string
 	scanner := bufio.NewScanner(file)
 
@@ -2976,7 +2932,7 @@ func parseTOML(filename string) (map[string]interface{}, error) {
 		// Check for section header [SECTION_NAME]
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			currentSection = strings.Trim(line, "[]")
-			config[currentSection] = make(map[string]interface{})
+			config[currentSection] = make(map[string]any)
 			continue
 		}
 
@@ -3000,7 +2956,7 @@ func parseTOML(filename string) (map[string]interface{}, error) {
 			}
 
 			// Parse value type
-			var parsedValue interface{}
+			var parsedValue any
 			if (strings.HasPrefix(value, "\"") && strings.HasSuffix(value, "\"")) ||
 				(strings.HasPrefix(value, "'") && strings.HasSuffix(value, "'")) {
 				// String value (double or single quotes)
@@ -3018,7 +2974,7 @@ func parseTOML(filename string) (map[string]interface{}, error) {
 
 			// Store in appropriate section
 			if currentSection != "" {
-				sectionMap := config[currentSection].(map[string]interface{})
+				sectionMap := config[currentSection].(map[string]any)
 				sectionMap[key] = parsedValue
 			} else {
 				config[key] = parsedValue
@@ -3036,24 +2992,24 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 		return cfg, nil // Return defaults if error
 	}
 
-	// Helper to get string from interface{}
-	getString := func(val interface{}) string {
+	// Helper to get string from any
+	getString := func(val any) string {
 		if s, ok := val.(string); ok {
 			return s
 		}
 		return ""
 	}
 
-	// Helper to get int from interface{}
-	getInt := func(val interface{}) int {
+	// Helper to get int from any
+	getInt := func(val any) int {
 		if i, ok := val.(int); ok {
 			return i
 		}
 		return 0
 	}
 
-	// Helper to get bool from interface{}
-	getBool := func(val interface{}) bool {
+	// Helper to get bool from any
+	getBool := func(val any) bool {
 		if b, ok := val.(bool); ok {
 			return b
 		}
@@ -3101,7 +3057,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse HIGH_WPM section
-	if section, ok := tomlData["HIGH_WPM"].(map[string]interface{}); ok {
+	if section, ok := tomlData["HIGH_WPM"].(map[string]any); ok {
 		if val, ok := section["ACTION"]; ok {
 			cfg.HighWPM.Action = getString(val)
 		}
@@ -3111,7 +3067,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse OFF_FREQUENCY section
-	if section, ok := tomlData["OFF_FREQUENCY"].(map[string]interface{}); ok {
+	if section, ok := tomlData["OFF_FREQUENCY"].(map[string]any); ok {
 		if val, ok := section["ACTION"]; ok {
 			cfg.OffFrequency.Action = getString(val)
 		}
@@ -3121,7 +3077,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse NOTIFICATION section
-	if section, ok := tomlData["NOTIFICATION"].(map[string]interface{}); ok {
+	if section, ok := tomlData["NOTIFICATION"].(map[string]any); ok {
 		if val, ok := section["ENABLED"]; ok {
 			cfg.Notification.Enabled = getBool(val)
 		}
@@ -3141,7 +3097,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse SKED section
-	if section, ok := tomlData["SKED"].(map[string]interface{}); ok {
+	if section, ok := tomlData["SKED"].(map[string]any); ok {
 		if val, ok := section["ENABLED"]; ok {
 			cfg.Sked.Enabled = getBool(val)
 		}
@@ -3151,7 +3107,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse SPOT_WINDOW section
-	if section, ok := tomlData["SPOT_WINDOW"].(map[string]interface{}); ok {
+	if section, ok := tomlData["SPOT_WINDOW"].(map[string]any); ok {
 		if val, ok := section["ENABLED"]; ok {
 			cfg.SpotWindow.Enabled = getBool(val)
 		}
@@ -3161,7 +3117,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse LOG_FILE section
-	if section, ok := tomlData["LOG_FILE"].(map[string]interface{}); ok {
+	if section, ok := tomlData["LOG_FILE"].(map[string]any); ok {
 		if val, ok := section["ENABLED"]; ok {
 			cfg.LogFile.Enabled = getBool(val)
 		}
@@ -3174,7 +3130,7 @@ func parseConfigTOML(filename string, cfg *Config) (*Config, error) {
 	}
 
 	// Parse PROGRESS_DOTS section
-	if section, ok := tomlData["PROGRESS_DOTS"].(map[string]interface{}); ok {
+	if section, ok := tomlData["PROGRESS_DOTS"].(map[string]any); ok {
 		if val, ok := section["ENABLED"]; ok {
 			cfg.ProgressDots.Enabled = getBool(val)
 		}
@@ -3357,8 +3313,8 @@ func parseGoalsTargets(value string, validList []string, typeStr string) []strin
         p = strings.TrimSpace(p)
         if p == "ALL" {
             hasAll = true
-        } else if strings.HasPrefix(p, "-") {
-            exclusions = append(exclusions, strings.TrimPrefix(p, "-"))
+        } else if exclusion, found := strings.CutPrefix(p, "-"); found {
+            exclusions = append(exclusions, exclusion)
         } else if p != "" && p != "NONE" {
             // Validate against allowed list
             if !validMap[p] {
@@ -3374,14 +3330,7 @@ func parseGoalsTargets(value string, validList []string, typeStr string) []strin
     if hasAll {
         // Use the provided valid list for ALL expansion
         for _, award := range validList {
-            isExcluded := false
-            for _, ex := range exclusions {
-                if award == ex {
-                    isExcluded = true
-                    break
-                }
-            }
-            if !isExcluded {
+            if !slices.Contains(exclusions, award) {
                 result = append(result, award)
             }
         }
@@ -4105,9 +4054,9 @@ func (ap *AwardProcessor) createProcessedQSO(qso QSO, mbr *Member) ProcessedQSO 
     }
 
     // Set country
-    if contains(allStates, state) {
+    if slices.Contains(allStates, state) {
         processed.Country = "USA"
-    } else if contains(provinces, state) {
+    } else if slices.Contains(provinces, state) {
         processed.Country = "Canada"
     }
 
@@ -4122,7 +4071,7 @@ func (ap *AwardProcessor) applyAwardQualifications(processed *ProcessedQSO, qso 
     qsoDate := normalizeDate(qso.QSODate)
 
     // WAS Awards
-    if contains(usStates, processed.State) {
+    if slices.Contains(usStates, processed.State) {
         processed.WasQSO = true
 
         // WAS-C (started 2011-06-12)
@@ -4271,8 +4220,8 @@ func calculateDuration(timeOn, timeOff string) int {
 
 // ExtractAwards extracts award-specific contacts from processed QSOs
 // Uses dual-pass processing: chrono for C/T/S/DX, adiOrder for WAS/P/QRP/TKA/BRAG/RC
-func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]interface{} {
-    awards := make(map[string]interface{})
+func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]any {
+    awards := make(map[string]any)
 
     // C, T, S awards - use chronological order (oldest QSO first)
     contactsC := make(map[string]ProcessedQSO)
@@ -4466,7 +4415,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]in
     // K3Y processing
     // Process K3Y QSOs separately as they have special handling
     k3yContacts := make(map[string]map[int]string)
-    if contains(config.Goals, "K3Y") {
+    if slices.Contains(config.Goals, "K3Y") {
         // K3Y year range: Jan 2 to Feb 1 (8-digit date format to match QSO dates)
         k3yStart := fmt.Sprintf("%d0102", config.K3YYear)
         k3yEnd := fmt.Sprintf("%d0201", config.K3YYear)
@@ -4583,7 +4532,7 @@ func removeTKADuplicates(sk, bug, ss map[string]ProcessedQSO) {
 // OUTPUT FILES
 // ============================================================================
 
-func writeAwardFiles(awards map[string]interface{}, ap *AwardProcessor) {
+func writeAwardFiles(awards map[string]any, ap *AwardProcessor) {
     os.MkdirAll("QSOs", 0755)
 
     // Write skipped QSOs file
@@ -4686,7 +4635,7 @@ func writeNeedSKCCFile(entries []NeedSKCCEntry) {
     fmt.Fprintln(file, "\nEnd of List")
 }
 
-func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]interface{}) {
+func writeInspectFile(autoMatched []AutoMatchEntry, awards map[string]any) {
     filename := filepath.Join("QSOs", config.MyCallsign+"-Inspect_QSOs.txt")
     file, err := os.Create(filename)
     if err != nil {
@@ -5185,7 +5134,7 @@ func printConfigSummary(config *Config) {
     }
 }
 
-func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *Config, members map[string]*Member) {
+func printFYIMessages(awards map[string]any, rosters *Rosters, config *Config, members map[string]*Member) {
     myMember := members[config.MyCallsign]
     if myMember == nil {
         return
@@ -5210,7 +5159,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     contactsTKASS := awards["TKA_SS"].(map[string]ProcessedQSO)
 
     // C award FYI
-    if contains(config.Goals, "C") {
+    if slices.Contains(config.Goals, "C") {
         cCount := len(contactsC)
         if cCount >= 100 {
             cLevel := calculateAwardLevel(cCount, 100)
@@ -5237,7 +5186,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // T award FYI
-    if contains(config.Goals, "T") {
+    if slices.Contains(config.Goals, "T") {
         tCount := len(contactsT)
         if tCount >= 50 {
             tLevel := calculateAwardLevel(tCount, 50)
@@ -5268,7 +5217,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // S award FYI
-    if contains(config.Goals, "S") {
+    if slices.Contains(config.Goals, "S") {
         sCount := len(contactsS)
         tribuneContacts := len(contactsT)
         if tribuneContacts < 400 {
@@ -5300,28 +5249,28 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // WAS variants FYI
-    if contains(config.Goals, "WAS") {
+    if slices.Contains(config.Goals, "WAS") {
         if len(contactsWAS) == len(usStates) {
             if _, exists := rosters.WAS[config.MyCallsign]; !exists {
                 fmt.Println("FYI: You qualify for WAS but have not yet applied for it.")
             }
         }
     }
-    if contains(config.Goals, "WAS-C") {
+    if slices.Contains(config.Goals, "WAS-C") {
         if len(contactsWASC) == len(usStates) {
             if _, exists := rosters.WASC[config.MyCallsign]; !exists {
                 fmt.Println("FYI: You qualify for WAS-C but have not yet applied for it.")
             }
         }
     }
-    if contains(config.Goals, "WAS-T") {
+    if slices.Contains(config.Goals, "WAS-T") {
         if len(contactsWAST) == len(usStates) {
             if _, exists := rosters.WAST[config.MyCallsign]; !exists {
                 fmt.Println("FYI: You qualify for WAS-T but have not yet applied for it.")
             }
         }
     }
-    if contains(config.Goals, "WAS-S") {
+    if slices.Contains(config.Goals, "WAS-S") {
         if len(contactsWASS) == len(usStates) {
             if _, exists := rosters.WASS[config.MyCallsign]; !exists {
                 fmt.Println("FYI: You qualify for WAS-S but have not yet applied for it.")
@@ -5330,7 +5279,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // Prefix FYI
-    if contains(config.Goals, "P") {
+    if slices.Contains(config.Goals, "P") {
         pTotal := 0
         for _, qso := range contactsP {
             pts, _ := strconv.Atoi(qso.PfxPts)
@@ -5349,7 +5298,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // DX FYI
-    if contains(config.Goals, "DX") {
+    if slices.Contains(config.Goals, "DX") {
         // DXC
         dxcCount := len(contactsDXC)
         if dxcCount >= 10 {
@@ -5378,7 +5327,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // QRP FYI
-    if contains(config.Goals, "QRP") {
+    if slices.Contains(config.Goals, "QRP") {
         pts1x := 0.0
         pts2x := 0.0
         for _, qso := range contactsQRP {
@@ -5415,7 +5364,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // TKA FYI
-    if contains(config.Goals, "TKA") {
+    if slices.Contains(config.Goals, "TKA") {
         skCount := len(contactsTKASK)
         bugCount := len(contactsTKABUG)
         ssCount := len(contactsTKASS)
@@ -5440,7 +5389,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 
     // RC FYI
-    if contains(config.Goals, "RC") {
+    if slices.Contains(config.Goals, "RC") {
         totalMins := 0
         for _, qso := range contactsRC {
             totalMins += qso.RagChewMins
@@ -5471,7 +5420,7 @@ func printFYIMessages(awards map[string]interface{}, rosters *Rosters, config *C
     }
 }
 
-func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
+func printProgress(awards map[string]any, ap *AwardProcessor) {
     fmt.Println()
     fmt.Println("*** Awards Progress ***")
 
@@ -5583,46 +5532,46 @@ func printProgress(awards map[string]interface{}, ap *AwardProcessor) {
     }
 
     // WAS
-    if contains(config.Goals, "WAS") {
+    if slices.Contains(config.Goals, "WAS") {
         printWASProgress("WAS", contactsWAS)
     }
-    if contains(config.Goals, "WAS-C") {
+    if slices.Contains(config.Goals, "WAS-C") {
         printWASProgress("WAS-C", contactsWASC)
     }
-    if contains(config.Goals, "WAS-T") {
+    if slices.Contains(config.Goals, "WAS-T") {
         printWASProgress("WAS-T", contactsWAST)
     }
-    if contains(config.Goals, "WAS-S") {
+    if slices.Contains(config.Goals, "WAS-S") {
         printWASProgress("WAS-S", contactsWASS)
     }
 
     // QRP
-    if contains(config.Goals, "QRP") {
+    if slices.Contains(config.Goals, "QRP") {
         printQRPProgress(contactsQRP)
     }
 
     // DX
-    if contains(config.Goals, "DX") {
+    if slices.Contains(config.Goals, "DX") {
         printDXProgress(contactsDXC, contactsDXQ)
     }
 
     // RC
-    if contains(config.Goals, "RC") {
+    if slices.Contains(config.Goals, "RC") {
         printRCProgress(contactsRC)
     }
 
     // TKA
-    if contains(config.Goals, "TKA") {
+    if slices.Contains(config.Goals, "TKA") {
         printTKAProgress(contactsTKASK, contactsTKABUG, contactsTKASS)
     }
 
     // BRAG
-    if contains(config.Goals, "BRAG") {
+    if slices.Contains(config.Goals, "BRAG") {
         printBRAGProgress(ap)
     }
 
     // K3Y contact display
-    if contains(config.Goals, "K3Y") {
+    if slices.Contains(config.Goals, "K3Y") {
         if k3yData, ok := awards["K3Y"].(map[string]map[int]string); ok {
             printK3YContacts(k3yData, config.K3YYear)
         }
