@@ -2759,6 +2759,7 @@ class cQSO:
         # Extract contacts and stats
         contacts = result['contacts']
         stats = result['stats']
+        tka_first_seen_order = result['tka_first_seen_order']
         qsos_processed = stats.get('qsos_processed', 0)
         qsos_added = stats.get('qsos_added', 0)
         qsos_skipped = stats.get('qsos_skipped', 0)
@@ -2820,7 +2821,8 @@ class cQSO:
         # Apply Xojo's TKA duplicate removal logic
         # Each member can only count for ONE key type
         # Remove duplicates from the largest dictionary to balance counts
-        cls._remove_tka_duplicates()
+        # Process duplicates in ADI file order (matches Xojo dict insertion order)
+        cls._remove_tka_duplicates(tka_first_seen_order)
 
         # Populate lookup structures for O(1) membership checking during RBN processing
         cls._populate_lookups()
@@ -3303,12 +3305,16 @@ class cQSO:
                     await file.write(f"{count:<4} {date}  {their_member_number:<8} {main_callsign:<12}\n")
 
     @classmethod
-    def _remove_tka_duplicates(cls) -> None:
+    def _remove_tka_duplicates(cls, first_seen_order: list[str]) -> None:
         """Remove duplicate members from TKA dictionaries following exact Xojo logic.
 
         When a member appears in multiple key type dictionaries, remove them from
         the dictionary with the most entries to keep counts balanced. Uses the exact
         same comparison order as Xojo for deterministic results.
+
+        Args:
+            first_seen_order: List of member numbers in ADI file order (matches Xojo's
+                            dictionary insertion order when processing duplicates)
         """
         # Find all members that appear in multiple lists
         # Member number is at index 1 in the tuple: (date, member_number, call, name, spc)
@@ -3324,9 +3330,12 @@ class cQSO:
         )
 
         # For each duplicate, remove from appropriate lists
-        # Important: Process in ascending sorted order to match Xojo's database iteration
-        # (Xojo's SQL has no ORDER BY, so returns in insertion/chronological order)
-        for member in sorted(all_duplicates):
+        # Important: Process in ADI file order (matches Xojo's dictionary insertion order)
+        # firstSeenOrder already contains members in the order they first appeared in ADI file
+        for member in first_seen_order:
+            # Only process if this member is a duplicate
+            if member not in all_duplicates:
+                continue
             # Check which lists contain this member
             bug_logged = any(contact[1] == member for contact in cls.ContactsForTKA_BUG)
             sk_logged = any(contact[1] == member for contact in cls.ContactsForTKA_SK)
@@ -4198,12 +4207,18 @@ class cAwards:
         # C/T/S awards benefit from chronological order (oldest first) for consistency
         # WAS/P awards need ADI file order to match Xojo's behavior
 
-        # First pass: Process in chronological order for C/T/S
+        # First pass: Process in chronological order (DATE+TIME) for output sorting only
         qsos_chronological = sorted(qsos, key=lambda q: (q.log_qso_date, q.log_time_on or '000000'))
         processor_chrono = cAwards(member_db, my_member, member_data)
         processed_qsos_chrono = processor_chrono.process_qsos(qsos_chronological)
 
-        # Second pass: Process in ADI file order for WAS/P (use fresh processor)
+        # Second pass: Process in DATE-only order (matches Xojo's C/T/S and DXQ selection logic)
+        # Xojo: ORDER BY Log_QSO_DATE (no TIME_ON) - ADI order is tiebreaker
+        qsos_date_only = sorted(qsos, key=lambda q: q.log_qso_date, stable=True)
+        processor_date = cAwards(member_db, my_member, member_data)
+        processed_qsos_date_only = processor_date.process_qsos(qsos_date_only)
+
+        # Third pass: Process in ADI file order for WAS/P/TKA/DXC (use fresh processor)
         processor_adi = cAwards(member_db, my_member, member_data)
         processed_qsos_adi_order = processor_adi.process_qsos(qsos)
         # Convert to cQSO format with stats
@@ -4284,9 +4299,10 @@ class cAwards:
             display_call = mbr.mbr_pri_call if mbr else qso.log_call
             return (state, date, display_call, skcc_with_suffix, name, band)
 
-        # Process C/T/S awards using chronologically sorted QSOs (oldest first)
-        # Also collect DX awards here since they also benefit from chronological order
-        for qso in processed_qsos_chrono:
+        # Process C/T/S and DXQ awards using DATE-only sorted QSOs
+        # Matches Xojo's SQL: ORDER BY Log_QSO_DATE (no TIME_ON)
+        # ADI file order is the tiebreaker when dates match (stable sort preserves ADI order)
+        for qso in processed_qsos_date_only:
             member_num = qso.log_skcc_nr
             callsign = qso.log_call
             date = qso.log_qso_date
@@ -4312,14 +4328,7 @@ class cAwards:
                 contacts['S'].append(contact_tuple)
                 seen_s[member_num] = True
 
-            # DX contacts (only first QSO per country/member) - also benefit from chronological
-            if qso.dxc_qso == "YES" and qso.dx_code and qso.dx_code not in seen_dxc:
-                # Store additional fields for better reporting
-                name = qso.log_name if hasattr(qso, 'log_name') else ''
-                band = qso.log_band.upper() if hasattr(qso, 'log_band') else ''
-                contacts['DXC'].append((date, member_num, callsign, name, band, qso.dx_code))
-                seen_dxc[qso.dx_code] = True
-
+            # DXQ contacts - matches Xojo SQL: ORDER BY Log_QSO_DATE (DATE only, no TIME_ON)
             if qso.dxq_qso == "YES" and member_num not in seen_dxq:
                 # Store additional fields for better reporting (matching DXC format)
                 name = qso.log_name if hasattr(qso, 'log_name') else ''
@@ -4360,6 +4369,12 @@ class cAwards:
                         contacts['RC'][last_rc_index] = rc_tuple
                         last_rc_mins = ragchew_mins
 
+        # Track first-seen order for TKA duplicate processing (matches Xojo dict insertion order)
+        # This preserves the order members first appear in ADI file, which matches Xojo's
+        # dictionary iteration order when processing duplicates
+        tka_first_seen_order: list[str] = []
+        tka_first_seen: dict[str, bool] = {}
+
         # Process WAS, P, QRP, TKA, BRAG awards using ADI file order QSOs
         for qso in processed_qsos_adi_order:
             member_num = qso.log_skcc_nr
@@ -4389,6 +4404,11 @@ class cAwards:
                 contacts['WAS_S'].append(get_was_contact_data(member_num, date, qso, name, band, state))
                 seen_was_s[state] = True
 
+            # DXC contacts - matches Xojo: SELECT with NO ORDER BY → ADI file order
+            if qso.dxc_qso == "YES" and qso.dx_code and qso.dx_code not in seen_dxc:
+                contacts['DXC'].append((date, member_num, callsign, name, band, qso.dx_code))
+                seen_dxc[qso.dx_code] = True
+
             # Prefix contacts (highest member number per prefix) - use temp dict during extraction
             if qso.pfx and qso.pfx_pts and qso.pfx_call:
                 # Key: prefix, Value: (date, prefix, member_number, name, callsign, band)
@@ -4410,6 +4430,11 @@ class cAwards:
 
             # TKA contacts
             if qso.tka_qso == "YES":
+                # Track first occurrence of this member across all key types (for duplicate processing)
+                if member_num not in tka_first_seen:
+                    tka_first_seen_order.append(member_num)
+                    tka_first_seen[member_num] = True
+
                 # Use primary callsign from member database for TKA (matching Xojo's Log_Call_Pri)
                 # Include name and SPC (State/Province/Country) from processed QSO
                 contact_tuple_tka = (date, member_num, tka_callsign, name, state)
@@ -4442,6 +4467,9 @@ class cAwards:
 
         # QRP: Sort chronologically (by date) for consistent output
         contacts['QRP'] = sorted(temp_qrp.values(), key=lambda x: x[0])
+
+        # Add TKA first-seen order to result for duplicate processing
+        result['tka_first_seen_order'] = tka_first_seen_order
 
         return result
 
