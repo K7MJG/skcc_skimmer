@@ -3175,6 +3175,9 @@ class cQSO:
         if qrp_1x_first is not None:
             async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-1x'), 'w', encoding='utf-8') as file:
                 await cAwardFileWriter.write_header(file, "1xQRP", cConfig.MY_CALLSIGN)
+                # Write column header
+                await file.write("  #    SKCC#    Callsign     Band   Points    Total\n")
+                await file.write("-------------------------------------------------------\n")
 
                 total_points: float = 0.0
                 index = 1
@@ -3200,6 +3203,9 @@ class cQSO:
         if qrp_2x_first is not None:
             async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'QRP-2x'), 'w', encoding='utf-8') as file:
                 await cAwardFileWriter.write_header(file, "2xQRP", cConfig.MY_CALLSIGN)
+                # Write column header
+                await file.write("  #    SKCC#    Callsign     Band   Points    Total\n")
+                await file.write("-------------------------------------------------------\n")
 
                 total_points: float = 0.0
                 index = 1
@@ -3223,6 +3229,10 @@ class cQSO:
     async def award_p_async(cls, QSOs: list[tuple[str, str, int, str, str, str]]) -> None:
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
+            # Write header
+            await file.write("QSO#   QSO Date     Callsign      SKCC#    Name         Prefix       Band    Total Points\n")
+            await file.write("------------------------------------------------------------------------------------------\n")
+
             iPoints = 0
             for index, (qso_date, prefix, member_number, first_name, callsign, band) in enumerate(
                 sorted(QSOs, key=lambda q: q[1]), start=1
@@ -3242,6 +3252,10 @@ class cQSO:
         QSOs = sorted(QSOs_list, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as File:
+            # Write header
+            await File.write("QSO#   QSO Date     Callsign      SKCC#    Name         State        Band\n")
+            await File.write("--------------------------------------------------------------------------\n")
+
             for Count, (QsoDate, TheirMemberNumber, MainCallSign, MemberName, State, Band) in enumerate(QSOs):
                 Date = cDateTimeFormatter.format_date(QsoDate)
                 # Format to match gold standard: line_num date callsign member_num name state band
@@ -3257,6 +3271,10 @@ class cQSO:
         QSOsByState = {data[0]: data for data in sorted(QSOs_list, key=lambda q: q[0])}
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as file:
+            # Write header
+            await file.write(" State    Callsign     SKCC#     Name          Date             Band\n")
+            await file.write("----------------------------------------------------------------------\n")
+
             # Sort states alphabetically for consistent output
             for state in sorted(US_STATES):
                 if state in QSOsByState:

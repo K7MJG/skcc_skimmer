@@ -4906,6 +4906,10 @@ func writeCTSAward(name string, contacts []ProcessedQSO) {
         return sorted[i].Call < sorted[j].Call
     })
 
+    // Write header
+    fmt.Fprintln(file, "QSO#   QSO Date     Callsign      SKCC#    Name         State        Band")
+    fmt.Fprintln(file, "--------------------------------------------------------------------------")
+
     for i, qso := range sorted {
         dateStr := formatDate(qso.QSODate)
         band := strings.TrimSuffix(qso.Band, "M")
@@ -4980,6 +4984,10 @@ func writeWASAward(name string, contacts []ProcessedQSO, members map[string]*Mem
         contactsByState[qso.State] = qso
     }
 
+    // Write header
+    fmt.Fprintln(file, " State    Callsign     SKCC#     Name          Date             Band")
+    fmt.Fprintln(file, "----------------------------------------------------------------------")
+
     // Write states in alphabetical order (matching Xojo behavior)
     for _, state := range usStates {
         if qso, exists := contactsByState[state]; exists {
@@ -4991,8 +4999,8 @@ func writeWASAward(name string, contacts []ProcessedQSO, members map[string]*Mem
             if len(nameStr) > 12 {
                 nameStr = nameStr[:12]
             }
-            // Add leading space to match Xojo format
-            fmt.Fprintf(file, " %-8s %-12s %-9s %-13s %-16s %s\n",
+            // Format to match Python output (no leading space on data lines)
+            fmt.Fprintf(file, "%-8s %-12s %-9s %-13s %-16s %s\n",
                 qso.State, displayCall, skccWithSuffix, nameStr, dateStr, qso.Band)
         } else {
             fmt.Fprintln(file, state)
@@ -5030,6 +5038,10 @@ func writePrefixAward(contacts []ProcessedQSO) {
     defer file.Close()
 
     // Contacts slice is already sorted by prefix, then callsign
+    // Write header
+    fmt.Fprintln(file, "QSO#   QSO Date     Callsign      SKCC#    Name         Prefix       Band    Total Points")
+    fmt.Fprintln(file, "------------------------------------------------------------------------------------------")
+
     totalPoints := 0
     for i, qso := range contacts {
         pts, _ := strconv.Atoi(qso.PfxPts)
@@ -5073,6 +5085,10 @@ func writeQRPAward(contacts []ProcessedQSO) {
         file, _ := os.Create(filename)
         defer file.Close()
 
+        // Write header
+        fmt.Fprintln(file, "  #    SKCC#    Callsign     Band   Points    Total")
+        fmt.Fprintln(file, "-------------------------------------------------------")
+
         totalPts := 0.0
         for i, qso := range qrp1x {
             pts := qrpBandPoints[qso.Band]
@@ -5089,6 +5105,10 @@ func writeQRPAward(contacts []ProcessedQSO) {
         filename := filepath.Join("QSOs", config.MyCallsign+"-QRP-2x.txt")
         file, _ := os.Create(filename)
         defer file.Close()
+
+        // Write header
+        fmt.Fprintln(file, "  #    SKCC#    Callsign     Band   Points    Total")
+        fmt.Fprintln(file, "-------------------------------------------------------")
 
         totalPts := 0.0
         for i, qso := range qrp2x {
