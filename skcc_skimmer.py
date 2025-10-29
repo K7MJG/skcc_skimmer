@@ -928,17 +928,17 @@ class cAwardFileWriter:
 
     @staticmethod
     async def write_tka_key_type_section(file: aiofiles.threadpool.text.AsyncTextIOWrapper,
-                                       contacts: dict[str, tuple[str, str, str, str, str]],
+                                       contacts: list[tuple[str, str, str, str, str]],
                                        key_type: str) -> None:
         """Write a section of TKA contacts for a specific key type.
 
         Args:
             file: The file handle to write to
-            contacts: Dictionary of contacts for this key type
+            contacts: List of contacts for this key type (date, member_number, callsign, name, spc)
             key_type: The key type name (BUG, SK, SS)
         """
-        sorted_contacts = sorted(contacts.items(), key=lambda x: x[1][0])
-        for idx, (member_number, (qso_date, _, callsign, name, spc)) in enumerate(sorted_contacts, 1):
+        # Contacts are already in the correct order, just enumerate them
+        for idx, (qso_date, member_number, callsign, name, spc) in enumerate(contacts, 1):
             date_str = cDateTimeFormatter.format_date(qso_date)
             await file.write(f"{idx:<6} {date_str}  {callsign:<13} {member_number:<8} {name:<12} {spc:<12} {key_type}\n")
 
@@ -1527,7 +1527,7 @@ class cQSO:
     ContactsForK3Y:   dict[str, dict[int, str]]
     ContactsForQRP:   list[tuple[str, str, str, str, int]]  # (date, member_num, callsign, band, qrp_type) where qrp_type: 1=1xQRP, 2=2xQRP
     QRPQualifiedQSOs: list[QRPQSOData]  # Phase 1: QRP-qualified QSOs for band-by-band processing
-    ContactsForDXC:   list[tuple[str, str, str, str, str]]  # (date, member_number, call, name, band)
+    ContactsForDXC:   list[tuple[str, str, str, str, str, str]]  # (date, member_number, call, name, band, dxcc_code)
     ContactsForDXQ:   list[tuple[str, str, str, str, str, str]]  # (date, member_number, call, name, band, dxcc_code)
     DXC_HomeCountryUsed: bool = False  # Track if home country slot has been used
     ContactsForTKA_SK:  list[tuple[str, str, str, str, str]]  # (date, member_number, call, name, spc) - Straight Key
@@ -1541,6 +1541,21 @@ class cQSO:
     QSOsByMemberNumber: dict[str, list[str]]
 
     QSOs: list[tuple[str, str, str, float, str, str, str, str, str, str, str, str, str, str]]  # (date, call, state, freq, comment, skcc, suffix, tx_pwr, rx_pwr, dxcc, band, key_type, name, time_off)
+
+    # Lookup sets/dicts for O(1) membership checking during RBN processing
+    # These are populated from the lists after award processing
+    _seen_c: ClassVar[set[str]] = set()  # Member numbers
+    _seen_t: ClassVar[set[str]] = set()
+    _seen_s: ClassVar[set[str]] = set()
+    _seen_was: ClassVar[set[str]] = set()  # States
+    _seen_was_c: ClassVar[set[str]] = set()
+    _seen_was_t: ClassVar[set[str]] = set()
+    _seen_was_s: ClassVar[set[str]] = set()
+    _seen_prefix: ClassVar[dict[str, int]] = {}  # prefix -> highest member number
+    _seen_dxc: ClassVar[set[str]] = set()  # DXCC codes
+    _seen_dxq: ClassVar[set[str]] = set()  # Member numbers
+    _seen_qrp: ClassVar[set[str]] = set()  # member_band keys
+    _seen_tka: ClassVar[set[str]] = set()  # Member numbers (all key types)
 
     Prefix_RegEx = re.compile(r'(?:.*/)?([0-9]*[a-zA-Z]+\d+)')
 
@@ -1574,6 +1589,20 @@ class cQSO:
         cls.ContactsForTKA_SS  = []
         cls.ContactsForRC      = []
         cls.QSOsByMemberNumber = {}
+
+        # Clear lookup sets for RBN processing
+        cls._seen_c = set()
+        cls._seen_t = set()
+        cls._seen_s = set()
+        cls._seen_was = set()
+        cls._seen_was_c = set()
+        cls._seen_was_t = set()
+        cls._seen_was_s = set()
+        cls._seen_prefix = {}
+        cls._seen_dxc = set()
+        cls._seen_dxq = set()
+        cls._seen_qrp = set()
+        cls._seen_tka = set()
 
         await cls.read_qsos_async()
 
@@ -1826,7 +1855,7 @@ class cQSO:
             # Calculate total RC minutes
             total_rc_minutes = sum(
                 int(qso[5]) if len(qso) > 5 else 0  # ragchew_mins is at index 5 in the tuple
-                for qso in cls.ContactsForRC.values()
+                for qso in cls.ContactsForRC
             )
 
             if total_rc_minutes >= 300:
@@ -2382,18 +2411,21 @@ class cQSO:
         if 'TKA' in cConfig.GOALS:
             cls.print_tka_award_progress()
 
-        def remaining_states(Class: str, QSOs: dict[str, tuple[str, str, str, str, str, str]]) -> None:
-            if len(QSOs) == len(US_STATES):
+        def remaining_states(Class: str, QSOs: list[tuple[str, str, str, str, str, str]]) -> None:
+            # Extract states from list (state is at index 0)
+            states_worked = {qso[0] for qso in QSOs}
+
+            if len(states_worked) == len(US_STATES):
                 Need = 'none needed'
             else:
-                RemainingStates = [State for State in US_STATES if State not in QSOs]
+                RemainingStates = [State for State in US_STATES if State not in states_worked]
 
                 if len(RemainingStates) > 14:
                     Need = f'only need {len(RemainingStates)} more'
                 else:
                     Need = f'only need {",".join(RemainingStates)}'
 
-            print(f'{Class}: Have {len(QSOs)}, {Need}')
+            print(f'{Class}: Have {len(states_worked)}, {Need}')
 
         if 'WAS' in cConfig.GOALS:
             remaining_states('WAS', cls.ContactsForWAS)
@@ -2433,9 +2465,9 @@ class cQSO:
 
     @classmethod
     def _check_cts_goal(cls, award_type: str, member_number: str, contacts_list: list[tuple[str, str, str, str, str, str]],
-                        my_award_date: str) -> str | None:
-        # Check if member_number is in the list (member number is at index 1)
-        if not any(contact[1] == member_number for contact in contacts_list):
+                        my_award_date: str, seen_set: set[str]) -> str | None:
+        # Check if member_number is in the lookup set (O(1) instead of O(n))
+        if member_number not in seen_set:
             if not my_award_date:
                 # Working toward initial award
                 return award_type
@@ -2500,32 +2532,32 @@ class cQSO:
 
         # C award processing - handles both initial C and multipliers intelligently
         if 'C' in cConfig.GOALS:
-            result = cls._check_cts_goal('C', TheirMemberNumber, cls.ContactsForC, cls.MyC_Date)
+            result = cls._check_cts_goal('C', TheirMemberNumber, cls.ContactsForC, cls.MyC_Date, cls._seen_c)
             if result:
                 GoalHitList.append(result)
 
         # T award processing - handles both initial T and multipliers intelligently
         if 'T' in cConfig.GOALS and cls.MyC_Date and TheirC_Date:
-            result = cls._check_cts_goal('T', TheirMemberNumber, cls.ContactsForT, cls.MyT_Date)
+            result = cls._check_cts_goal('T', TheirMemberNumber, cls.ContactsForT, cls.MyT_Date, cls._seen_t)
             if result:
                 GoalHitList.append(result)
 
         # S award processing - handles both initial S and multipliers intelligently
         if 'S' in cConfig.GOALS and cls.MyTX8_Date and TheirT_Date:
-            result = cls._check_cts_goal('S', TheirMemberNumber, cls.ContactsForS, cls.MyS_Date)
+            result = cls._check_cts_goal('S', TheirMemberNumber, cls.ContactsForS, cls.MyS_Date, cls._seen_s)
             if result:
                 GoalHitList.append(result)
 
-        if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS:
+        if 'WAS' in cConfig.GOALS and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls._seen_was:
             GoalHitList.append('WAS')
 
-        if 'WAS-C' in cConfig.GOALS and TheirC_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_C:
+        if 'WAS-C' in cConfig.GOALS and TheirC_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls._seen_was_c:
             GoalHitList.append('WAS-C')
 
-        if 'WAS-T' in cConfig.GOALS and TheirT_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_T:
+        if 'WAS-T' in cConfig.GOALS and TheirT_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls._seen_was_t:
             GoalHitList.append('WAS-T')
 
-        if 'WAS-S' in cConfig.GOALS and TheirS_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls.ContactsForWAS_S:
+        if 'WAS-S' in cConfig.GOALS and TheirS_Date and (spc := TheirMemberEntry['spc']) in US_STATES and spc not in cls._seen_was_s:
             GoalHitList.append('WAS-S')
 
         if 'P' in cConfig.GOALS and (match := cQSO.Prefix_RegEx.match(TheirCallSign)):
@@ -2533,9 +2565,10 @@ class cQSO:
             i_their_member_number = int(TheirMemberNumber)
             _, x_factor = cQSO.calculate_numerics('P', cls.calc_prefix_points())
 
-            if (contact := cls.ContactsForP.get(prefix)):
-                if i_their_member_number > contact[2]:
-                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - contact[2]})')
+            if prefix in cls._seen_prefix:
+                highest_member_number = cls._seen_prefix[prefix]
+                if i_their_member_number > highest_member_number:
+                    GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(+{i_their_member_number - highest_member_number})')
             else:
                 GoalHitList.append(f'{cUtil.abbreviate_class("P", x_factor)}(new +{i_their_member_number})')
 
@@ -2546,14 +2579,14 @@ class cQSO:
                 home_dxcc = cls.MyDXCC_Code
 
                 # Check DXC (unique countries)
-                if dxcc_code not in cls.ContactsForDXC:
+                if dxcc_code not in cls._seen_dxc:
                     # Get current DXC count and next level
                     dxc_count = len(cls.ContactsForDXC)
                     _, next_level, _ = cls.get_dx_award_level_and_next(dxc_count + 1)
                     GoalHitList.append(f'DXCx{next_level}')
 
                 # Check DXQ (foreign member QSOs)
-                if dxcc_code != home_dxcc and TheirMemberNumber not in cls.ContactsForDXQ:
+                if dxcc_code != home_dxcc and TheirMemberNumber not in cls._seen_dxq:
                     # Get current DXQ count and next level
                     dxq_count = len(cls.ContactsForDXQ)
                     _, next_level, _ = cls.get_dx_award_level_and_next(dxq_count + 1)
@@ -2566,7 +2599,7 @@ class cQSO:
             band = cSKCC.which_arrl_band(fFrequency)
             if band:
                 qrp_key = f"{TheirMemberNumber}_{band}"
-                if qrp_key not in cls.ContactsForQRP:
+                if qrp_key not in cls._seen_qrp:
                     # Calculate current QRP points to determine which level we're working toward
                     # QRP awards are points-based: 300 points per level for 1xQRP, 150 for 2xQRP
 
@@ -2597,12 +2630,7 @@ class cQSO:
             # (100 of each key type)
             if sk_count < 100 or bug_count < 100 or ss_count < 100:
                 # Check if we've already worked this member for TKA (any key type)
-                all_tka_members: set[str] = set()
-                all_tka_members.update(contact[1] for contact in cls.ContactsForTKA_SK)
-                all_tka_members.update(contact[1] for contact in cls.ContactsForTKA_BUG)
-                all_tka_members.update(contact[1] for contact in cls.ContactsForTKA_SS)
-
-                if TheirMemberNumber not in all_tka_members:
+                if TheirMemberNumber not in cls._seen_tka:
                     # Haven't worked them yet for TKA, so it's a goal hit
                     GoalHitList.append('TKA')
 
@@ -2794,7 +2822,10 @@ class cQSO:
         # Remove duplicates from the largest dictionary to balance counts
         cls._remove_tka_duplicates()
 
-        cls.ContactsForBRAG = contacts['BRAG']
+        # Populate lookup structures for O(1) membership checking during RBN processing
+        cls._populate_lookups()
+
+        cls.Brag = contacts['BRAG']
         cls.ContactsForRC = contacts['RC']
 
         # Store stats for later use
@@ -2987,7 +3018,7 @@ class cQSO:
     async def _write_dx_award_file(
         cls,
         award_type: str,
-        contacts: dict[str, Any],
+        contacts: list[tuple[str, str, str, str, str, str]],
         footer_label: str
     ) -> None:
         """Helper to write DXC or DXQ award file with common formatting."""
@@ -3001,9 +3032,9 @@ class cQSO:
             # Sort DXC by DXCC code, DXQ by date
             if award_type == 'DXC':
                 # DXC: iterate by DXCC code
-                # ContactsForDXC is dict[str, tuple[str, str, str, str, str]]
-                for dxcc_code, contact_tuple in sorted(contacts.items()):
-                    qso_date, member_number, callsign, name, band = contact_tuple
+                # ContactsForDXC is list[tuple[str, str, str, str, str, str]]  # (date, member_number, call, name, band, dxcc_code)
+                for contact_tuple in sorted(contacts, key=lambda x: x[5]):  # Sort by DXCC code (index 5)
+                    qso_date, member_number, callsign, name, band, dxcc_code = contact_tuple
                     count += 1
                     date_str = cDateTimeFormatter.format_date(qso_date)
                     country_name = cls.get_country_name(dxcc_code)
@@ -3011,9 +3042,9 @@ class cQSO:
                     await file.write(f"{count:3}  {date_str}  {callsign:<12} {display_name:<11} {member_number:<7} {dxcc_code:>4}  {country_name:<20} {band}\n")
             else:  # DXQ
                 # DXQ: iterate by member, sorted by date
-                # ContactsForDXQ is dict[str, tuple[str, str, str, str, str, str]]
-                for member_number, contact_tuple in sorted(contacts.items(), key=lambda x: x[1][0]):
-                    qso_date, _, callsign, name, band, dxcc_code = contact_tuple
+                # ContactsForDXQ is list[tuple[str, str, str, str, str, str]]  # (date, member_number, call, name, band, dxcc_code)
+                for contact_tuple in sorted(contacts, key=lambda x: x[0]):  # Sort by date (index 0)
+                    qso_date, member_number, callsign, name, band, dxcc_code = contact_tuple
                     count += 1
                     date_str = cDateTimeFormatter.format_date(qso_date)
                     country_name = cls.get_country_name(dxcc_code) if dxcc_code else 'Unknown'
@@ -3110,7 +3141,7 @@ class cQSO:
             await file.write(f"TOTAL MINUTES: {total_minutes:,}\n")
 
     @classmethod
-    async def award_qrp_async(cls, QSOs: dict[str, tuple[str, str, str, int]]) -> None:
+    async def award_qrp_async(cls, QSOs: list[tuple[str, str, str, str, int]]) -> None:
 
         if not QSOs:
             return
@@ -3120,11 +3151,8 @@ class cQSO:
 
         def qrp_2x_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
             contacts: list[tuple[str, str, str, str, float]] = []
-            for qso_key, (qso_date, member_number, callsign, qrp_type) in QSOs.items():
+            for (qso_date, member_number, callsign, band, qrp_type) in QSOs:
                 if qrp_type == 2:  # QRP 2x: TX power <= 5W AND RX power <= 5W
-                    # Extract band from the key (format: "member_band")
-                    key_parts = qso_key.split('_')
-                    band: str = key_parts[1] if len(key_parts) >= 2 else ""
                     points: float = band_points.get(band, 0.0)
                     contacts.append((qso_date, member_number, callsign, band, points))
 
@@ -3134,10 +3162,8 @@ class cQSO:
         # Write 1xQRP file (ALL QRP contacts count toward 1xQRP)
         def all_qrp_contacts_generator() -> Iterator[tuple[str, str, str, str, float]]:
             contacts: list[tuple[str, str, str, str, float]] = []
-            for qso_key, (qso_date, member_number, callsign, _) in QSOs.items():
+            for (qso_date, member_number, callsign, band, _) in QSOs:
                 # ALL QRP contacts count toward 1xQRP award
-                key_parts = qso_key.split('_')
-                band: str = key_parts[1] if len(key_parts) >= 2 else ""
                 points: float = band_points.get(band, 0.0)
                 contacts.append((qso_date, member_number, callsign, band, points))
 
@@ -3194,12 +3220,12 @@ class cQSO:
                 await file.write(f"Progress: {total_points*2/3:.1f}%\n")
 
     @classmethod
-    async def award_p_async(cls, QSOs: dict[str, tuple[str, str, int, str, str, str]]) -> None:
+    async def award_p_async(cls, QSOs: list[tuple[str, str, int, str, str, str]]) -> None:
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, 'P'), 'w', encoding='utf-8') as file:
             iPoints = 0
             for index, (qso_date, prefix, member_number, first_name, callsign, band) in enumerate(
-                sorted(QSOs.values(), key=lambda q: q[1]), start=1
+                sorted(QSOs, key=lambda q: q[1]), start=1
             ):
                 iPoints += member_number
                 date = f'{qso_date[0:4]}-{qso_date[4:6]}-{qso_date[6:8]}'
@@ -3210,10 +3236,10 @@ class cQSO:
                 await file.write(f"{index:>5}  {date}   {callsign:<13} {member_number:<8} {name_display:<12} {prefix:<12} {band_display:>3}  {iPoints:>10,}\n")
 
     @classmethod
-    async def award_cts_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
+    async def award_cts_async(cls, Class: str, QSOs_list: list[tuple[str, str, str, str, str, str]]) -> None:
 
-        QSOs = QSOs_dict.values()
-        QSOs = sorted(QSOs, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
+        # Sort by date and callsign
+        QSOs = sorted(QSOs_list, key=lambda QsoTuple: (QsoTuple[0], QsoTuple[2]))
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as File:
             for Count, (QsoDate, TheirMemberNumber, MainCallSign, MemberName, State, Band) in enumerate(QSOs):
@@ -3226,9 +3252,9 @@ class cQSO:
                 await File.write(f'{Count+1:<6} {Date:>11}   {MainCallSign:<13} {TheirMemberNumber:<8} {name_display:<12} {State:<12} {band_display:>2}\n')
 
     @classmethod
-    async def award_was_async(cls, Class: str, QSOs_dict: dict[str, tuple[str, str, str, str, str, str]]) -> None:
+    async def award_was_async(cls, Class: str, QSOs_list: list[tuple[str, str, str, str, str, str]]) -> None:
 
-        QSOsByState = {data[0]: data for data in sorted(QSOs_dict.values(), key=lambda q: q[0])}
+        QSOsByState = {data[0]: data for data in sorted(QSOs_list, key=lambda q: q[0])}
 
         async with aiofiles.open(cUtil.qso_file_path(cConfig.MY_CALLSIGN, Class), 'w', encoding='utf-8') as file:
             # Sort states alphabetically for consistent output
@@ -3268,9 +3294,9 @@ class cQSO:
         """
         # Find all members that appear in multiple lists
         # Member number is at index 1 in the tuple: (date, member_number, call, name, spc)
-        sk_members = set(contact[1] for contact in cls.ContactsForTKA_SK)
-        bug_members = set(contact[1] for contact in cls.ContactsForTKA_BUG)
-        ss_members = set(contact[1] for contact in cls.ContactsForTKA_SS)
+        sk_members = {contact[1] for contact in cls.ContactsForTKA_SK}
+        bug_members = {contact[1] for contact in cls.ContactsForTKA_BUG}
+        ss_members = {contact[1] for contact in cls.ContactsForTKA_SS}
 
         # Find duplicates - members in multiple lists
         all_duplicates = (
@@ -3342,6 +3368,37 @@ class cQSO:
 
                 # Update count
                 count = sum([bug_logged, sk_logged, ss_logged])
+
+    @classmethod
+    def _populate_lookups(cls) -> None:
+        """Populate lookup sets/dicts from award lists for O(1) membership checking during RBN processing."""
+        # C/T/S awards - extract member numbers (index 1)
+        cls._seen_c = {contact[1] for contact in cls.ContactsForC}
+        cls._seen_t = {contact[1] for contact in cls.ContactsForT}
+        cls._seen_s = {contact[1] for contact in cls.ContactsForS}
+
+        # WAS variants - extract states (index 0)
+        cls._seen_was = {contact[0] for contact in cls.ContactsForWAS}
+        cls._seen_was_c = {contact[0] for contact in cls.ContactsForWAS_C}
+        cls._seen_was_t = {contact[0] for contact in cls.ContactsForWAS_T}
+        cls._seen_was_s = {contact[0] for contact in cls.ContactsForWAS_S}
+
+        # Prefix award - map prefix (index 1) to highest member number (index 2)
+        cls._seen_prefix = {contact[1]: contact[2] for contact in cls.ContactsForP}
+
+        # DX awards - extract DXCC codes (index 5) and member numbers (index 1)
+        # DXC/DXQ tuples: (date, member_num, callsign, name, band, dxcc_code)
+        cls._seen_dxc = {contact[5] for contact in cls.ContactsForDXC}  # Extract dxcc_code
+        cls._seen_dxq = {contact[1] for contact in cls.ContactsForDXQ}  # Extract member_num
+
+        # QRP award - extract member_band keys (index 0)
+        cls._seen_qrp = {contact[0] for contact in cls.ContactsForQRP}
+
+        # TKA award - collect all member numbers from all three key types (index 1)
+        cls._seen_tka = set()
+        cls._seen_tka.update(contact[1] for contact in cls.ContactsForTKA_SK)
+        cls._seen_tka.update(contact[1] for contact in cls.ContactsForTKA_BUG)
+        cls._seen_tka.update(contact[1] for contact in cls.ContactsForTKA_SS)
 
     @classmethod
     def _process_k3y_qsos(cls) -> None:
@@ -4238,11 +4295,11 @@ class cAwards:
                 seen_s[member_num] = True
 
             # DX contacts (only first QSO per country/member) - also benefit from chronological
-            if qso.dxc_qso == "YES" and qso.dx_code not in seen_dxc:
+            if qso.dxc_qso == "YES" and qso.dx_code and qso.dx_code not in seen_dxc:
                 # Store additional fields for better reporting
                 name = qso.log_name if hasattr(qso, 'log_name') else ''
                 band = qso.log_band.upper() if hasattr(qso, 'log_band') else ''
-                contacts['DXC'].append((date, member_num, callsign, name, band))
+                contacts['DXC'].append((date, member_num, callsign, name, band, qso.dx_code))
                 seen_dxc[qso.dx_code] = True
 
             if qso.dxq_qso == "YES" and member_num not in seen_dxq:
@@ -4315,7 +4372,7 @@ class cAwards:
                 seen_was_s[state] = True
 
             # Prefix contacts (highest member number per prefix) - use temp dict during extraction
-            if qso.pfx and qso.pfx_pts:
+            if qso.pfx and qso.pfx_pts and qso.pfx_call:
                 # Key: prefix, Value: (date, prefix, member_number, name, callsign, band)
                 member_number_int = int(member_num)
                 if qso.pfx not in temp_prefix or member_number_int > temp_prefix[qso.pfx][2]:
