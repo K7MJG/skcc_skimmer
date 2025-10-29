@@ -2737,8 +2737,9 @@ func (im *InteractiveMode) refresh() error {
     processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
     copy(processedQSOsADI, processedQSOs)
 
-    // Sort chronologically for C/T/S/DX awards
-    processedQSOsChrono := processedQSOs
+    // Create copy for chronological sorting (C/T/S/DX awards)
+    processedQSOsChrono := make([]ProcessedQSO, len(processedQSOs))
+    copy(processedQSOsChrono, processedQSOs)
     sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
         if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
             return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
@@ -4290,44 +4291,82 @@ func calculateDuration(timeOn, timeOff string) int {
 // ============================================================================
 
 // ExtractAwards extracts award-specific contacts from processed QSOs
-// Uses dual-pass processing: chrono for C/T/S/DX, adiOrder for WAS/P/QRP/TKA/BRAG/RC
+// Uses dual-pass processing: chrono for DX only, adiOrder for C/T/S/WAS/P/QRP/TKA/BRAG/RC
 func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]any {
     awards := make(map[string]any)
 
-    // C, T, S awards - use chronological order (oldest QSO first)
-    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
-    contactsC := []ProcessedQSO{}
-    contactsT := []ProcessedQSO{}
-    contactsS := []ProcessedQSO{}
-    seenC := make(map[string]bool)
-    seenT := make(map[string]bool)
-    seenS := make(map[string]bool)
+    // C, T, S awards - match Xojo's exact logic (CTSAwardStatus.xojo_window:3431)
+    // Xojo: "ORDER BY Log_QSO_DATE" (DATE ONLY, not time!)
+    // When multiple QSOs on same date, SQL preserves insertion order (ADI file order)
+    // Then deduplicate: keep FIRST occurrence of each member
 
-    for _, qso := range chrono {
+    // Sort by DATE only (stable sort preserves ADI order within same date)
+    dateOnly := make([]ProcessedQSO, len(adiOrder))
+    copy(dateOnly, adiOrder)
+    sort.SliceStable(dateOnly, func(i, j int) bool {
+        return dateOnly[i].QSODate < dateOnly[j].QSODate  // Date only!
+    })
+
+    mapC := make(map[string]ProcessedQSO)  // Stores selected QSO for each member
+    mapT := make(map[string]ProcessedQSO)
+    mapS := make(map[string]ProcessedQSO)
+
+    for _, qso := range dateOnly {
         key := qso.SKCCNr
 
-        // Centurion - all members
-        if !seenC[key] {
-            contactsC = append(contactsC, qso)
-            seenC[key] = true
+        // Centurion - all members (keep first in date-only order)
+        if _, exists := mapC[key]; !exists {
+            mapC[key] = qso
         }
 
         // Tribune - both Centurion
         if qso.TribAwardQSO {
-            if !seenT[key] {
-                contactsT = append(contactsT, qso)
-                seenT[key] = true
+            if _, exists := mapT[key]; !exists {
+                mapT[key] = qso
             }
         }
 
         // Senator - I have Tx8, they have T/S
         if qso.SenAwardQSO {
-            if !seenS[key] {
-                contactsS = append(contactsS, qso)
-                seenS[key] = true
+            if _, exists := mapS[key]; !exists {
+                mapS[key] = qso
             }
         }
     }
+
+    // Convert maps to slices and sort chronologically
+    contactsC := make([]ProcessedQSO, 0, len(mapC))
+    for _, qso := range mapC {
+        contactsC = append(contactsC, qso)
+    }
+    sort.SliceStable(contactsC, func(i, j int) bool {
+        if contactsC[i].QSODate != contactsC[j].QSODate {
+            return contactsC[i].QSODate < contactsC[j].QSODate
+        }
+        return contactsC[i].TimeOn < contactsC[j].TimeOn
+    })
+
+    contactsT := make([]ProcessedQSO, 0, len(mapT))
+    for _, qso := range mapT {
+        contactsT = append(contactsT, qso)
+    }
+    sort.SliceStable(contactsT, func(i, j int) bool {
+        if contactsT[i].QSODate != contactsT[j].QSODate {
+            return contactsT[i].QSODate < contactsT[j].QSODate
+        }
+        return contactsT[i].TimeOn < contactsT[j].TimeOn
+    })
+
+    contactsS := make([]ProcessedQSO, 0, len(mapS))
+    for _, qso := range mapS {
+        contactsS = append(contactsS, qso)
+    }
+    sort.SliceStable(contactsS, func(i, j int) bool {
+        if contactsS[i].QSODate != contactsS[j].QSODate {
+            return contactsS[i].QSODate < contactsS[j].QSODate
+        }
+        return contactsS[i].TimeOn < contactsS[j].TimeOn
+    })
 
     awards["C"] = contactsC
     awards["T"] = contactsT
@@ -5259,15 +5298,18 @@ func writeTKAAward(sk, bug, ss []ProcessedQSO) {
         for _, qso := range contacts {
             sorted = append(sorted, qso)
         }
-        // Sort by date, then time, then callsign for deterministic ordering
+        // Sort matching Xojo SQL (TripleKeyAwardStatus.xojo_window:861)
+        // ORDER BY Log_Key_Type, CAST(Log_SKCC_Nr AS SIGNED), Log_QSO_DATE
+        // Key_Type is implicit (handled by writing BUG, SK, SS separately)
+        // So we sort by: SKCC# (numeric), then Date
         sort.SliceStable(sorted, func(i, j int) bool {
-            if sorted[i].QSODate != sorted[j].QSODate {
-                return sorted[i].QSODate < sorted[j].QSODate
+            iNum, _ := strconv.Atoi(cleanSKCCNumber(sorted[i].SKCCNr))
+            jNum, _ := strconv.Atoi(cleanSKCCNumber(sorted[j].SKCCNr))
+            if iNum != jNum {
+                return iNum < jNum
             }
-            if sorted[i].TimeOn != sorted[j].TimeOn {
-                return sorted[i].TimeOn < sorted[j].TimeOn
-            }
-            return sorted[i].Call < sorted[j].Call
+            // Same SKCC# - sort by date
+            return sorted[i].QSODate < sorted[j].QSODate
         })
 
         for i, qso := range sorted {
@@ -7044,8 +7086,9 @@ func main() {
     processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
     copy(processedQSOsADI, processedQSOs)
 
-    // Sort chronologically for C/T/S/DX awards
-    processedQSOsChrono := processedQSOs
+    // Create copy for chronological sorting (C/T/S/DX awards)
+    processedQSOsChrono := make([]ProcessedQSO, len(processedQSOs))
+    copy(processedQSOsChrono, processedQSOs)
     sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
         if processedQSOsChrono[i].QSODate != processedQSOsChrono[j].QSODate {
             return processedQSOsChrono[i].QSODate < processedQSOsChrono[j].QSODate
