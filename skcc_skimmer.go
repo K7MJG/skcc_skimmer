@@ -4481,20 +4481,29 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     })
     awards["QRP"] = contactsQRP
 
-    // DX - use chronological order (oldest QSO first)
+    // DX awards - match Xojo's exact SQL behavior
+    // DXC: SELECT with NO ORDER BY (DXAwardStatus.xojo_window:2457) → ADI file order
+    // DXQ: SELECT ORDER BY Log_QSO_DATE (line 2409) → DATE-only, ADI tiebreaker
     // Store as SLICES to maintain order, use separate maps only for uniqueness checking
-    contactsDXC := []ProcessedQSO{}
-    contactsDXQ := []ProcessedQSO{}
-    seenDXC := make(map[string]bool)
-    seenDXQ := make(map[string]bool)
 
-    for _, qso := range chrono {
+    // DXC - use ADI file order (first per country)
+    contactsDXC := []ProcessedQSO{}
+    seenDXC := make(map[string]bool)
+
+    for _, qso := range adiOrder {
         if qso.DXCQSO {
             if !seenDXC[qso.DXCode] {
                 contactsDXC = append(contactsDXC, qso)
                 seenDXC[qso.DXCode] = true
             }
         }
+    }
+
+    // DXQ - use DATE-only sort (like C/T/S awards, first per member)
+    contactsDXQ := []ProcessedQSO{}
+    seenDXQ := make(map[string]bool)
+
+    for _, qso := range dateOnly {
         if qso.DXQQSO {
             if !seenDXQ[qso.SKCCNr] {
                 contactsDXQ = append(contactsDXQ, qso)
@@ -4502,6 +4511,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
             }
         }
     }
+
     awards["DXC"] = contactsDXC
     awards["DXQ"] = contactsDXQ
 
@@ -4542,8 +4552,18 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     seenTKABUG := make(map[string]bool)
     seenTKASS := make(map[string]bool)
 
+    // Track first-seen order for duplicate processing (matches Xojo dict insertion order)
+    var tkaFirstSeenOrder []string
+    tkaFirstSeen := make(map[string]bool)
+
     for _, qso := range adiOrder {
         if qso.TKAQSO {
+            // Track first occurrence of this member across all key types
+            if !tkaFirstSeen[qso.SKCCNr] {
+                tkaFirstSeenOrder = append(tkaFirstSeenOrder, qso.SKCCNr)
+                tkaFirstSeen[qso.SKCCNr] = true
+            }
+
             kt := strings.ToUpper(qso.KeyType)
             switch kt {
             case "SK", "S":
@@ -4566,7 +4586,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     }
 
     // TKA duplicate removal (Xojo logic) - now operates on slices
-    contactsTKASK, contactsTKABUG, contactsTKASS = removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS)
+    contactsTKASK, contactsTKABUG, contactsTKASS = removeTKADuplicates(contactsTKASK, contactsTKABUG, contactsTKASS, tkaFirstSeenOrder)
 
     awards["TKA_SK"] = contactsTKASK
     awards["TKA_BUG"] = contactsTKABUG
@@ -4612,7 +4632,7 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     return awards
 }
 
-func removeTKADuplicates(sk, bug, ss []ProcessedQSO) ([]ProcessedQSO, []ProcessedQSO, []ProcessedQSO) {
+func removeTKADuplicates(sk, bug, ss []ProcessedQSO, firstSeenOrder []string) ([]ProcessedQSO, []ProcessedQSO, []ProcessedQSO) {
     // Build temporary maps to identify which members are in which categories
     skMap := make(map[string]bool)
     bugMap := make(map[string]bool)
@@ -4645,18 +4665,14 @@ func removeTKADuplicates(sk, bug, ss []ProcessedQSO) ([]ProcessedQSO, []Processe
     removeFromBUG := make(map[string]bool)
     removeFromSS := make(map[string]bool)
 
-    // Extract duplicates and sort in ascending order to match Xojo's
-    // database iteration (no ORDER BY = insertion/chronological order)
-    var duplicates []string
-    for member, count := range allMembers {
-        if count > 1 {
-            duplicates = append(duplicates, member)
+    // Process duplicates in ADI file order (matches Xojo's dictionary insertion order)
+    // Xojo iterates through dupe_dict.Key(i) which maintains insertion order
+    // firstSeenOrder already contains members in the order they first appeared in ADI file
+    for _, member := range firstSeenOrder {
+        // Only process if this member is a duplicate (appears in multiple categories)
+        if allMembers[member] <= 1 {
+            continue
         }
-    }
-    sort.Strings(duplicates) // Sort ascending to match Xojo behavior
-
-    // Process duplicates in sorted order
-    for _, member := range duplicates {
         count := allMembers[member]
 
         // Member in multiple dicts - remove from largest
