@@ -3308,13 +3308,28 @@ class cQSO:
     def _remove_tka_duplicates(cls, first_seen_order: list[str]) -> None:
         """Remove duplicate members from TKA dictionaries following exact Xojo logic.
 
-        When a member appears in multiple key type dictionaries, remove them from
-        the dictionary with the most entries to keep counts balanced. Uses the exact
-        same comparison order as Xojo for deterministic results.
+        Reference: TripleKeyAwardStatus.xojo_window:753-841
+
+        When a member appears in multiple key type lists, Xojo removes them from the list
+        with the most entries to keep counts balanced. The CRITICAL detail is that Xojo
+        processes duplicates in dictionary insertion order, not alphabetically.
+
+        CRITICAL IMPLEMENTATION DETAIL:
+
+            Processing order affects the final counts because list sizes change during removal!
+
+        Example from WA9ZDC (the bug we fixed):
+          - Members with duplicates: 6069, 660, 7057, 7241, 7091, 8672 (ADI file order)
+          - If processed alphabetically: 660, 6069, 7057, 7091, 7241, 8672
+          - Different order → different list size comparisons → DIFFERENT FINAL COUNTS!
+          - Result: TKA:BUG became 102 (should be 100), TKA:SS became 95 (should be 97)
+
+        The fix: Process duplicates in first_seen_order (ADI file order when member first
+        appears), which matches Xojo's dictionary insertion order.
 
         Args:
-            first_seen_order: List of member numbers in ADI file order (matches Xojo's
-                            dictionary insertion order when processing duplicates)
+            first_seen_order: List of member numbers in ADI file order (CRITICAL for correctness!)
+                            This is the order members first appeared in the ADI file.
         """
         # Find all members that appear in multiple lists
         # Member number is at index 1 in the tuple: (date, member_number, call, name, spc)
@@ -3330,10 +3345,12 @@ class cQSO:
         )
 
         # For each duplicate, remove from appropriate lists
-        # Important: Process in ADI file order (matches Xojo's dictionary insertion order)
-        # firstSeenOrder already contains members in the order they first appeared in ADI file
+        # CRITICAL: Process in ADI file order (matches Xojo's dictionary insertion order)
+        # Xojo iterates through dupe_dict.Key(i) which maintains insertion order
+        # first_seen_order already contains members in the order they first appeared in ADI file
+        # DO NOT sort this list - processing order affects final counts!
         for member in first_seen_order:
-            # Only process if this member is a duplicate
+            # Only process if this member is a duplicate (appears in multiple lists)
             if member not in all_duplicates:
                 continue
             # Check which lists contain this member
@@ -4203,22 +4220,48 @@ class cAwards:
             )
             qsos.append(qso)
 
-        # Dual-pass processing to handle different award requirements
-        # C/T/S awards benefit from chronological order (oldest first) for consistency
-        # WAS/P awards need ADI file order to match Xojo's behavior
+        # ============================================================================
+        # THREE-PASS PROCESSING STRATEGY FOR XOJO PARITY
+        # ============================================================================
+        # To achieve 100% parity with Xojo's buggy SQL queries, we need THREE different
+        # orderings of the QSO list. This is NOT a performance optimization - it's
+        # required to match Xojo's exact behavior with incomplete/missing ORDER BY clauses.
+        #
+        # Pass 1: CHRONOLOGICAL ORDER (DATE + TIME)
+        #   - Sorted by date + time
+        #   - Used for: File output sorting only (not selection)
+        #   - Why: Display QSOs in chronological order in output files
+        #
+        # Pass 2: DATE-ONLY ORDER (stable sort preserves ADI order for same-date QSOs)
+        #   - Sorted by date only (stable=True preserves ADI order as tiebreaker)
+        #   - Used for: C/T/S, DXQ (Xojo queries: "ORDER BY Log_QSO_DATE" without TIME_ON)
+        #   - Why: Matches Xojo's incomplete ORDER BY clauses
+        #
+        # Pass 3: ADI FILE ORDER (original parsing order)
+        #   - Original order from ADI file parsing
+        #   - Used for: WAS, TKA, DXC, QRP, Prefix (Xojo queries with NO ORDER BY)
+        #   - Why: SQLite returns rows in insertion order when no ORDER BY specified
+        #
+        # See xojo_award_logic.md for complete documentation.
+        # ============================================================================
 
-        # First pass: Process in chronological order (DATE+TIME) for output sorting only
+        # Pass 1: Process in chronological order (DATE+TIME) for output sorting only
+        # Used only for output file sorting, not for award selection
         qsos_chronological = sorted(qsos, key=lambda q: (q.log_qso_date, q.log_time_on or '000000'))
         processor_chrono = cAwards(member_db, my_member, member_data)
         processed_qsos_chrono = processor_chrono.process_qsos(qsos_chronological)
 
-        # Second pass: Process in DATE-only order (matches Xojo's C/T/S and DXQ selection logic)
-        # Xojo: ORDER BY Log_QSO_DATE (no TIME_ON) - ADI order is tiebreaker
+        # Pass 2: Process in DATE-only order (matches Xojo's C/T/S and DXQ selection logic)
+        # CRITICAL: stable=True preserves ADI order as tiebreaker for same-date QSOs
+        # Xojo SQL: "ORDER BY Log_QSO_DATE" (missing TIME_ON) - SQLite returns same-date
+        # records in insertion order (ADI order), which stable sort preserves
         qsos_date_only = sorted(qsos, key=lambda q: q.log_qso_date, stable=True)
         processor_date = cAwards(member_db, my_member, member_data)
         processed_qsos_date_only = processor_date.process_qsos(qsos_date_only)
 
-        # Third pass: Process in ADI file order for WAS/P/TKA/DXC (use fresh processor)
+        # Pass 3: Process in ADI file order for WAS/P/TKA/DXC/QRP (use fresh processor)
+        # This is the original parsing order, matching Xojo's database insertion order
+        # Xojo queries with NO ORDER BY return rows in insertion order (ADI file order)
         processor_adi = cAwards(member_db, my_member, member_data)
         processed_qsos_adi_order = processor_adi.process_qsos(qsos)
         # Convert to cQSO format with stats
@@ -4299,9 +4342,26 @@ class cAwards:
             display_call = mbr.mbr_pri_call if mbr else qso.log_call
             return (state, date, display_call, skcc_with_suffix, name, band)
 
-        # Process C/T/S and DXQ awards using DATE-only sorted QSOs
-        # Matches Xojo's SQL: ORDER BY Log_QSO_DATE (no TIME_ON)
-        # ADI file order is the tiebreaker when dates match (stable sort preserves ADI order)
+        # ========================================================================
+        # C/T/S/DXQ AWARDS - DATE-Only Sorting with Deduplication
+        # ========================================================================
+        # Reference: CTSAwardStatus.xojo_window:3412-3483 (C/T/S)
+        #            DXAwardStatus.xojo_window:2404-2422 (DXQ)
+        #
+        # Xojo's logic (C/T/S):
+        #   1. SELECT ... WHERE [filters] ORDER BY Log_QSO_DATE  (line 3431)
+        #      NOTE: Missing TIME_ON in ORDER BY!
+        #   2. Loop through results, keeping first occurrence of each member (lines 3460-3483)
+        #   3. INSERT selected QSOs into temporary award database
+        #   4. SELECT from award DB ORDER BY Log_QSO_DATE, Log_TIME_ON for output (line 3306)
+        #
+        # Xojo's logic (DXQ):
+        #   1. SELECT ... WHERE DXQ_QSO = 'YES' ORDER BY Log_QSO_DATE (line 2409)
+        #      NOTE: Missing TIME_ON in ORDER BY!
+        #   2. Loop through results, keeping first occurrence of each member (lines 2415-2422)
+        #
+        # Why processed_qsos_date_only: Xojo's incomplete ORDER BY means same-date QSOs
+        # are returned in ADI file order (insertion order), which our stable sort preserves.
         for qso in processed_qsos_date_only:
             member_num = qso.log_skcc_nr
             callsign = qso.log_call
@@ -4369,13 +4429,20 @@ class cAwards:
                         contacts['RC'][last_rc_index] = rc_tuple
                         last_rc_mins = ragchew_mins
 
-        # Track first-seen order for TKA duplicate processing (matches Xojo dict insertion order)
+        # ========================================================================
+        # WAS/TKA/DXC/QRP/PREFIX AWARDS - ADI File Order Processing
+        # ========================================================================
+        # These awards use ADI file order because Xojo's SQL queries have NO ORDER BY.
+        # SQLite returns rows in insertion order (ADI file order) when no ORDER BY specified.
+        #
+        # TKA CRITICAL: Track first-seen order for duplicate processing
         # This preserves the order members first appear in ADI file, which matches Xojo's
-        # dictionary iteration order when processing duplicates
+        # dictionary insertion order. Processing duplicates in different order produces
+        # DIFFERENT FINAL COUNTS! (See detailed explanation below in TKA section)
         tka_first_seen_order: list[str] = []
         tka_first_seen: dict[str, bool] = {}
 
-        # Process WAS, P, QRP, TKA, BRAG awards using ADI file order QSOs
+        # Process awards using ADI file order QSOs (matches Xojo's database insertion order)
         for qso in processed_qsos_adi_order:
             member_num = qso.log_skcc_nr
             callsign = qso.log_call
@@ -4386,8 +4453,19 @@ class cAwards:
             # TKA uses primary callsign from member database (Log_Call_Pri in Xojo)
             tka_callsign = qso.log_call_pri
 
-            # WAS contacts (only first qualifying QSO per state)
-            # Recreate SKCC number suffix based on QSO date (matching Xojo logic)
+            # ====================================================================
+            # WAS AWARDS - ADI File Order (All 4 Variants)
+            # ====================================================================
+            # Reference: WAS_WASCAwardStatus.xojo_window:2418-2428 (and similar for T/S variants)
+            #
+            # Xojo's logic:
+            #   1. For each state, SELECT ... WHERE Log_STATE = 'XX' AND WAS_QSO = 'YES'
+            #      NOTE: NO ORDER BY clause! (line 2418)
+            #   2. If RecordCount > 0, use first record returned (line 2434)
+            #   3. Substitute current primary callsign + C/T/S suffix (lines 2449-2463)
+            #
+            # Why ADI order: Xojo's query has no ORDER BY, so SQLite returns records
+            # in insertion order (ADI file order). We take the first QSO per state.
             if qso.was_qso == "YES" and state not in seen_was:
                 contacts['WAS'].append(get_was_contact_data(member_num, date, qso, name, band, state))
                 seen_was[state] = True
@@ -4404,7 +4482,19 @@ class cAwards:
                 contacts['WAS_S'].append(get_was_contact_data(member_num, date, qso, name, band, state))
                 seen_was_s[state] = True
 
-            # DXC contacts - matches Xojo: SELECT with NO ORDER BY → ADI file order
+            # ====================================================================
+            # DXC AWARD - ADI File Order (Country Count)
+            # ====================================================================
+            # Reference: DXAwardStatus.xojo_window:2446-2462
+            #
+            # Xojo's logic:
+            #   1. Get distinct countries: SELECT DISTINCT DX_Code ... ORDER BY DX_Code (line 2446)
+            #   2. For each country: SELECT ... WHERE DX_Code = 'X' AND DXC_QSO = 'YES'
+            #      NOTE: NO ORDER BY clause! (line 2457)
+            #   3. Take first record returned
+            #
+            # Why ADI order: Xojo's per-country query has no ORDER BY, so SQLite returns
+            # records in insertion order (ADI file order). We take first QSO per country.
             if qso.dxc_qso == "YES" and qso.dx_code and qso.dx_code not in seen_dxc:
                 contacts['DXC'].append((date, member_num, callsign, name, band, qso.dx_code))
                 seen_dxc[qso.dx_code] = True
@@ -4428,9 +4518,35 @@ class cAwards:
                     # Upgrade from QRP 1x to QRP 2x if we find a 2x QSO for same member/band
                     temp_qrp[qso_key] = (date, member_num, callsign, band, qrp_type)
 
-            # TKA contacts
+            # ====================================================================
+            # TKA AWARDS - ADI File Order with CRITICAL Duplicate Processing
+            # ====================================================================
+            # Reference: TripleKeyAwardStatus.xojo_window:753-1087
+            #
+            # Xojo's logic:
+            #   1. Build three dictionaries (BUG_Dict, SK_Dict, SS_Dict) from member roster
+            #   2. For each qualifying member + key type combination:
+            #      SELECT ... WHERE TKA_QSO = 'YES' AND Log_SKCC_Nr = 'X' AND Log_Key_Type = 'Y' LIMIT 1
+            #      NOTE: NO ORDER BY with LIMIT 1! (lines 977-1017)
+            #   3. Process duplicates (members in multiple key types) (lines 753-841)
+            #      CRITICAL: Xojo iterates through a dictionary in insertion order!
+            #      Dictionary insertion order = ADI file order (when member first appears)
+            #
+            # Why ADI order: Xojo's LIMIT 1 queries have no ORDER BY, so SQLite returns
+            # first record in insertion order (ADI file order).
+            #
+            # Why first-seen tracking matters:
+            #   - Xojo processes duplicates by iterating through a dictionary
+            #   - Dictionary iteration order = insertion order = order members first appear in ADI
+            #   - Processing order affects which list a member ends up in (list sizes change during removal)
+            #   - Example bug we fixed: WA9ZDC has members: 6069, 660, 7057, 7241, 7091, 8672 (ADI order)
+            #   - Processing alphabetically (660, 6069, ...) gives DIFFERENT counts than ADI order!
+            #   - This is because Xojo's removal logic compares list sizes, and sizes change as members are removed
+            #
+            # DO NOT sort tka_first_seen_order - it MUST remain in ADI file order!
             if qso.tka_qso == "YES":
-                # Track first occurrence of this member across all key types (for duplicate processing)
+                # Track first occurrence of this member across ALL key types
+                # This preserves ADI file order for duplicate processing later
                 if member_num not in tka_first_seen:
                     tka_first_seen_order.append(member_num)
                     tka_first_seen[member_num] = True

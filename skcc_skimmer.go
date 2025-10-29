@@ -2733,11 +2733,36 @@ func (im *InteractiveMode) refresh() error {
     // Process QSOs
     processedQSOs := ap.ProcessQSOs(qsos)
 
-    // Save copy in ADI file order
+    // ============================================================================
+    // THREE-PASS PROCESSING STRATEGY FOR XOJO PARITY
+    // ============================================================================
+    // To achieve 100% parity with Xojo's buggy SQL queries, we need THREE different
+    // orderings of the QSO list. This is NOT a performance optimization - it's
+    // required to match Xojo's exact behavior with incomplete/missing ORDER BY clauses.
+    //
+    // Pass 1: ADI FILE ORDER (processedQSOsADI)
+    //   - Original order from ADI file parsing
+    //   - Used for: WAS, TKA, DXC, QRP, Prefix (Xojo queries with NO ORDER BY)
+    //   - Why: SQLite returns rows in insertion order when no ORDER BY specified
+    //
+    // Pass 2: CHRONOLOGICAL ORDER (processedQSOsChrono)
+    //   - Sorted by date + time
+    //   - Used for: File output sorting only (not selection)
+    //   - Why: Display QSOs in chronological order in output files
+    //
+    // Pass 3: DATE-ONLY ORDER (created in ExtractAwards)
+    //   - Sorted by date only (stable sort preserves ADI order for same-date QSOs)
+    //   - Used for: C/T/S, DXQ (Xojo queries: "ORDER BY Log_QSO_DATE" without TIME_ON)
+    //   - Why: Matches Xojo's incomplete ORDER BY clauses
+    // ============================================================================
+
+    // Pass 1: Save copy in ADI file order (original parsing order)
+    // This matches Xojo's database insertion order
     processedQSOsADI := make([]ProcessedQSO, len(processedQSOs))
     copy(processedQSOsADI, processedQSOs)
 
-    // Create copy for chronological sorting (C/T/S/DX awards)
+    // Pass 2: Create copy for chronological sorting (DATE + TIME)
+    // Used only for output file sorting, not for award selection
     processedQSOsChrono := make([]ProcessedQSO, len(processedQSOs))
     copy(processedQSOsChrono, processedQSOs)
     sort.SliceStable(processedQSOsChrono, func(i, j int) bool {
@@ -4290,22 +4315,69 @@ func calculateDuration(timeOn, timeOff string) int {
 // AWARD EXTRACTION
 // ============================================================================
 
-// ExtractAwards extracts award-specific contacts from processed QSOs
-// Uses dual-pass processing: chrono for DX only, adiOrder for C/T/S/WAS/P/QRP/TKA/BRAG/RC
+// ExtractAwards extracts award-specific contacts from processed QSOs using
+// Xojo-compatible three-pass processing to achieve 100% parity.
+//
+// CRITICAL IMPLEMENTATION NOTES:
+//
+// This function replicates Xojo's award processing bugs to maintain parity with
+// historical gold standard files. Each award uses a specific ordering based on
+// what Xojo's SQL queries do (or fail to do).
+//
+// INPUT PARAMETERS:
+//   - chrono:   QSOs sorted by DATE+TIME (used for file output sorting only)
+//   - adiOrder: QSOs in ADI file order (matches Xojo's database insertion order)
+//
+// INTERNAL PROCESSING:
+//   - dateOnly: QSOs sorted by DATE only (created here via stable sort)
+//
+// AWARD ORDERING SUMMARY:
+//   C/T/S    → dateOnly    (Xojo: "ORDER BY Log_QSO_DATE" - missing TIME_ON)
+//   DXQ      → dateOnly    (Xojo: "ORDER BY Log_QSO_DATE" - missing TIME_ON)
+//   DXC      → adiOrder    (Xojo: no ORDER BY at all)
+//   WAS/*    → adiOrder    (Xojo: no ORDER BY at all)
+//   TKA/*    → adiOrder    (Xojo: no ORDER BY with LIMIT 1)
+//   QRP      → adiOrder    (Xojo: no ORDER BY at all)
+//   Prefix   → adiOrder    (Xojo: "ORDER BY PFX" but then finds highest member)
+//   RC       → chronological output in calling code
+//
+// See xojo_award_logic.md for complete documentation of Xojo's SQL bugs and
+// why we replicate them exactly.
 func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]any {
     awards := make(map[string]any)
 
-    // C, T, S awards - match Xojo's exact logic (CTSAwardStatus.xojo_window:3431)
-    // Xojo: "ORDER BY Log_QSO_DATE" (DATE ONLY, not time!)
-    // When multiple QSOs on same date, SQL preserves insertion order (ADI file order)
-    // Then deduplicate: keep FIRST occurrence of each member
-
-    // Sort by DATE only (stable sort preserves ADI order within same date)
+    // ========================================================================
+    // Pass 3: Create DATE-ONLY sorted list (matches Xojo's incomplete ORDER BY)
+    // ========================================================================
+    // CRITICAL: Use stable sort to preserve ADI file order as tiebreaker
+    // This matches SQLite's behavior when ORDER BY is incomplete
+    //
+    // Xojo SQL bugs we're matching:
+    //   - CTSAwardStatus.xojo_window:3431: "ORDER BY Log_QSO_DATE" (no TIME_ON)
+    //   - DXAwardStatus.xojo_window:2409:  "ORDER BY Log_QSO_DATE" (no TIME_ON)
+    //
+    // When multiple QSOs have the same date, SQLite returns them in insertion
+    // order (ADI file order). Stable sort preserves this order for equal keys.
     dateOnly := make([]ProcessedQSO, len(adiOrder))
     copy(dateOnly, adiOrder)
     sort.SliceStable(dateOnly, func(i, j int) bool {
-        return dateOnly[i].QSODate < dateOnly[j].QSODate  // Date only!
+        return dateOnly[i].QSODate < dateOnly[j].QSODate  // DATE ONLY - no time!
     })
+
+    // ========================================================================
+    // C/T/S AWARDS - DATE-Only Sorting with Deduplication
+    // ========================================================================
+    // Reference: CTSAwardStatus.xojo_window:3412-3483
+    //
+    // Xojo's logic:
+    //   1. SELECT ... WHERE [filters] ORDER BY Log_QSO_DATE  (line 3431)
+    //      NOTE: Missing TIME_ON in ORDER BY!
+    //   2. Loop through results, keeping first occurrence of each member (lines 3460-3483)
+    //   3. INSERT selected QSOs into temporary award database
+    //   4. SELECT from award DB ORDER BY Log_QSO_DATE, Log_TIME_ON for output (line 3306)
+    //
+    // Why dateOnly: Xojo's incomplete ORDER BY means same-date QSOs are returned
+    // in ADI file order (insertion order), which our stable sort preserves.
 
     mapC := make(map[string]ProcessedQSO)  // Stores selected QSO for each member
     mapT := make(map[string]ProcessedQSO)
@@ -4372,18 +4444,32 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     awards["T"] = contactsT
     awards["S"] = contactsS
 
-    // WAS variants - use ADI file order
-    // Store as SLICES to maintain order, use separate maps only for uniqueness checking by state
+    // ========================================================================
+    // WAS AWARDS - ADI File Order (All 4 Variants)
+    // ========================================================================
+    // Reference: WAS_WASCAwardStatus.xojo_window:2418-2428 (and similar for T/S variants)
+    //
+    // Xojo's logic:
+    //   1. For each state, SELECT ... WHERE Log_STATE = 'XX' AND WAS_QSO = 'YES'
+    //      NOTE: NO ORDER BY clause!
+    //   2. If RecordCount > 0, use first record returned (line 2434)
+    //   3. Substitute current primary callsign + C/T/S suffix (lines 2449-2463)
+    //
+    // Why adiOrder: Xojo's query has no ORDER BY, so SQLite returns records in
+    // insertion order (ADI file order). We take the first QSO per state in ADI order.
+    //
+    // CRITICAL: Store as SLICES to maintain deterministic order. Use separate maps
+    // only for O(1) uniqueness checking by state. Never iterate the maps.
     contactsWAS := []ProcessedQSO{}
     contactsWASC := []ProcessedQSO{}
     contactsWAST := []ProcessedQSO{}
     contactsWASS := []ProcessedQSO{}
-    seenWAS := make(map[string]bool)
+    seenWAS := make(map[string]bool)  // For uniqueness checking only - never iterate!
     seenWASC := make(map[string]bool)
     seenWAST := make(map[string]bool)
     seenWASS := make(map[string]bool)
 
-    for _, qso := range adiOrder {
+    for _, qso := range adiOrder {  // Process in ADI file order (matches Xojo)
         if qso.WasQSO {
             if !seenWAS[qso.State] {
                 contactsWAS = append(contactsWAS, qso)
@@ -4481,16 +4567,36 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     })
     awards["QRP"] = contactsQRP
 
-    // DX awards - match Xojo's exact SQL behavior
-    // DXC: SELECT with NO ORDER BY (DXAwardStatus.xojo_window:2457) → ADI file order
-    // DXQ: SELECT ORDER BY Log_QSO_DATE (line 2409) → DATE-only, ADI tiebreaker
-    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
+    // ========================================================================
+    // DX AWARDS - Two Different Orderings!
+    // ========================================================================
+    // Reference: DXAwardStatus.xojo_window:2404-2462
+    //
+    // DXC (Country Count) - Xojo's logic:
+    //   1. Get distinct countries: SELECT DISTINCT DX_Code ... ORDER BY DX_Code (line 2446)
+    //   2. For each country: SELECT ... WHERE DX_Code = 'X' AND DXC_QSO = 'YES'
+    //      NOTE: NO ORDER BY clause! (line 2457)
+    //   3. Take first record returned
+    //
+    // Why adiOrder for DXC: Xojo's per-country query has no ORDER BY, so SQLite
+    // returns records in insertion order (ADI file order).
+    //
+    // DXQ (QSO Count) - Xojo's logic:
+    //   1. SELECT ... WHERE DXQ_QSO = 'YES' ORDER BY Log_QSO_DATE (line 2409)
+    //      NOTE: Missing TIME_ON in ORDER BY!
+    //   2. Loop through results, keeping first occurrence of each member (lines 2415-2422)
+    //
+    // Why dateOnly for DXQ: Xojo's incomplete ORDER BY means same-date QSOs are
+    // returned in insertion order (ADI file order), which our stable sort preserves.
+    //
+    // CRITICAL: Store as SLICES to maintain order. Use separate maps only for
+    // O(1) uniqueness checking. Never iterate the maps.
 
-    // DXC - use ADI file order (first per country)
+    // DXC - use ADI file order (first QSO per country)
     contactsDXC := []ProcessedQSO{}
-    seenDXC := make(map[string]bool)
+    seenDXC := make(map[string]bool)  // For uniqueness checking only - never iterate!
 
-    for _, qso := range adiOrder {
+    for _, qso := range adiOrder {  // Process in ADI file order (matches Xojo)
         if qso.DXCQSO {
             if !seenDXC[qso.DXCode] {
                 contactsDXC = append(contactsDXC, qso)
@@ -4543,22 +4649,50 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     }
     awards["RC"] = contactsRC
 
-    // TKA - use ADI file order
-    // Store as SLICES to maintain order, use separate maps only for uniqueness checking
+    // ========================================================================
+    // TKA AWARDS - ADI File Order with CRITICAL Duplicate Processing
+    // ========================================================================
+    // Reference: TripleKeyAwardStatus.xojo_window:753-1087
+    //
+    // Xojo's logic:
+    //   1. Build three dictionaries (BUG_Dict, SK_Dict, SS_Dict) from member roster
+    //   2. For each qualifying member + key type combination:
+    //      SELECT ... WHERE TKA_QSO = 'YES' AND Log_SKCC_Nr = 'X' AND Log_Key_Type = 'Y' LIMIT 1
+    //      NOTE: NO ORDER BY with LIMIT 1! (lines 977-1017)
+    //   3. Process duplicates (members in multiple key types) (lines 753-841)
+    //      CRITICAL: Xojo iterates through a dictionary in insertion order!
+    //      Dictionary insertion order = ADI file order (when member first appears)
+    //
+    // Why adiOrder: Xojo's LIMIT 1 queries have no ORDER BY, so SQLite returns
+    // first record in insertion order (ADI file order).
+    //
+    // Why first-seen tracking matters:
+    //   - Xojo processes duplicates by iterating through a dictionary
+    //   - Dictionary iteration order = insertion order = order members first appear in ADI
+    //   - Processing order affects which list a member ends up in (list sizes change during removal)
+    //   - Example bug we fixed: WA9ZDC has members: 6069, 660, 7057, 7241, 7091, 8672 (ADI order)
+    //   - Processing alphabetically (660, 6069, ...) gives DIFFERENT counts than ADI order!
+    //   - This is because Xojo's removal logic compares list sizes, and sizes change as members are removed
+    //
+    // CRITICAL: Store as SLICES to maintain order. Use separate maps only for
+    // O(1) uniqueness checking. Never iterate the maps.
     contactsTKASK := []ProcessedQSO{}
     contactsTKABUG := []ProcessedQSO{}
     contactsTKASS := []ProcessedQSO{}
-    seenTKASK := make(map[string]bool)
+    seenTKASK := make(map[string]bool)   // For uniqueness checking only - never iterate!
     seenTKABUG := make(map[string]bool)
     seenTKASS := make(map[string]bool)
 
-    // Track first-seen order for duplicate processing (matches Xojo dict insertion order)
+    // Track when each member FIRST appears across ALL key types
+    // This order must be preserved for duplicate processing to match Xojo
+    // DO NOT sort this list - it MUST remain in ADI file order!
     var tkaFirstSeenOrder []string
     tkaFirstSeen := make(map[string]bool)
 
-    for _, qso := range adiOrder {
+    for _, qso := range adiOrder {  // Process in ADI file order (matches Xojo)
         if qso.TKAQSO {
-            // Track first occurrence of this member across all key types
+            // Track first occurrence of this member across ALL key types
+            // This preserves ADI file order for duplicate processing later
             if !tkaFirstSeen[qso.SKCCNr] {
                 tkaFirstSeenOrder = append(tkaFirstSeenOrder, qso.SKCCNr)
                 tkaFirstSeen[qso.SKCCNr] = true
@@ -4632,8 +4766,35 @@ func ExtractAwards(chrono []ProcessedQSO, adiOrder []ProcessedQSO) map[string]an
     return awards
 }
 
+// removeTKADuplicates removes duplicate members from TKA slices following Xojo's exact logic.
+//
+// Reference: TripleKeyAwardStatus.xojo_window:753-841
+//
+// When a member appears in multiple key type lists, Xojo removes them from the list with
+// the most entries to keep counts balanced. The CRITICAL detail is that Xojo processes
+// duplicates in dictionary insertion order, not alphabetically.
+//
+// CRITICAL IMPLEMENTATION DETAIL:
+//
+//	Processing order affects the final counts because list sizes change during removal!
+//
+// Example from WA9ZDC (the bug we fixed):
+//   - Members with duplicates: 6069, 660, 7057, 7241, 7091, 8672 (ADI file order)
+//   - If processed alphabetically: 660, 6069, 7057, 7091, 7241, 8672
+//   - Different order → different list size comparisons → DIFFERENT FINAL COUNTS!
+//   - Result: TKA:BUG became 102 (should be 100), TKA:SS became 95 (should be 97)
+//
+// The fix: Process duplicates in firstSeenOrder (ADI file order when member first appears),
+// which matches Xojo's dictionary insertion order.
+//
+// Parameters:
+//   - sk, bug, ss:      The three TKA contact slices
+//   - firstSeenOrder:   Order members first appeared in ADI file (CRITICAL for correctness!)
+//
+// Returns: Updated (sk, bug, ss) slices after duplicate removal
 func removeTKADuplicates(sk, bug, ss []ProcessedQSO, firstSeenOrder []string) ([]ProcessedQSO, []ProcessedQSO, []ProcessedQSO) {
     // Build temporary maps to identify which members are in which categories
+    // These maps are ONLY for checking membership, never for iteration
     skMap := make(map[string]bool)
     bugMap := make(map[string]bool)
     ssMap := make(map[string]bool)
